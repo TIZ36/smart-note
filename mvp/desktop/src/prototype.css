@@ -404,6 +404,83 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   white-space: nowrap;
 }
 
+/* Special knowledge @mention chips */
+.proto-spkn-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 500;
+  color: oklch(0.58 0.18 300);
+  background: color-mix(in oklab, oklch(0.58 0.18 300) 12%, transparent);
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.proto-spkn-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.5;
+  padding: 0;
+  transition: opacity 0.1s;
+}
+
+.proto-spkn-chip-remove:hover {
+  opacity: 1;
+}
+
+/* @ dropdown */
+.proto-spkn-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 4px;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-proto);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  z-index: 50;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.proto-spkn-dropdown-label {
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.proto-spkn-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 12px;
+  border: none;
+  background: none;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: background 0.1s;
+}
+
+.proto-spkn-dropdown-item:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
 .proto-search-input {
   flex: 1;
   border: none;

@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Sparkles, Zap, Send } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -27,6 +27,15 @@ type Props = {
 export function SearchPage({ searchState: s, tags }: Props) {
   const tagNames = tags.map(t => t.name);
   const tagColorMap = Object.fromEntries(tags.map(t => [t.name, t.color || "gray"]));
+  const [availableSpkn, setAvailableSpkn] = useState<string[]>([]);
+
+  // Load available spkn topics on mount
+  useEffect(() => {
+    api.fetchSpecialKnowledge()
+      .then((d) => setAvailableSpkn(d.topics.map((t) => t.topic)))
+      .catch(() => {});
+  }, []);
+
   const [stages, setStages] = useState<Stages>({
     recall: { status: "idle" },
     rerank: { status: "idle" },
@@ -35,6 +44,12 @@ export function SearchPage({ searchState: s, tags }: Props) {
   const [followUp, setFollowUp] = useState("");
   const [highlightIdx, setHighlightIdx] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  function handleSpknToggle(topic: string) {
+    s.setSelectedSpkn((prev) =>
+      prev.includes(topic) ? prev.filter((t) => t !== topic) : [...prev, topic]
+    );
+  }
 
   // Tab cycles through: All → tag1 → tag2 → ... → All
   function handleTabCycle() {
@@ -193,7 +208,7 @@ export function SearchPage({ searchState: s, tags }: Props) {
         /* ── Empty state ── */
         <div className="proto-search-empty">
           <div className="proto-search-empty-inner">
-            <SearchBar value={s.query} onChange={s.setQuery} onSubmit={() => handleSearch()} onTab={handleTabCycle} loading={isSearching} tagFilter={s.tagFilter} />
+            <SearchBar value={s.query} onChange={s.setQuery} onSubmit={() => handleSearch()} onTab={handleTabCycle} loading={isSearching} tagFilter={s.tagFilter} selectedSpkn={s.selectedSpkn} availableSpkn={availableSpkn} onSpknToggle={handleSpknToggle} />
             <div style={{ display: "flex", justifyContent: "center", marginTop: 12 }}>
               <button type="button" onClick={() => s.setAiEnabled(!s.aiEnabled)} className={cn("proto-ai-toggle", s.aiEnabled ? "proto-ai-toggle-on" : "proto-ai-toggle-off")}>
                 {s.aiEnabled ? <Sparkles /> : <Zap />}
@@ -221,7 +236,7 @@ export function SearchPage({ searchState: s, tags }: Props) {
           <div className="proto-results-topbar shrink-0">
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <SearchBar value={s.query} onChange={s.setQuery} onSubmit={() => handleSearch()} onTab={handleTabCycle} loading={isSearching} tagFilter={s.tagFilter} />
+                <SearchBar value={s.query} onChange={s.setQuery} onSubmit={() => handleSearch()} onTab={handleTabCycle} loading={isSearching} tagFilter={s.tagFilter} selectedSpkn={s.selectedSpkn} availableSpkn={availableSpkn} onSpknToggle={handleSpknToggle} />
               </div>
               <button type="button" onClick={() => s.setAiEnabled(!s.aiEnabled)} className={cn("proto-ai-toggle", s.aiEnabled ? "proto-ai-toggle-on" : "proto-ai-toggle-off")} title={s.aiEnabled ? "AI enabled" : "AI disabled"}>
                 {s.aiEnabled ? <Sparkles /> : <Zap />}
