@@ -153,17 +153,6 @@ export function NoteEditor({ filePath, onSave, onDirty }: Props) {
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      {/* Header */}
-      <div className="proto-view-header">
-        <span>{filePath.split("/").pop()}</span>
-        {dirty && <span style={{ fontSize: 11, color: "var(--color-warning)", fontWeight: 500 }}>unsaved</span>}
-        <span className="proto-view-header-file">{filePath}</span>
-        <button type="button" onClick={handleSave} disabled={!dirty} className="proto-view-open" style={{ opacity: dirty ? 1 : 0.3 }}>
-          {dirty ? "Save (Cmd+S)" : "Saved"}
-        </button>
-      </div>
-
-      {/* Editor */}
       <div className="flex-1 min-h-0 overflow-hidden">
         {loading && (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--color-text-muted)", fontSize: 13 }}>

@@ -20,6 +20,7 @@ type Props = {
 export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIngestComplete, ingestBusy, ingestSteps, ingestResult }: Props) {
   const [showIngest, setShowIngest] = useState(false);
   const [activeBuild, setActiveBuild] = useState<string | null>(null);
+  const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
     api.fetchBuilds().then((d) => {
@@ -74,6 +75,7 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
         <span style={{ cursor: "pointer" }} onClick={handlePickFile} title="Click to change file">
           {rawPath.split("/").pop()}
         </span>
+        {dirty && <span style={{ fontSize: 11, color: "var(--color-warning)", fontWeight: 500 }}>unsaved</span>}
         <span className="proto-view-header-file">{rawPath}</span>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
           {activeBuild && (
@@ -96,7 +98,7 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
 
       {/* Editor */}
       <div className="flex-1 min-h-0">
-        <NoteEditor filePath={rawPath} onSave={handleSave} />
+        <NoteEditor filePath={rawPath} onSave={handleSave} onDirty={setDirty} />
       </div>
 
       {/* Ingest Dialog */}
