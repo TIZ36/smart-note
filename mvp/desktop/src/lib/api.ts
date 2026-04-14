@@ -19,10 +19,12 @@ export async function fetchHealth(): Promise<Health> {
 export async function search(
   query: string,
   topk = 20,
-  tagFilter?: string | null
+  tagFilter?: string | null,
+  includeSpkn?: string[]
 ): Promise<SearchResponse> {
   const body: Record<string, unknown> = { query, topk };
   if (tagFilter) body.tag_filter = tagFilter;
+  if (includeSpkn && includeSpkn.length > 0) body.include_spkn = includeSpkn;
   const res = await fetch(`${BASE}/search`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

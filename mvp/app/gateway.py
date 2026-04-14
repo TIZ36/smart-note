@@ -49,7 +49,8 @@ app.add_middleware(
 class SearchRequest(BaseModel):
     query: str
     topk: int = 20
-    tag_filter: str | None = None  # Filter results to a specific tag
+    tag_filter: str | None = None
+    include_spkn: list[str] = []  # Special knowledge topics to include (@mentions)
 
 
 class RerankRequest(BaseModel):
@@ -87,7 +88,7 @@ def health() -> dict:
 @app.post("/search")
 def api_search(req: SearchRequest) -> dict:
     """Stage 1: Wide recall with 5 retrieval paths + adaptive weights."""
-    result = search(req.query, req.topk, tag_filter=req.tag_filter)
+    result = search(req.query, req.topk, tag_filter=req.tag_filter, include_spkn=req.include_spkn or None)
 
     # Dual-search validation for active rewrite candidates (async, non-blocking)
     try:
@@ -516,12 +517,12 @@ def api_special_knowledge() -> dict:
     """List all specialknowledge topics."""
     with connect() as conn:
         rows = conn.execute(
-            "SELECT id, topic_name, summary, source_file, created_at FROM tag_segments WHERE tag = 'specialknowledge' ORDER BY created_at DESC"
+            "SELECT id, topic_name, summary, source_file, created_at FROM tag_segments WHERE tag LIKE 'spkn:%' ORDER BY created_at DESC"
         ).fetchall()
         # Count chunks per topic source
         chunk_counts = {}
         for row in conn.execute(
-            "SELECT source_file, COUNT(1) c FROM chunks WHERE dimension = 'specialknowledge' GROUP BY source_file"
+            "SELECT source_file, COUNT(1) c FROM chunks WHERE dimension LIKE 'spkn:%' GROUP BY source_file"
         ).fetchall():
             # Map to folder
             chunk_counts[row["source_file"]] = chunk_counts.get(row["source_file"], 0) + row["c"]

@@ -8,7 +8,7 @@ import { SettingsPanel } from "./components/settings/SettingsPanel";
 import { Toast } from "./components/layout/Toast";
 import { VersionsPanel } from "./components/versions/VersionsPanel";
 import { SyncRatePanel } from "./components/sync/SyncRatePanel";
-import { NoteEditor } from "./components/editor/NoteEditor";
+import { NotePage } from "./components/note/NotePage";
 import { SpecialKnowledgePanel } from "./components/special/SpecialKnowledgePanel";
 import { usePrefs } from "./hooks/usePrefs";
 import { useHealth } from "./hooks/useHealth";
@@ -110,29 +110,17 @@ export default function App() {
   function renderMainPanel() {
     if (activeChannel === "settings") return <SettingsPanel />;
     if (activeChannel === "search") return <SearchPage searchState={searchState} tags={tags} />;
-    if (activeChannel === "raw-input") {
-      return <IngestPanel rawPath={prefs.rawPath} notePath={prefs.notePath} onSetRawPath={prefs.setRawPath} onSetNotePath={prefs.setNotePath} onIngestComplete={handleIngestComplete} ingestBusy={ingestBusy} ingestSteps={ingestSteps} ingestResult={ingestResult} />;
-    }
-    if (activeChannel === "editor" && prefs.rawPath) {
+    if (activeChannel === "note") {
       return (
-        <NoteEditor
-          filePath={prefs.rawPath}
-          onSave={async (content) => {
-            try {
-              const d = (window as any).desktop;
-              if (d) {
-                // Write file via Electron
-                const fs = await d.invoke("write_file", { path: prefs.rawPath, content });
-                // Trigger incremental ingest
-                if (prefs.notePath) {
-                  d.invoke("ingest_raw_async", { rawPath: prefs.rawPath, notePath: prefs.notePath, reset: false });
-                }
-                setToast({ message: "Saved & ingesting...", type: "info" });
-              }
-            } catch {
-              setToast({ message: "Save failed", type: "error" });
-            }
-          }}
+        <NotePage
+          rawPath={prefs.rawPath}
+          notePath={prefs.notePath}
+          onSetRawPath={prefs.setRawPath}
+          onSetNotePath={prefs.setNotePath}
+          onIngestComplete={handleIngestComplete}
+          ingestBusy={ingestBusy}
+          ingestSteps={ingestSteps}
+          ingestResult={ingestResult}
         />
       );
     }

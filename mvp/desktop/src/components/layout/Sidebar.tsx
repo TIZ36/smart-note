@@ -117,17 +117,17 @@ export function Sidebar({ activeChannel, onSelect, views, tags, onTagsChanged, g
 
         <SectionLabel>Tools</SectionLabel>
         <NavItem
-          label="Raw Input"
-          icon={<FolderInput size={15} strokeWidth={2} />}
-          active={activeChannel === "raw-input"}
-          onClick={() => onSelect("raw-input")}
+          label="Note"
+          icon={<FileEdit size={15} strokeWidth={2} />}
+          active={activeChannel === "note"}
+          onClick={() => onSelect("note")}
           trailing={ingestBusy ? <Loader2 size={12} className="text-[var(--color-accent)] animate-spin ml-auto shrink-0" /> : undefined}
         />
         <NavItem
-          label="Editor"
-          icon={<FileEdit size={15} strokeWidth={2} />}
-          active={activeChannel === "editor"}
-          onClick={() => onSelect("editor")}
+          label="Special Knowledge"
+          icon={<BookPlus size={15} strokeWidth={2} />}
+          active={activeChannel === "special-knowledge"}
+          onClick={() => onSelect("special-knowledge")}
         />
         <NavItem
           label="Special Knowledge"

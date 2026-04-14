@@ -85,7 +85,7 @@ def _keyword_score(query_tokens: set[str], chunk_keywords: list[str]) -> float:
 
 # ── Main search ──────────────────────────────────────────────────
 
-def search(query: str, topk: int = 5, tag_filter: str | None = None) -> dict:
+def search(query: str, topk: int = 5, tag_filter: str | None = None, include_spkn: list[str] | None = None) -> dict:
     start = time.time()
     qv = embed_texts([query])[0]
     q_lower = query.lower().strip()
@@ -111,12 +111,22 @@ def search(query: str, topk: int = 5, tag_filter: str | None = None) -> dict:
     pool_size = topk * 10
 
     with connect() as conn:
-        # Tag filter clause (reused across queries)
+        # Tag filter + spkn exclusion clause
+        # Default: exclude all spkn:* dimensions unless explicitly included
         tag_clause = ""
         tag_params: list = []
         if tag_filter:
             tag_clause = " AND c.dimension = ?"
             tag_params = [tag_filter]
+        elif include_spkn:
+            # Include note chunks + selected spkn topics
+            spkn_dims = [f"spkn:{s}" for s in include_spkn]
+            placeholders = ",".join("?" for _ in spkn_dims)
+            tag_clause = f" AND (c.dimension NOT LIKE 'spkn:%' OR c.dimension IN ({placeholders}))"
+            tag_params = spkn_dims
+        else:
+            # Default: exclude all spkn
+            tag_clause = " AND c.dimension NOT LIKE 'spkn:%'"
 
         # ── Path 1: FTS5 (jieba segmented tokens) ──
         fts_ids: set[int] = set()
@@ -140,7 +150,13 @@ def search(query: str, topk: int = 5, tag_filter: str | None = None) -> dict:
 
         # ── Path 2: LIKE substring scan ──
         like_rows = []
-        tag_where = f" AND dimension = '{tag_filter}'" if tag_filter else ""
+        if tag_filter:
+            tag_where = f" AND dimension = '{tag_filter}'"
+        elif include_spkn:
+            spkn_in = ",".join(f"'spkn:{s}'" for s in include_spkn)
+            tag_where = f" AND (dimension NOT LIKE 'spkn:%' OR dimension IN ({spkn_in}))"
+        else:
+            tag_where = " AND dimension NOT LIKE 'spkn:%'"
         if len(q_lower) >= 2:
             like_pattern = f"%{q_lower}%"
             try:
@@ -167,15 +183,20 @@ def search(query: str, topk: int = 5, tag_filter: str | None = None) -> dict:
                 except Exception:
                     pass
 
-        # ── Path 3 + 4: Vector + n-gram (scan all chunks) ──
+        # ── Path 3 + 4: Vector + n-gram (scan all chunks with spkn filter) ──
         if tag_filter:
             all_rows = conn.execute(
                 "SELECT id, text, source_ref, dimension, embedding_json, keywords_json, ai_summary FROM chunks WHERE dimension = ?",
                 (tag_filter,),
             ).fetchall()
+        elif include_spkn:
+            spkn_in = ",".join(f"'spkn:{s}'" for s in include_spkn)
+            all_rows = conn.execute(
+                f"SELECT id, text, source_ref, dimension, embedding_json, keywords_json, ai_summary FROM chunks WHERE dimension NOT LIKE 'spkn:%' OR dimension IN ({spkn_in})"
+            ).fetchall()
         else:
             all_rows = conn.execute(
-                "SELECT id, text, source_ref, dimension, embedding_json, keywords_json, ai_summary FROM chunks"
+                "SELECT id, text, source_ref, dimension, embedding_json, keywords_json, ai_summary FROM chunks WHERE dimension NOT LIKE 'spkn:%'"
             ).fetchall()
 
         vec_scored = []

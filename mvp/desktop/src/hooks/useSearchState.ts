@@ -39,6 +39,8 @@ export type SearchState = {
   setAiEnabled: (v: boolean) => void;
   tagFilter: string | null;
   setTagFilter: (v: string | null) => void;
+  selectedSpkn: string[];
+  setSelectedSpkn: React.Dispatch<React.SetStateAction<string[]>>;
   searchHistory: HistoryEntry[];
   setSearchHistory: React.Dispatch<React.SetStateAction<HistoryEntry[]>>;
   lastEvidenceIds: React.MutableRefObject<number[]>;
@@ -56,6 +58,7 @@ export function useSearchState(): SearchState {
   const [isAdaptive, setIsAdaptive] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [selectedSpkn, setSelectedSpkn] = useState<string[]>([]);
   const [aiEnabled, setAiEnabled] = useState(true);
   const [searchHistory, setSearchHistory] = useState<HistoryEntry[]>([]);
   const lastEvidenceIds = useRef<number[]>([]);
@@ -86,6 +89,7 @@ export function useSearchState(): SearchState {
     hasSearched, setHasSearched,
     aiEnabled, setAiEnabled,
     tagFilter, setTagFilter,
+    selectedSpkn, setSelectedSpkn,
     searchHistory, setSearchHistory,
     lastEvidenceIds,
     getChatHistory,

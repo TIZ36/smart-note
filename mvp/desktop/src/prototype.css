@@ -1019,6 +1019,58 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   margin-left: 8px;
 }
 
+/* Dialog / Modal */
+.proto-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.proto-dialog {
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.2);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.proto-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.proto-dialog-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  padding: 4px;
+  border-radius: 4px;
+  transition: color 0.1s, background 0.1s;
+}
+
+.proto-dialog-close:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
+}
+
+.proto-dialog-body {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
 /* macOS-style tag colors */
 .proto-tag-color-red { color: oklch(0.63 0.2 25); }
 .proto-tag-color-orange { color: oklch(0.7 0.16 55); }

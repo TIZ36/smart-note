@@ -63,7 +63,7 @@ export function SearchPage({ searchState: s, tags }: Props) {
       setStages({ recall: { status: "running" }, rerank: { status: "idle" }, answer: { status: "idle" } });
       let recallData: SearchResponse;
       try {
-        recallData = await api.search(searchQuery, 200, s.tagFilter);
+        recallData = await api.search(searchQuery, 200, s.tagFilter, s.selectedSpkn.length > 0 ? s.selectedSpkn : undefined);
       } catch {
         setStages((st) => ({ ...st, recall: { status: "error" } }));
         return;

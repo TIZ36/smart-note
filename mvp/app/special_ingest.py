@@ -177,7 +177,7 @@ def ingest_folder(folder_path: str, topic_name: str | None = None) -> dict:
                     chunk["source_ref"],
                     chunk["text"],
                     segmented[idx],
-                    "specialknowledge",
+                    f"spkn:{topic_name}",
                     None,
                     json.dumps(vectors[idx]),
                     json.dumps(keywords, ensure_ascii=False),
@@ -194,11 +194,12 @@ def ingest_folder(folder_path: str, topic_name: str | None = None) -> dict:
         conn.execute(
             """
             INSERT INTO tag_segments(build_id, source_file, tag, topic_name, line_start, line_end, summary, keywords_json, entities_json, is_credential)
-            VALUES (?, ?, 'specialknowledge', ?, 1, ?, ?, '[]', '[]', 0)
+            VALUES (?, ?, ?, ?, 1, ?, ?, '[]', '[]', 0)
             """,
             (
                 build_id,
                 folder_path,
+                f"spkn:{topic_name}",
                 topic_name,
                 total,
                 f"Special knowledge: {topic_name} ({len(files)} files, {total} chunks)",
