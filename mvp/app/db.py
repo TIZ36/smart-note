@@ -9,6 +9,7 @@ PRAGMA journal_mode=WAL;
 
 CREATE TABLE IF NOT EXISTS chunks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  build_id TEXT NOT NULL DEFAULT '',
   source_file TEXT NOT NULL,
   source_ref TEXT NOT NULL,
   text TEXT NOT NULL,
@@ -218,6 +219,7 @@ def migrate_db() -> None:
             row[1] for row in conn.execute("PRAGMA table_info(chunks)").fetchall()
         }
         new_cols = {
+            "build_id": "TEXT NOT NULL DEFAULT ''",
             "text_segmented": "TEXT NOT NULL DEFAULT ''",
             "keywords_json": "TEXT NOT NULL DEFAULT '[]'",
             "entities_json": "TEXT NOT NULL DEFAULT '[]'",

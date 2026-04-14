@@ -122,6 +122,7 @@ def delete_build(build_id: str) -> None:
         was_active = conn.execute(
             "SELECT is_active FROM builds WHERE id = ?", (build_id,)
         ).fetchone()
+        conn.execute("DELETE FROM chunks WHERE build_id = ?", (build_id,))
         conn.execute("DELETE FROM tag_segments WHERE build_id = ?", (build_id,))
         conn.execute("DELETE FROM builds WHERE id = ?", (build_id,))
         if was_active and was_active["is_active"]:

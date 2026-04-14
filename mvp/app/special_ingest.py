@@ -168,11 +168,12 @@ def ingest_folder(folder_path: str, topic_name: str | None = None) -> dict:
 
             conn.execute(
                 """
-                INSERT INTO chunks(source_file, source_ref, text, text_segmented,
+                INSERT INTO chunks(build_id, source_file, source_ref, text, text_segmented,
                   dimension, project_slug, embedding_json, keywords_json, entities_json, ai_summary)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
+                    build_id,
                     chunk["source_file"],
                     chunk["source_ref"],
                     chunk["text"],
