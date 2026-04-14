@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Database, ChevronDown } from "lucide-react";
 import { NoteEditor } from "../editor/NoteEditor";
 import { IngestDialog } from "./IngestDialog";
-import { pickRawFile, readFileFull, saveRawPathForHotkey } from "@/lib/electron";
+import { pickRawFile, saveRawPathForHotkey } from "@/lib/electron";
 import * as api from "@/lib/api";
 import type { IngestStep } from "@/App";
 

@@ -31,10 +31,6 @@ export async function listViews(notePath: string): Promise<ViewsResult> {
   return getDesktop().invoke("list_views", { notePath }) as Promise<ViewsResult>;
 }
 
-export async function readTextFile(path: string): Promise<CmdResult> {
-  return getDesktop().invoke("read_text_file", { path }) as Promise<CmdResult>;
-}
-
 export async function getMvpStatus(): Promise<MvpStatus> {
   return getDesktop().invoke("get_mvp_status") as Promise<MvpStatus>;
 }
@@ -92,6 +88,7 @@ export async function openPath(path: string): Promise<void> {
   await getDesktop().invoke("shell_open_path", { path });
 }
 
+/** Full file read for the Note editor; previews use gateway `/source` or `/tags/.../source` (line ranges). */
 export async function readFileFull(path: string): Promise<CmdResult> {
   return getDesktop().invoke("read_file_full", { path }) as Promise<CmdResult>;
 }

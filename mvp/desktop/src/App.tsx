@@ -2,17 +2,13 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { AnimatePresence } from "framer-motion";
 import { Sidebar } from "./components/layout/Sidebar";
 import { SearchPage } from "./components/search/SearchPage";
-import { ViewPanel } from "./components/views/ViewPanel";
-import { IngestPanel } from "./components/ingest/IngestPanel";
 import { SettingsPanel } from "./components/settings/SettingsPanel";
 import { Toast } from "./components/layout/Toast";
-import { VersionsPanel } from "./components/versions/VersionsPanel";
 import { SyncRatePanel } from "./components/sync/SyncRatePanel";
 import { NotePage } from "./components/note/NotePage";
 import { SpecialKnowledgePanel } from "./components/special/SpecialKnowledgePanel";
 import { usePrefs } from "./hooks/usePrefs";
 import { useHealth } from "./hooks/useHealth";
-import { useViews } from "./hooks/useViews";
 import { useSearchState } from "./hooks/useSearchState";
 import { useTags } from "./hooks/useTags";
 import { TagView } from "./components/tags/TagView";
@@ -61,7 +57,6 @@ export default function App() {
 
   const prefs = usePrefs();
   const health = useHealth();
-  const { views, refreshViews } = useViews();
   const { tags, refreshTags } = useTags();
   const searchState = useSearchState();
   const activeChannelRef = useRef(activeChannel);
@@ -69,8 +64,7 @@ export default function App() {
 
   useEffect(() => {
     refreshTags();
-    if (prefs.notePath) refreshViews(prefs.notePath);
-  }, [prefs.notePath, refreshViews]);
+  }, [refreshTags]);
 
   useEffect(() => {
     const unlisten = onIngestStatus((event: IngestEvent) => {
@@ -92,7 +86,6 @@ export default function App() {
         setIngestSteps((prev) => prev.map((s) => ({ ...s, status: "done" })));
         setIngestResult({ message: event.message, type: "success" });
         setToast({ message: event.message, type: "success" });
-        if (prefs.notePath) refreshViews(prefs.notePath);
       } else if (event.status === "error") {
         setIngestBusy(false);
         setIngestResult({ message: event.message, type: "error" });
@@ -100,12 +93,11 @@ export default function App() {
       }
     });
     return () => { unlisten.then((fn) => fn()); };
-  }, [prefs.notePath, refreshViews]);
+  }, []);
 
   const handleIngestComplete = useCallback(() => {
-    if (prefs.notePath) refreshViews(prefs.notePath);
     refreshTags();
-  }, [prefs.notePath, refreshViews, refreshTags]);
+  }, [refreshTags]);
 
   function renderMainPanel() {
     if (activeChannel === "settings") return <SettingsPanel />;
@@ -130,8 +122,6 @@ export default function App() {
     if (activeChannel.startsWith("tag:")) {
       return <TagView tag={activeChannel.slice(4)} />;
     }
-    const view = views.find((v) => v.key === activeChannel);
-    if (view) return <ViewPanel viewKey={view.key} title={view.title} path={view.path} />;
     return <div className="flex items-center justify-center h-full text-text-muted text-[13px]">Select a page</div>;
   }
 
@@ -140,7 +130,6 @@ export default function App() {
       <Sidebar
         activeChannel={activeChannel}
         onSelect={setActiveChannel}
-        views={views}
         tags={tags}
         onTagsChanged={refreshTags}
         gatewayOnline={health.gatewayOnline}

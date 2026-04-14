@@ -17,7 +17,16 @@ export function SourcePreview({ sourceRef, onClose }: Props) {
   useEffect(() => {
     setLoading(true);
     setError("");
-    api.fetchSource(sourceRef).then(setData).catch((e) => setError(String(e))).finally(() => setLoading(false));
+    api.fetchSource(sourceRef)
+      .then((d) => {
+        if (d.lines && d.lines.length > 0) {
+          setData(d);
+        } else {
+          setError("No content returned for this source.");
+        }
+      })
+      .catch((e) => setError(String(e)))
+      .finally(() => setLoading(false));
   }, [sourceRef]);
 
   const fileName = data?.file?.split("/").pop() || sourceRef;

@@ -94,6 +94,7 @@ export function NoteEditor({ filePath, onSave, onDirty }: Props) {
     if (!containerRef.current) return;
 
     setLoading(true);
+    // Full raw file for the Note editor only; search/tag side panels use gateway line windows.
     readFileFull(filePath).then((result) => {
       const content = result.output || "";
       lastSavedRef.current = content;

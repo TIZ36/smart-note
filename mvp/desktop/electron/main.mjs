@@ -312,12 +312,7 @@ ipcMain.handle("list_views", async (_, { notePath }) => {
   return { views };
 });
 
-ipcMain.handle("read_text_file", async (_, { path: filePath }) => {
-  const content = fs.readFileSync(filePath, "utf8");
-  const preview = content.slice(0, 4000);
-  return { ok: true, output: preview };
-});
-
+/** Full read for Note editor; search/tag previews use gateway line-range APIs. */
 ipcMain.handle("read_file_full", async (_, { path: filePath }) => {
   const content = fs.readFileSync(filePath, "utf8");
   return { ok: true, output: content };

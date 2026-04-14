@@ -1,7 +1,6 @@
 import { useState, useRef } from "react";
 import {
   Search,
-  FolderInput,
   Activity,
   Tag,
   Settings,
@@ -14,14 +13,13 @@ import {
   BookPlus,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
-import type { ChannelId, ViewItem } from "@/lib/types";
+import type { ChannelId } from "@/lib/types";
 import type { TagInfo } from "@/lib/api";
 import * as api from "@/lib/api";
 
 type Props = {
   activeChannel: ChannelId;
   onSelect: (channel: ChannelId) => void;
-  views: ViewItem[];
   tags: TagInfo[];
   onTagsChanged: () => void;
   gatewayOnline: boolean;
@@ -58,7 +56,7 @@ function NavItem({
   );
 }
 
-export function Sidebar({ activeChannel, onSelect, views, tags, onTagsChanged, gatewayOnline, ingestBusy, embeddingMode }: Props) {
+export function Sidebar({ activeChannel, onSelect, tags, onTagsChanged, gatewayOnline, ingestBusy, embeddingMode }: Props) {
   const [editMode, setEditMode] = useState(false);
   const [newTag, setNewTag] = useState("");
   const [busy, setBusy] = useState(false);

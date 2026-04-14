@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 
 import requests
 from fastapi import FastAPI, HTTPException, Query
@@ -332,45 +333,89 @@ def api_feedback(req: FeedbackRequest) -> dict:
     return {"status": "ok"}
 
 
+def _read_line_window(path: str | Path, center_line: int, before: int = 5, after: int = 5) -> list[dict]:
+    """Stream only the window around center_line (1-based). Does not load the full file into memory."""
+    start = max(1, center_line - before)
+    end = center_line + after
+    out: list[dict] = []
+    with Path(path).open(encoding="utf-8", errors="ignore") as f:
+        for i, line in enumerate(f, start=1):
+            if i < start:
+                continue
+            if i > end:
+                break
+            out.append(
+                {"line": i, "text": line.rstrip("\n\r"), "highlight": i == center_line}
+            )
+    return out
+
+
+def _read_lines_inclusive(path: str | Path, line_start: int, line_end: int) -> list[dict]:
+    """Lines line_start..line_end inclusive (1-based). Streaming read."""
+    if line_end < line_start:
+        return []
+    out: list[dict] = []
+    with Path(path).open(encoding="utf-8", errors="ignore") as f:
+        for i, line in enumerate(f, start=1):
+            if i < line_start:
+                continue
+            if i > line_end:
+                break
+            out.append({"line": i, "text": line.rstrip("\n\r")})
+    return out
+
+
 # ── Source preview ──
 
 @app.get("/source")
 def api_source(ref: str = Query(..., description="source_ref like raw.md:line:5:line")) -> dict:
     """Return raw file content around the referenced line for source preview."""
     parts = ref.split(":")
-    if len(parts) < 3:
-        raise HTTPException(status_code=400, detail="Invalid source_ref format")
 
-    filename = parts[0]
-    try:
-        line_no = int(parts[2])
-    except (ValueError, IndexError):
-        line_no = 1
+    # Parse line number from ref (format: filename:line:N:kind or file:line:N-M)
+    line_no = 1
+    for part in parts:
+        try:
+            # Handle "5" or "5-10" (take the first number)
+            n = int(part.split("-")[0])
+            if n > 0:
+                line_no = n
+                break
+        except ValueError:
+            continue
 
-    # Find the actual file path from chunks
+    # Find the source file path — try exact match first, then LIKE
+    source_file = None
     with connect() as conn:
         row = conn.execute(
             "SELECT source_file FROM chunks WHERE source_ref = ? LIMIT 1", (ref,)
         ).fetchone()
+        if row:
+            source_file = row["source_file"]
+        else:
+            # Fuzzy match: use the filename part of the ref
+            filename = parts[0] if parts else ref
+            row = conn.execute(
+                "SELECT source_file FROM chunks WHERE source_ref LIKE ? LIMIT 1",
+                (f"{filename}%",),
+            ).fetchone()
+            if row:
+                source_file = row["source_file"]
 
-    if not row:
-        raise HTTPException(status_code=404, detail="Source not found")
+    # Last resort: if ref looks like an absolute path, use it directly
+    if not source_file and ref.startswith("/"):
+        source_file = ref.split(":")[0]
+
+    if not source_file:
+        raise HTTPException(status_code=404, detail=f"Source not found for ref: {ref}")
+
+    if not Path(source_file).exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {source_file}")
 
     try:
-        import pathlib
-        content = pathlib.Path(row["source_file"]).read_text(encoding="utf-8", errors="ignore")
-        lines = content.splitlines()
-
-        # Return context: 5 lines before and after the target line
-        ctx_start = max(0, line_no - 6)
-        ctx_end = min(len(lines), line_no + 5)
-        context_lines = [
-            {"line": i + 1, "text": lines[i], "highlight": i + 1 == line_no}
-            for i in range(ctx_start, ctx_end)
-        ]
-
+        context_lines = _read_line_window(source_file, line_no)
         return {
-            "file": row["source_file"],
+            "file": source_file,
             "target_line": line_no,
             "lines": context_lines,
         }
@@ -711,20 +756,15 @@ def api_tag_source_lines(tag_name: str, segment_id: int = Query(...)) -> dict:
     if not row:
         raise HTTPException(status_code=404, detail="Segment not found")
 
-    import pathlib
     try:
-        content = pathlib.Path(row["source_file"]).read_text(encoding="utf-8", errors="ignore")
-        all_lines = content.splitlines()
-        start = max(0, row["line_start"] - 1)
-        end = min(len(all_lines), row["line_end"])
+        lines = _read_lines_inclusive(
+            row["source_file"], row["line_start"], row["line_end"]
+        )
         return {
             "file": row["source_file"],
             "line_start": row["line_start"],
             "line_end": row["line_end"],
-            "lines": [
-                {"line": i + 1, "text": all_lines[i]}
-                for i in range(start, end)
-            ],
+            "lines": lines,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

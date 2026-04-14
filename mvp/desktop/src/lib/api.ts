@@ -101,6 +101,10 @@ export async function fetchSource(ref: string): Promise<SourcePreviewData> {
   const res = await fetch(
     `${BASE}/source?ref=${encodeURIComponent(ref)}`
   );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `Source fetch failed: ${res.status}`);
+  }
   return res.json();
 }
 
