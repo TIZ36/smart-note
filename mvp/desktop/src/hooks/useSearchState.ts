@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import type { SearchResult } from "../lib/types";
 import type { ChatHistoryItem } from "../lib/api";
 
@@ -57,8 +57,17 @@ export function useSearchState(): SearchState {
   const [hasSearched, setHasSearched] = useState(false);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [aiEnabled, setAiEnabled] = useState(true);
-  const [searchHistory, setSearchHistory] = useState<HistoryEntry[]>([]);
+  const [searchHistory, setSearchHistory] = useState<HistoryEntry[]>(() => {
+    try {
+      const saved = localStorage.getItem("intellinote-search-history");
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
   const lastEvidenceIds = useRef<number[]>([]);
+
+  useEffect(() => {
+    try { localStorage.setItem("intellinote-search-history", JSON.stringify(searchHistory.slice(0, 20))); } catch {}
+  }, [searchHistory]);
 
   function getChatHistory(): ChatHistoryItem[] {
     return conversation.slice(-6).map((t) => ({
