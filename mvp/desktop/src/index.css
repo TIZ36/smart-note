@@ -1,0 +1,138 @@
+@import "tailwindcss";
+
+/*
+ * Light theme colors directly in @theme.
+ * Dark mode handled by overriding CSS custom properties
+ * that @theme references.
+ */
+@theme {
+  --color-bg-primary: #faf9f7;
+  --color-bg-sidebar: #f1f0ed;
+  --color-bg-elevated: #f5f4f2;
+  /* 与原型 direction-a `--bg-surface` 一致 */
+  --color-bg-surface: #f5f4f2;
+  --color-bg-hover: #eae9e5;
+  --color-bg-active: #e2e1dc;
+  --color-bg-input: #ffffff;
+  --color-bg-pipeline-active: oklch(0.96 0.02 250);
+
+  --color-text-primary: #1a1a1a;
+  --color-text-secondary: #5c5c5c;
+  --color-text-muted: #999994;
+
+  --color-accent: #2563eb;
+  --color-accent-hover: #1d4ed8;
+  --color-success: #16a34a;
+  --color-danger: #dc2626;
+  --color-warning: #ca8a04;
+
+  --color-border: #e5e4e0;
+  --color-ring: #d4d3cf;
+  --radius-proto: 6px;
+}
+
+/*
+ * Dark theme: override the generated CSS custom properties.
+ * Tailwind v4 generates --color-* from @theme, so we override them at :root level.
+ */
+/* Direction B v2 — dark prototype (oklch) */
+/* Auto: follow system. Manual: data-theme="dark" on html. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-bg-primary: oklch(0.15 0.005 250);
+    --color-bg-sidebar: oklch(0.13 0.006 250);
+    --color-bg-elevated: oklch(0.18 0.005 250);
+    --color-bg-surface: oklch(0.18 0.005 250);
+    --color-bg-hover: oklch(0.21 0.005 250);
+    --color-bg-active: oklch(0.24 0.004 250);
+    --color-bg-input: oklch(0.12 0.006 250);
+    --color-bg-pipeline-active: oklch(0.17 0.01 250);
+
+    --color-text-primary: oklch(0.9 0.005 250);
+    --color-text-secondary: oklch(0.68 0.01 250);
+    --color-text-muted: oklch(0.48 0.01 250);
+
+    --color-accent: oklch(0.65 0.15 250);
+    --color-accent-hover: oklch(0.58 0.17 250);
+    --color-success: oklch(0.65 0.17 155);
+    --color-danger: oklch(0.6 0.18 25);
+    --color-warning: oklch(0.68 0.14 85);
+
+    --color-border: oklch(0.22 0.005 250);
+    --color-ring: oklch(0.3 0.01 250);
+    --radius-proto: 5px;
+  }
+}
+
+/* Manual dark mode override */
+:root[data-theme="dark"] {
+  --color-bg-primary: oklch(0.15 0.005 250);
+  --color-bg-sidebar: oklch(0.13 0.006 250);
+  --color-bg-elevated: oklch(0.18 0.005 250);
+  --color-bg-surface: oklch(0.18 0.005 250);
+  --color-bg-hover: oklch(0.21 0.005 250);
+  --color-bg-active: oklch(0.24 0.004 250);
+  --color-bg-input: oklch(0.12 0.006 250);
+  --color-bg-pipeline-active: oklch(0.17 0.01 250);
+  --color-text-primary: oklch(0.9 0.005 250);
+  --color-text-secondary: oklch(0.68 0.01 250);
+  --color-text-muted: oklch(0.48 0.01 250);
+  --color-accent: oklch(0.65 0.15 250);
+  --color-accent-hover: oklch(0.58 0.17 250);
+  --color-success: oklch(0.65 0.17 155);
+  --color-danger: oklch(0.6 0.18 25);
+  --color-warning: oklch(0.68 0.14 85);
+  --color-border: oklch(0.22 0.005 250);
+  --color-ring: oklch(0.3 0.01 250);
+  --radius-proto: 5px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #app {
+  width: 100%;
+  height: 100%;
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-ring); }
+
+/* Markdown */
+.markdown-content h1, .markdown-content h2, .markdown-content h3 {
+  color: var(--color-text-primary); font-weight: 600; letter-spacing: -0.01em;
+}
+.markdown-content h1 { font-size: 1.25rem; margin: 1.5em 0 0.5em; }
+.markdown-content h2 { font-size: 1rem; margin: 1.4em 0 0.4em; }
+.markdown-content h3 { font-size: 0.875rem; margin: 1.2em 0 0.3em; }
+.markdown-content p { margin: 0.5em 0; color: var(--color-text-secondary); line-height: 1.75; max-width: 65ch; }
+.markdown-content ul, .markdown-content ol { margin: 0.5em 0; padding-left: 1.5em; color: var(--color-text-secondary); }
+.markdown-content li { margin: 0.25em 0; line-height: 1.75; }
+.markdown-content code { background: var(--color-bg-elevated); padding: 0.15em 0.4em; border-radius: 3px; font-size: 0.9em; }
+.markdown-content pre { background: var(--color-bg-elevated); padding: 14px; border-radius: 6px; overflow-x: auto; margin: 0.8em 0; border: 1px solid var(--color-border); }
+.markdown-content pre code { background: none; padding: 0; }
+.markdown-content a { color: var(--color-accent); text-decoration: none; }
+.markdown-content a:hover { text-decoration: underline; }
+
+/* Animations */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.animate-shimmer {
+  background: linear-gradient(90deg, var(--color-bg-elevated) 0%, var(--color-bg-active) 50%, var(--color-bg-elevated) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 2s ease-in-out infinite;
+}
+@keyframes progress-stripe {
+  0% { background-position: 1rem 0; }
+  100% { background-position: 0 0; }
+}

@@ -1,0 +1,45 @@
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+*.egg
+dist/
+build/
+
+# ── Node / Electron ──
+node_modules/
+mvp/desktop/dist/
+mvp/desktop/release/
+mvp/desktop/src-tauri/target/
+
+# ── Data (user-specific, not committed) ──
+mvp/data/
+mvp/sample/note.md
+mvp/sample/views/
+mvp/sample/.state.json
+mvp/sample/candidates/
+
+# ── Environment / Secrets ──
+.env
+*.env.local
+
+# ── IDE ──
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ── Logs ──
+*.log
+npm-debug.log*
+
+# ── Build artifacts ──
+*.dmg
+*.app
+*.exe
+
+# ── Claude Code ──
+.claude/plans/

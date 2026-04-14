@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Direction C — Studio</title>
+<style>
+  /* ===========================================
+     Direction C: "Studio"
+     Inspired by Things 3, Bear, Apple Music.
+     Mid-tone palette. Sidebar lighter, content
+     area darker. Soft contrast, warm tones.
+     =========================================== */
+
+  :root {
+    --bg: #1c1c1e;
+    --bg-sidebar: #2c2c2e;
+    --bg-surface: #242426;
+    --bg-hover: #343436;
+    --bg-active: #3a3a3c;
+    --bg-input: #1c1c1e;
+
+    --text: #f0f0f0;
+    --text-2: #a0a0a5;
+    --text-3: #636366;
+
+    --accent: #64d2ff;
+    --border: #38383a;
+    --radius: 8px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--text);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .app { display: flex; height: 100vh; }
+
+  /* --- Sidebar --- */
+  .sidebar {
+    width: 240px;
+    background: var(--bg-sidebar);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    padding-top: 48px;
+  }
+
+  .sidebar-nav {
+    flex: 1;
+    padding: 0 12px;
+    overflow-y: auto;
+  }
+
+  .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 14px;
+    border-radius: var(--radius);
+    color: var(--text-2);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.1s;
+  }
+  .nav-item:hover { background: var(--bg-hover); color: var(--text); }
+  .nav-item.active {
+    background: var(--bg-active);
+    color: var(--text);
+    font-weight: 500;
+  }
+
+  .nav-item svg {
+    width: 16px; height: 16px; flex-shrink: 0;
+    stroke: currentColor; fill: none; stroke-width: 1.8;
+    stroke-linecap: round; stroke-linejoin: round;
+  }
+
+  .section-label {
+    padding: 28px 14px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-3);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .sidebar-footer {
+    padding: 8px 12px 14px;
+    border-top: 1px solid var(--border);
+  }
+  .sidebar-status {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 14px;
+    font-size: 11px; color: var(--text-3);
+  }
+  .status-dot {
+    width: 6px; height: 6px; border-radius: 50%; background: #30d158;
+  }
+
+  /* --- Main --- */
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+  /* --- Search empty --- */
+  .search-empty {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    padding: 32px;
+  }
+  .search-empty-inner { width: 100%; max-width: 520px; }
+
+  .search-input-wrap {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 16px;
+    transition: border-color 0.15s;
+  }
+  .search-input-wrap:focus-within { border-color: var(--accent); }
+  .search-input-wrap svg {
+    width: 18px; height: 18px; flex-shrink: 0;
+    stroke: var(--text-3); fill: none; stroke-width: 1.8;
+    stroke-linecap: round; stroke-linejoin: round;
+  }
+  .search-input {
+    flex: 1; border: none; background: none;
+    font-size: 15px; color: var(--text);
+    outline: none; font-family: inherit;
+  }
+  .search-input::placeholder { color: var(--text-3); }
+
+  .search-hint {
+    margin-top: 16px; text-align: center;
+    font-size: 13px; color: var(--text-3); line-height: 1.6;
+  }
+
+  /* --- Results --- */
+  .search-results { display: none; flex: 1; flex-direction: column; overflow: hidden; }
+  .search-results.visible { display: flex; }
+
+  .search-topbar {
+    padding: 16px 20px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .search-topbar .search-input-wrap {
+    max-width: 100%;
+    padding: 10px 14px;
+  }
+  .search-topbar .search-input { font-size: 14px; }
+
+  .pipeline-status {
+    display: flex; align-items: center; gap: 12px;
+    font-size: 11px; color: var(--text-3);
+    margin-top: 8px; padding-left: 2px;
+    font-variant-numeric: tabular-nums;
+  }
+  .pipeline-stage { display: flex; align-items: center; gap: 4px; }
+  .pipeline-stage.done { color: var(--text-2); }
+  .pipeline-sep { opacity: 0.2; }
+
+  .results-layout { flex: 1; display: flex; overflow: hidden; }
+
+  .sources-panel {
+    width: 280px; flex-shrink: 0;
+    overflow-y: auto;
+    border-right: 1px solid var(--border);
+    padding: 16px;
+  }
+
+  .sources-label {
+    font-size: 11px; font-weight: 600; color: var(--text-3);
+    margin-bottom: 12px;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+
+  .source-item {
+    padding: 12px 14px;
+    border-radius: var(--radius);
+    margin-bottom: 4px;
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+  .source-item:hover { background: var(--bg-hover); }
+  .source-item.active { background: var(--bg-active); }
+
+  .source-meta {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 6px;
+  }
+  .source-index { font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+  .source-dim { font-size: 10px; font-weight: 600; color: var(--text-3); letter-spacing: 0.04em; text-transform: uppercase; }
+  .source-score { font-size: 10px; color: var(--text-3); margin-left: auto; font-variant-numeric: tabular-nums; }
+  .source-text {
+    font-size: 13px; color: var(--text-2); line-height: 1.6;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+
+  .answer-panel {
+    flex: 1; overflow-y: auto;
+    padding: 28px 36px;
+    min-width: 0;
+  }
+
+  .answer-label {
+    font-size: 12px; font-weight: 500; color: var(--text-2);
+    margin-bottom: 14px;
+  }
+
+  .answer-content {
+    font-size: 14px; line-height: 1.8; color: var(--text-2);
+    max-width: 60ch;
+  }
+  .answer-content p { margin: 0.6em 0; }
+  .answer-content strong { color: var(--text); font-weight: 600; }
+
+  .state-toggle {
+    position: fixed; bottom: 16px; right: 16px;
+    padding: 6px 12px; border-radius: var(--radius);
+    background: var(--accent); color: #000;
+    font-size: 11px; font-weight: 600;
+    cursor: pointer; border: none; font-family: inherit;
+    z-index: 100;
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="sidebar">
+    <div class="sidebar-nav">
+      <div class="nav-item active">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        Search
+      </div>
+      <div class="section-label">Tools</div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>
+        Raw Input
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+        Knowledge Graph
+      </div>
+      <p style="padding: 20px 14px; font-size: 12px; color: var(--text-3); line-height: 1.6;">
+        No topics yet. Ingest notes to discover topics automatically.
+      </p>
+    </div>
+    <div class="sidebar-footer">
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72 1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+        Settings
+      </div>
+      <div class="sidebar-status">
+        <span class="status-dot"></span>
+        Online · local
+      </div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="search-empty" id="empty-state">
+      <div class="search-empty-inner">
+        <div class="search-input-wrap">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <input type="text" class="search-input" placeholder="Search your notes..." readonly>
+        </div>
+        <p class="search-hint">
+          Full-text and semantic search across your knowledge base.
+        </p>
+      </div>
+    </div>
+
+    <div class="search-results" id="results-state">
+      <div class="search-topbar">
+        <div class="search-input-wrap">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <input type="text" class="search-input" value="project deadline requirements" readonly>
+        </div>
+        <div class="pipeline-status">
+          <span class="pipeline-stage done">&#10003; Recall 24 · 12ms</span>
+          <span class="pipeline-sep">/</span>
+          <span class="pipeline-stage done">&#10003; Rerank 8 · 45ms</span>
+          <span class="pipeline-sep">/</span>
+          <span class="pipeline-stage done">&#10003; Answer 320ms</span>
+        </div>
+      </div>
+      <div class="results-layout">
+        <div class="sources-panel">
+          <div class="sources-label">Sources (8)</div>
+          <div class="source-item active">
+            <div class="source-meta">
+              <span class="source-index">1</span>
+              <span class="source-dim">requirement</span>
+              <span class="source-score">0.94</span>
+            </div>
+            <div class="source-text">The Q2 deadline for the billing module requires API integration with Stripe to be completed by April 20.</div>
+          </div>
+          <div class="source-item">
+            <div class="source-meta">
+              <span class="source-index">2</span>
+              <span class="source-dim">todo</span>
+              <span class="source-score">0.87</span>
+            </div>
+            <div class="source-text">Follow up with design team on the dashboard mockups, deadline is Friday.</div>
+          </div>
+          <div class="source-item">
+            <div class="source-meta">
+              <span class="source-index">3</span>
+              <span class="source-dim">requirement</span>
+              <span class="source-score">0.82</span>
+            </div>
+            <div class="source-text">User authentication must support SSO by launch date per security review.</div>
+          </div>
+          <div class="source-item">
+            <div class="source-meta">
+              <span class="source-index">4</span>
+              <span class="source-dim">project</span>
+              <span class="source-score">0.79</span>
+            </div>
+            <div class="source-text">Sprint retrospective noted that scope creep pushed the original March deadline to mid-April.</div>
+          </div>
+        </div>
+        <div class="answer-panel">
+          <div class="answer-label">Answer</div>
+          <div class="answer-content">
+            <p>Based on your notes, there are several project deadlines to be aware of:</p>
+            <p><strong>Q2 Billing Module</strong> — The Stripe API integration must be completed by April 20. This is the most critical deadline referenced across multiple notes.</p>
+            <p><strong>Dashboard Mockups</strong> — Design team review is due this Friday. This was flagged as a todo item in your meeting notes from Monday.</p>
+            <p><strong>SSO Authentication</strong> — Required for launch per the security review. No specific date mentioned, but it's blocked by the architecture decision pending from the platform team.</p>
+            <p>The sprint retrospective also noted that the original March deadline was pushed to mid-April due to scope changes in the reporting module.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<button class="state-toggle" onclick="toggle()">Toggle results</button>
+<script>
+  let showing = false;
+  function toggle() {
+    showing = !showing;
+    document.getElementById('empty-state').style.display = showing ? 'none' : 'flex';
+    document.getElementById('results-state').className = showing ? 'search-results visible' : 'search-results';
+  }
+</script>
+</body>
+</html>

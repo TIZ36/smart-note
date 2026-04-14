@@ -1,0 +1,10 @@
+services:
+  local-embed:
+    build:
+      context: ./embedding_service
+      dockerfile: Dockerfile
+    ports:
+      - "8009:8009"
+    environment:
+      - MODEL_NAME=sentence-transformers/all-MiniLM-L6-v2
+    restart: unless-stopped

@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Smart Notes MVP</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">Smart Notes</div>
+        <button class="nav-btn active" data-page="dashboard">Dashboard</button>
+        <button class="nav-btn" data-page="raw">Raw Input</button>
+        <button class="nav-btn" data-page="note">Note Views</button>
+        <button class="nav-btn" data-page="search">Search</button>
+        <button class="nav-btn" data-page="mcp">MCP Studio</button>
+        <button class="nav-btn" data-page="settings">Settings</button>
+      </aside>
+
+      <main class="content">
+        <section id="page-dashboard" class="page active">
+          <h1>Dashboard</h1>
+          <div class="card-grid">
+            <article class="card">
+              <h3>Raw Source</h3>
+              <p id="raw-status">Not bound</p>
+            </article>
+            <article class="card">
+              <h3>Gateway</h3>
+              <p id="gateway-status">Checking...</p>
+            </article>
+            <article class="card">
+              <h3>Embedding Mode</h3>
+              <p id="embed-mode">Unknown</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="page-raw" class="page">
+          <h1>Raw Input</h1>
+          <div class="card">
+            <label>Raw file path</label>
+            <input id="raw-path" placeholder="/path/to/raw.md" />
+            <label>Note output path</label>
+            <input id="note-path" placeholder="/path/to/note.md" />
+            <button class="primary">Run Incremental Ingest</button>
+            <small>In desktop app this will call local gateway command.</small>
+          </div>
+        </section>
+
+        <section id="page-note" class="page">
+          <h1>Note Views</h1>
+          <div class="card-grid">
+            <article class="card"><h3>Todo</h3><p>views/todo.md</p></article>
+            <article class="card"><h3>Requirements</h3><p>views/requirements.md</p></article>
+            <article class="card"><h3>Project Experience</h3><p>views/project-*.md</p></article>
+          </div>
+        </section>
+
+        <section id="page-search" class="page">
+          <h1>Search</h1>
+          <div class="card">
+            <textarea id="search-query" placeholder="Ask something..."></textarea>
+            <div class="row">
+              <button id="search-btn" class="primary">Search</button>
+              <button id="chat-btn">Answer with Evidence</button>
+            </div>
+            <pre id="search-output"></pre>
+          </div>
+        </section>
+
+        <section id="page-mcp" class="page">
+          <h1>MCP Studio</h1>
+          <div class="card">
+            <p>Planned in MVP+: provider test panel, MCP toggle, tool call replay.</p>
+            <label class="switch"><input type="checkbox" checked /> Enable sample MCP</label>
+          </div>
+        </section>
+
+        <section id="page-settings" class="page">
+          <h1>Settings</h1>
+          <div class="card">
+            <label>Mode</label>
+            <select>
+              <option>local (docker embedding)</option>
+              <option>api (provider key)</option>
+              <option>mock (dev)</option>
+            </select>
+            <label>Provider Base URL</label>
+            <input placeholder="https://api.openai.com/v1" />
+            <label>API Key</label>
+            <input type="password" placeholder="sk-..." />
+            <button class="primary">Save</button>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

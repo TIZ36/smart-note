@@ -1,0 +1,12 @@
+const { contextBridge, ipcRenderer } = require("electron");
+
+contextBridge.exposeInMainWorld("desktop", {
+  invoke(channel, payload) {
+    return ipcRenderer.invoke(channel, payload);
+  },
+  onIngestStatus(callback) {
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on("ingest:status", listener);
+    return () => ipcRenderer.removeListener("ingest:status", listener);
+  },
+});
