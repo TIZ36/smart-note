@@ -130,12 +130,6 @@ export function Sidebar({ activeChannel, onSelect, views, tags, onTagsChanged, g
           onClick={() => onSelect("special-knowledge")}
         />
         <NavItem
-          label="Special Knowledge"
-          icon={<BookPlus size={15} strokeWidth={2} />}
-          active={activeChannel === "special-knowledge"}
-          onClick={() => onSelect("special-knowledge")}
-        />
-        <NavItem
           label="Sync Rate"
           icon={<Activity size={15} strokeWidth={2} />}
           active={activeChannel === "sync-rate"}

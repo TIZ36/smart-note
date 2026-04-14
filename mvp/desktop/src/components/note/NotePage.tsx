@@ -72,11 +72,10 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
     <div className="flex flex-col h-full min-h-0">
       {/* Top bar */}
       <div className="proto-view-header">
-        <span style={{ cursor: "pointer" }} onClick={handlePickFile} title="Click to change file">
-          {rawPath.split("/").pop()}
-        </span>
+        <span>{rawPath.split("/").pop()}</span>
         {dirty && <span style={{ fontSize: 11, color: "var(--color-warning)", fontWeight: 500 }}>unsaved</span>}
         <span className="proto-view-header-file">{rawPath}</span>
+        <button type="button" onClick={handlePickFile} className="proto-view-open">Change</button>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
           {activeBuild && (
             <span style={{ fontSize: 11, color: "var(--color-text-muted)", fontFamily: "ui-monospace, monospace" }}>
