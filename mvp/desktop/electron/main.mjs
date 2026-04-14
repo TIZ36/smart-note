@@ -288,9 +288,10 @@ ipcMain.handle("append_text_to_raw", async (_, { rawPath, text }) => {
   const p = path.resolve(rawPath);
   const parent = path.dirname(p);
   fs.mkdirSync(parent, { recursive: true });
-  fs.appendFileSync(p, text, "utf8");
-  fs.appendFileSync(p, "\n", "utf8");
-  return { ok: true, output: "appended" };
+  // Prepend to top — newest content first
+  const existing = fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
+  fs.writeFileSync(p, `${text.trim()}\n\n${existing}`, "utf8");
+  return { ok: true, output: "prepended" };
 });
 
 ipcMain.handle("list_views", async (_, { notePath }) => {
@@ -467,7 +468,9 @@ function pasteClipboardToRaw() {
   try {
     const dir = path.dirname(rawPath);
     fs.mkdirSync(dir, { recursive: true });
-    fs.appendFileSync(rawPath, `\n${text.trim()}\n`, "utf8");
+    // Prepend to top — newest content first
+    const existing = fs.existsSync(rawPath) ? fs.readFileSync(rawPath, "utf8") : "";
+    fs.writeFileSync(rawPath, `${text.trim()}\n\n${existing}`, "utf8");
 
     new Notification({ title: "IntelliNote", body: `Pasted ${text.trim().split("\n").length} lines to raw file.` }).show();
 
