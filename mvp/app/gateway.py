@@ -100,6 +100,19 @@ def api_search(req: SearchRequest) -> dict:
     except Exception:
         pass  # Never fail search for validation
 
+    # Save to search history (keep latest 20, prune old)
+    try:
+        result_count = len(result.get("results", []))
+        with connect() as conn:
+            conn.execute(
+                "INSERT INTO search_history(query_text, result_count, tag_filter) VALUES(?, ?, ?)",
+                (req.query, result_count, req.tag_filter),
+            )
+            conn.execute("DELETE FROM search_history WHERE id NOT IN (SELECT id FROM search_history ORDER BY created_at DESC LIMIT 20)")
+            conn.commit()
+    except Exception:
+        pass
+
     return result
 
 
@@ -505,6 +518,22 @@ def api_tag_delete(tag_name: str) -> dict:
 def api_tag_reorder(req: TagReorderRequest) -> dict:
     tags = reorder_tags(req.order)
     return {"tags": tags}
+
+
+# ── Search history ──
+
+@app.get("/search/history")
+def api_search_history() -> dict:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT id, query_text, result_count, tag_filter, created_at FROM search_history ORDER BY created_at DESC LIMIT 20"
+        ).fetchall()
+    return {
+        "history": [
+            {"id": r["id"], "query": r["query_text"], "result_count": r["result_count"], "tag_filter": r["tag_filter"], "created_at": r["created_at"]}
+            for r in rows
+        ]
+    }
 
 
 @app.get("/tags/stats")

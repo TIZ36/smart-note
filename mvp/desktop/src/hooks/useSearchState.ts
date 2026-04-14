@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import type { SearchResult } from "../lib/types";
-import type { ChatHistoryItem } from "../lib/api";
+import { fetchSearchHistory, type ChatHistoryItem } from "../lib/api";
 
 export type ConversationTurn = {
   role: "user" | "assistant";
@@ -57,17 +57,15 @@ export function useSearchState(): SearchState {
   const [hasSearched, setHasSearched] = useState(false);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [aiEnabled, setAiEnabled] = useState(true);
-  const [searchHistory, setSearchHistory] = useState<HistoryEntry[]>(() => {
-    try {
-      const saved = localStorage.getItem("intellinote-search-history");
-      return saved ? JSON.parse(saved) : [];
-    } catch { return []; }
-  });
+  const [searchHistory, setSearchHistory] = useState<HistoryEntry[]>([]);
   const lastEvidenceIds = useRef<number[]>([]);
 
+  // Load search history from backend on mount
   useEffect(() => {
-    try { localStorage.setItem("intellinote-search-history", JSON.stringify(searchHistory.slice(0, 20))); } catch {}
-  }, [searchHistory]);
+    fetchSearchHistory()
+      .then((d) => setSearchHistory(d.history.map((h) => ({ query: h.query, resultCount: h.result_count, timestamp: new Date(h.created_at).getTime() }))))
+      .catch(() => {});
+  }, []);
 
   function getChatHistory(): ChatHistoryItem[] {
     return conversation.slice(-6).map((t) => ({

@@ -73,10 +73,10 @@ export function SearchPage({ searchState: s, tagNames }: Props) {
         recall: { status: "done", count: recallData.total_recall || recallData.results.length, ms: recallData.latency_ms },
       }));
 
-      s.setSearchHistory((prev) => [
-        { query: searchQuery, resultCount: recallData.results.length, timestamp: Date.now() },
-        ...prev.filter((h) => h.query !== searchQuery).slice(0, 19),
-      ]);
+      // Refresh history from backend (it auto-saves on each search)
+      api.fetchSearchHistory()
+        .then((d) => s.setSearchHistory(d.history.map((h) => ({ query: h.query, resultCount: h.result_count, timestamp: new Date(h.created_at).getTime() }))))
+        .catch(() => {});
 
       // Stage 2: Rerank
       const chunkIds = recallData.results

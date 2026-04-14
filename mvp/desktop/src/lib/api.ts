@@ -36,6 +36,14 @@ export async function fetchTagStats(): Promise<{ tags: { name: string; segments:
   return res.json();
 }
 
+// Search history
+export type SearchHistoryItem = { id: number; query: string; result_count: number; tag_filter: string | null; created_at: string };
+
+export async function fetchSearchHistory(): Promise<{ history: SearchHistoryItem[] }> {
+  const res = await fetch(`${BASE}/search/history`);
+  return res.json();
+}
+
 // Stage 2: Rerank
 export async function rerank(
   query: string,

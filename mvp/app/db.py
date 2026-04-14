@@ -80,6 +80,14 @@ CREATE TABLE IF NOT EXISTS memories (
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS search_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  query_text TEXT NOT NULL,
+  result_count INTEGER NOT NULL DEFAULT 0,
+  tag_filter TEXT,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS entities (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
@@ -275,6 +283,19 @@ def migrate_db() -> None:
             ts_cols = {r[1] for r in conn.execute("PRAGMA table_info(tag_segments)").fetchall()}
             if "topic_name" not in ts_cols:
                 conn.execute("ALTER TABLE tag_segments ADD COLUMN topic_name TEXT NOT NULL DEFAULT ''")
+
+        if "search_history" not in tables:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS search_history (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  query_text TEXT NOT NULL,
+                  result_count INTEGER NOT NULL DEFAULT 0,
+                  tag_filter TEXT,
+                  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
 
         if "qa_memories" not in tables:
             conn.execute(
