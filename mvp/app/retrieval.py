@@ -187,7 +187,50 @@ def search(query: str, topk: int = 5, tag_filter: str | None = None) -> dict:
         vec_scored.sort(key=lambda x: x[0], reverse=True)
 
         # Path 5: Q&A memory answer hits (from recall_qa_memories above)
-        # These are pre-scored by query embedding similarity
+
+        # ── Path 6: Tag metadata match (topic_name, summary, keywords) ──
+        # Match query against tag_segments' enriched metadata
+        # Chunks covered by matching segments get a boost
+        from app.builds import get_active_build_id as _get_active_build
+        active_build = _get_active_build()
+        tag_meta_boost: dict[int, float] = {}  # chunk_id → boost score
+        try:
+            if active_build:
+                seg_rows = conn.execute(
+                    "SELECT tag, topic_name, summary, keywords_json, line_start, line_end FROM tag_segments WHERE build_id = ?",
+                    (active_build,),
+                ).fetchall()
+            else:
+                seg_rows = conn.execute(
+                    "SELECT tag, topic_name, summary, keywords_json, line_start, line_end FROM tag_segments"
+                ).fetchall()
+
+            for seg in seg_rows:
+                # Score this segment's metadata against the query
+                meta_text = f"{seg['topic_name']} {seg['summary']} {seg['tag']}"
+                kws = []
+                try:
+                    kws = json.loads(seg["keywords_json"]) if seg["keywords_json"] else []
+                except Exception:
+                    pass
+                meta_text += " " + " ".join(kws)
+
+                seg_score = _substring_score(query, meta_text) * 0.6 + _ngram_score(query, meta_text) * 0.4
+                if seg_score > 0.15:
+                    # Find chunks covered by this segment's line range
+                    for row in all_rows:
+                        ref = row["source_ref"]  # e.g. "raw.md:line:5:line"
+                        try:
+                            parts = ref.split(":")
+                            if len(parts) >= 3:
+                                line_no = int(parts[2])
+                                if seg["line_start"] <= line_no <= seg["line_end"]:
+                                    rid = row["id"]
+                                    tag_meta_boost[rid] = max(tag_meta_boost.get(rid, 0), seg_score)
+                        except (ValueError, IndexError):
+                            pass
+        except Exception:
+            pass
 
         # ── Merge all paths into candidate pool ──
         merged: dict[int, dict] = {}
@@ -206,6 +249,7 @@ def search(query: str, topk: int = 5, tag_filter: str | None = None) -> dict:
                     "vec": 0.0,
                     "kw": 0.0,
                     "mem": 0.0,
+                    "tag_meta": 0.0,
                 }
             return merged[rid]
 
@@ -235,9 +279,10 @@ def search(query: str, topk: int = 5, tag_filter: str | None = None) -> dict:
             kws = _safe_json_list(row["keywords_json"])
             item["kw"] = max(item["kw"], _keyword_score(q_tokens, kws))
 
-        # N-gram score for all candidates in the pool
+        # N-gram score + tag metadata boost for all candidates
         for rid, item in merged.items():
             item["ngram"] = _ngram_score(query, item["text"])
+            item["tag_meta"] = tag_meta_boost.get(rid, 0.0)
 
         # ── Feedback bias ──
         positive_bias = 0.0
@@ -251,12 +296,13 @@ def search(query: str, topk: int = 5, tag_filter: str | None = None) -> dict:
         results = list(merged.values())
         for item in results:
             item["score"] = (
-                weights.get("fts", 0.20) * item["fts"]
-                + weights.get("sub", 0.20) * item["sub"]
-                + weights.get("ngram", 0.10) * item["ngram"]
-                + weights.get("vec", 0.25) * item["vec"]
-                + weights.get("kw", 0.15) * item["kw"]
-                + weights.get("mem", 0.05) * item["mem"]
+                weights.get("fts", 0.18) * item["fts"]
+                + weights.get("sub", 0.17) * item["sub"]
+                + weights.get("ngram", 0.08) * item["ngram"]
+                + weights.get("vec", 0.22) * item["vec"]
+                + weights.get("kw", 0.12) * item["kw"]
+                + weights.get("tag_meta", 0.15) * item["tag_meta"]
+                + weights.get("mem", 0.03) * item["mem"]
                 + positive_bias
             )
 
@@ -270,13 +316,13 @@ def search(query: str, topk: int = 5, tag_filter: str | None = None) -> dict:
 
         # Record per-path contribution for this query (which paths actually hit)
         path_contrib = {}
-        for key in ("fts", "sub", "ngram", "vec", "kw", "mem"):
+        for key in ("fts", "sub", "ngram", "vec", "kw", "tag_meta", "mem"):
             vals = [item.get(key, 0) for item in recall_results if item.get(key, 0) > 0]
             path_contrib[key] = len(vals) / max(len(recall_results), 1)
 
         # Clean up internal scoring fields for response
         for item in results:
-            for k in ("sub", "ngram"):
+            for k in ("sub", "ngram", "tag_meta"):
                 item.pop(k, None)
 
         # ── Path 6: Query profile memory (past successful Q&A) ──

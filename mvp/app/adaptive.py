@@ -16,12 +16,13 @@ from app.embed import embed_texts
 
 
 DEFAULT_WEIGHTS = {
-    "fts": 0.20,
-    "sub": 0.20,
-    "ngram": 0.10,
-    "vec": 0.25,
-    "kw": 0.15,
-    "mem": 0.05,
+    "fts": 0.18,
+    "sub": 0.17,
+    "ngram": 0.08,
+    "vec": 0.22,
+    "kw": 0.12,
+    "tag_meta": 0.15,
+    "mem": 0.03,
     "feedback_bias": 0.05,
 }
 
