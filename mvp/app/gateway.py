@@ -16,7 +16,7 @@ from app.knowledge_graph import get_graph
 from app.memory import add_feedback, save_qa_memory
 from app.rerank import rerank, rerank_with_llm
 from app.builds import get_active_build_id, list_builds, activate_build, delete_build
-from app.tags import get_all_tags, get_tags_with_desc, add_tag, delete_tag, reorder_tags
+from app.tags import get_all_tags, get_tags_with_desc, add_tag, delete_tag, reorder_tags, set_tag_color, TAG_COLORS
 from app.retrieval import search
 from app.rewrite import (
     generate_candidate,
@@ -527,6 +527,7 @@ def api_tags() -> dict:
             {
                 "name": t["name"],
                 "desc": t.get("desc", ""),
+                "color": t.get("color", "gray"),
                 "segments": counts.get(t["name"], {}).get("segments", 0),
                 "lines": counts.get(t["name"], {}).get("lines", 0),
             }
@@ -551,6 +552,22 @@ def api_tag_delete(tag_name: str) -> dict:
 def api_tag_reorder(req: TagReorderRequest) -> dict:
     tags = reorder_tags(req.order)
     return {"tags": tags}
+
+
+class TagColorRequest(BaseModel):
+    name: str
+    color: str
+
+
+@app.post("/tags/color")
+def api_tag_color(req: TagColorRequest) -> dict:
+    tags = set_tag_color(req.name, req.color)
+    return {"tags": tags}
+
+
+@app.get("/tags/colors")
+def api_tag_colors() -> dict:
+    return {"colors": TAG_COLORS}
 
 
 # ── Search history ──

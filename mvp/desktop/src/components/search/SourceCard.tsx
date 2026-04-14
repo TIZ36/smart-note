@@ -23,7 +23,7 @@ export function SourceCard({ index, result, highlighted, onClick }: Props) {
     >
       <div className="proto-source-meta">
         <span>{index}</span>
-        <span className="proto-source-meta-dim">{result.dimension}</span>
+        <span className={cn("proto-source-meta-dim", `proto-tag-color-${result._tagColor || "gray"}`)}>{result.dimension}</span>
         <span className="proto-source-meta-score">
           {Number(result.score || 0).toFixed(2)}
         </span>

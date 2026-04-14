@@ -21,10 +21,12 @@ type Stages = {
 
 type Props = {
   searchState: SearchState;
-  tagNames: string[];
+  tags: { name: string; color?: string }[];
 };
 
-export function SearchPage({ searchState: s, tagNames }: Props) {
+export function SearchPage({ searchState: s, tags }: Props) {
+  const tagNames = tags.map(t => t.name);
+  const tagColorMap = Object.fromEntries(tags.map(t => [t.name, t.color || "gray"]));
   const [stages, setStages] = useState<Stages>({
     recall: { status: "idle" },
     rerank: { status: "idle" },
@@ -171,13 +173,14 @@ export function SearchPage({ searchState: s, tagNames }: Props) {
 
   // Unified sorted results
   const displayResults = (() => {
-    if (s.rerankedResults.length === 0) return s.recallResults;
+    const addColor = (r: typeof s.recallResults[0]) => ({ ...r, _tagColor: tagColorMap[r.dimension] || "gray" });
+    if (s.rerankedResults.length === 0) return s.recallResults.map(addColor);
     const rerankScoreMap = new Map<number | string, number>();
     s.rerankedResults.forEach((r) => {
       rerankScoreMap.set(r.id, r.rerank_score ?? r.score ?? 0);
     });
     return s.recallResults
-      .map((r) => ({ ...r, score: rerankScoreMap.get(r.id) ?? r.score ?? 0, _reranked: rerankScoreMap.has(r.id) }))
+      .map((r) => ({ ...r, score: rerankScoreMap.get(r.id) ?? r.score ?? 0, _reranked: rerankScoreMap.has(r.id), _tagColor: tagColorMap[r.dimension] || "gray" }))
       .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
   })();
   const isSearching = stages.recall.status === "running";

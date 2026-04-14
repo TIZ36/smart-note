@@ -181,7 +181,7 @@ export async function rejectRewrite(candidateId: number): Promise<Record<string,
 }
 
 // Tags
-export type TagInfo = { name: string; desc?: string; segments: number; lines: number };
+export type TagInfo = { name: string; desc?: string; color?: string; segments: number; lines: number };
 export type TagSegment = {
   id: number;
   source_file: string;
@@ -209,6 +209,15 @@ export async function addTag(name: string, desc = ""): Promise<{ tags: TagInfo[]
 
 export async function deleteTag(name: string): Promise<{ tags: TagInfo[] }> {
   const res = await fetch(`${BASE}/tags/${encodeURIComponent(name)}`, { method: "DELETE" });
+  return res.json();
+}
+
+export async function setTagColor(name: string, color: string): Promise<{ tags: TagInfo[] }> {
+  const res = await fetch(`${BASE}/tags/color`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, color }),
+  });
   return res.json();
 }
 

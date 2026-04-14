@@ -11,15 +11,18 @@ from pathlib import Path
 
 from app.config import settings
 
+# macOS-style tag colors
+TAG_COLORS = ["red", "orange", "yellow", "green", "blue", "purple", "gray"]
+
 SYSTEM_TAGS = [
-    {"name": "learn", "desc": "Study notes, tutorials, knowledge, reading notes, technical learning"},
-    {"name": "work", "desc": "Work tasks, meetings, projects, requirements, bugs, deployment"},
-    {"name": "todo", "desc": "Action items, follow-ups, checklists, deadlines, pending tasks"},
-    {"name": "daily_life", "desc": "Personal life, health, finance, shopping, travel, family"},
-    {"name": "password", "desc": "API keys, tokens, passwords, secrets, credentials, certificates"},
-    {"name": "reminder", "desc": "Reminders, alerts, scheduled events, important dates"},
-    {"name": "hobby", "desc": "Hobbies, entertainment, games, music, movies, sports, side projects"},
-    {"name": "others", "desc": "Anything that doesn't fit the above categories"},
+    {"name": "learn", "desc": "Study notes, tutorials, knowledge, reading notes, technical learning", "color": "blue"},
+    {"name": "work", "desc": "Work tasks, meetings, projects, requirements, bugs, deployment", "color": "green"},
+    {"name": "todo", "desc": "Action items, follow-ups, checklists, deadlines, pending tasks", "color": "red"},
+    {"name": "daily_life", "desc": "Personal life, health, finance, shopping, travel, family", "color": "orange"},
+    {"name": "password", "desc": "API keys, tokens, passwords, secrets, credentials, certificates", "color": "yellow"},
+    {"name": "reminder", "desc": "Reminders, alerts, scheduled events, important dates", "color": "purple"},
+    {"name": "hobby", "desc": "Hobbies, entertainment, games, music, movies, sports, side projects", "color": "green"},
+    {"name": "others", "desc": "Anything that doesn't fit the above categories", "color": "gray"},
 ]
 
 
@@ -56,15 +59,16 @@ def get_tags_with_desc() -> list[dict]:
     return _load_tags()
 
 
-def add_tag(name: str, desc: str = "") -> list[dict]:
+def add_tag(name: str, desc: str = "", color: str = "gray") -> list[dict]:
     """Add a new tag. Auto-generates desc from name if not provided."""
     tags = _load_tags()
     if any(t["name"] == name for t in tags):
-        return tags  # Already exists
+        return tags
     if not desc:
-        # Generate a useful description from the tag name
         desc = f"Notes related to {name.replace('_', ' ')}"
-    tags.append({"name": name, "desc": desc})
+    if color not in TAG_COLORS:
+        color = "gray"
+    tags.append({"name": name, "desc": desc, "color": color})
     _save_tags(tags)
     return tags
 
@@ -92,6 +96,19 @@ def reorder_tags(ordered_names: list[str]) -> list[dict]:
         reordered.append(t)
     _save_tags(reordered)
     return reordered
+
+
+def set_tag_color(name: str, color: str) -> list[dict]:
+    """Set a tag's color. Returns updated tag list."""
+    if color not in TAG_COLORS:
+        color = "gray"
+    tags = _load_tags()
+    for t in tags:
+        if t["name"] == name:
+            t["color"] = color
+            break
+    _save_tags(tags)
+    return tags
 
 
 def get_tag_list_for_prompt() -> str:

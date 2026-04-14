@@ -62,6 +62,17 @@ export function Sidebar({ activeChannel, onSelect, views, tags, onTagsChanged, g
   const [busy, setBusy] = useState(false);
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [dropIdx, setDropIdx] = useState<number | null>(null);
+  const [colorPickerTag, setColorPickerTag] = useState<string | null>(null);
+
+  const TAG_COLORS = ["red", "orange", "yellow", "green", "blue", "purple", "gray"];
+
+  async function handleSetColor(name: string, color: string) {
+    if (busy) return;
+    setBusy(true);
+    try { await api.setTagColor(name, color); onTagsChanged(); } catch {}
+    setBusy(false);
+    setColorPickerTag(null);
+  }
 
   async function handleAddTag() {
     const raw = newTag.trim();
@@ -154,7 +165,18 @@ export function Sidebar({ activeChannel, onSelect, views, tags, onTagsChanged, g
               )}
               <NavItem
                 label={t.name}
-                icon={<Tag size={14} strokeWidth={2} />}
+                icon={
+                  editMode ? (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setColorPickerTag(colorPickerTag === t.name ? null : t.name); }}
+                      className={cn("proto-tag-dot", `proto-tag-dot-${t.color || "gray"}`)}
+                      title="Change color"
+                    />
+                  ) : (
+                    <span className={cn("proto-tag-dot", `proto-tag-dot-${t.color || "gray"}`)} />
+                  )
+                }
                 active={activeChannel === `tag:${t.name}`}
                 onClick={() => onSelect(`tag:${t.name}`)}
                 trailing={
@@ -172,6 +194,19 @@ export function Sidebar({ activeChannel, onSelect, views, tags, onTagsChanged, g
                   ) : undefined
                 }
               />
+              {/* Color picker popup */}
+              {editMode && colorPickerTag === t.name && (
+                <div className="proto-tag-color-picker" style={{ paddingLeft: 32 }}>
+                  {TAG_COLORS.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); handleSetColor(t.name, c); }}
+                      className={cn("proto-tag-color-swatch", `proto-tag-dot-${c}`, t.color === c && "proto-tag-color-swatch-active")}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           ))}
 

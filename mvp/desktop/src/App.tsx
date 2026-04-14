@@ -107,7 +107,7 @@ export default function App() {
 
   function renderMainPanel() {
     if (activeChannel === "settings") return <SettingsPanel />;
-    if (activeChannel === "search") return <SearchPage searchState={searchState} tagNames={tags.map(t => t.name)} />;
+    if (activeChannel === "search") return <SearchPage searchState={searchState} tags={tags} />;
     if (activeChannel === "raw-input") {
       return <IngestPanel rawPath={prefs.rawPath} notePath={prefs.notePath} onSetRawPath={prefs.setRawPath} onSetNotePath={prefs.setNotePath} onIngestComplete={handleIngestComplete} ingestBusy={ingestBusy} ingestSteps={ingestSteps} ingestResult={ingestResult} />;
     }

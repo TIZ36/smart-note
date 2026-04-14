@@ -36,6 +36,7 @@ export type SearchResult = {
   score: number;
   rerank_score?: number;
   _reranked?: boolean;
+  _tagColor?: string;
 };
 
 export type SearchResponse = {
