@@ -1,4 +1,6 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, clipboard, globalShortcut, Notification } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, shell, clipboard } from "electron";
+import electron from "electron";
+const { globalShortcut, Notification } = electron;
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
@@ -213,6 +215,8 @@ function createWindow() {
 
 app.whenReady().then(() => {
   createWindow();
+  loadHotkeyConfig();
+  registerHotkey();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -434,12 +438,6 @@ function registerHotkey() {
     console.warn(`[hotkey] Registration error: ${err.message}`);
   }
 }
-
-// Register on app ready (after createWindow)
-app.whenReady().then(() => {
-  loadHotkeyConfig();
-  registerHotkey();
-});
 
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
