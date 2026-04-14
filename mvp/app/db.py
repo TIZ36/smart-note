@@ -128,6 +128,7 @@ CREATE TABLE IF NOT EXISTS builds (
   token_usage_json TEXT NOT NULL DEFAULT '{}',
   estimated_cost_cny REAL NOT NULL DEFAULT 0,
   tags_json TEXT NOT NULL DEFAULT '{}',
+  tags_config_json TEXT NOT NULL DEFAULT '[]',
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -285,10 +286,15 @@ def migrate_db() -> None:
                   token_usage_json TEXT NOT NULL DEFAULT '{}',
                   estimated_cost_cny REAL NOT NULL DEFAULT 0,
                   tags_json TEXT NOT NULL DEFAULT '{}',
+                  tags_config_json TEXT NOT NULL DEFAULT '[]',
                   created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
                 """
             )
+        else:
+            b_cols = {r[1] for r in conn.execute("PRAGMA table_info(builds)").fetchall()}
+            if "tags_config_json" not in b_cols:
+                conn.execute("ALTER TABLE builds ADD COLUMN tags_config_json TEXT NOT NULL DEFAULT '[]'")
 
         if "tag_segments" not in tables:
             conn.executescript(
