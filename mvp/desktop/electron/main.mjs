@@ -231,6 +231,54 @@ ipcMain.handle("ingest_raw", async (_, { rawPath, notePath, reset }) => {
   return runIngestCmd(rawPath, notePath, doReset);
 });
 
+ipcMain.handle("special_ingest_async", async (event, { folderPath, topicName }) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  emitIngest(win, { status: "started", step: "parse", current: 0, total: 0, elapsed_ms: 0, message: `Ingesting folder: ${topicName || path.basename(folderPath)}` });
+
+  const args = ["-m", "app.cli", "special-ingest", "--folder", folderPath];
+  if (topicName) args.push("--topic", topicName);
+  const proc = spawn(pythonBin(), args, { cwd: appRoot(), stdio: ["ignore", "pipe", "pipe"] });
+
+  proc.on("error", (e) => {
+    emitIngest(win, { status: "error", step: "", current: 0, total: 0, elapsed_ms: 0, message: `Failed: ${e.message}` });
+  });
+
+  if (proc.stderr) {
+    const rl = readline.createInterface({ input: proc.stderr });
+    rl.on("line", (line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      try {
+        const parsed = JSON.parse(trimmed);
+        emitIngest(win, {
+          status: parsed.step === "done" ? "completed" : "progress",
+          step: parsed.step ?? "",
+          current: Number(parsed.current ?? 0),
+          total: Number(parsed.total ?? 0),
+          elapsed_ms: Number(parsed.elapsed_ms ?? 0),
+          message: parsed.detail ?? "",
+        });
+      } catch {}
+    });
+  }
+
+  let stdoutBuf = "";
+  proc.stdout?.on("data", (c) => { stdoutBuf += c.toString(); });
+  proc.on("close", (code) => {
+    let message = "Special ingest completed.";
+    try { message = JSON.parse(stdoutBuf.trim())?.message ?? message; } catch {}
+    emitIngest(win, { status: code === 0 ? "completed" : "error", step: "done", current: 0, total: 0, elapsed_ms: 0, message });
+  });
+});
+
+ipcMain.handle("dialog_open_folder", async () => {
+  const r = await dialog.showOpenDialog(mainWindow ?? undefined, {
+    properties: ["openDirectory"],
+  });
+  if (r.canceled || !r.filePaths[0]) return null;
+  return r.filePaths[0];
+});
+
 ipcMain.handle("ingest_raw_async", async (event, { rawPath, notePath, reset }) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   ingestRawAsync(win, rawPath, notePath, !!reset);
@@ -268,6 +316,11 @@ ipcMain.handle("read_text_file", async (_, { path: filePath }) => {
   const content = fs.readFileSync(filePath, "utf8");
   const preview = content.slice(0, 4000);
   return { ok: true, output: preview };
+});
+
+ipcMain.handle("read_file_full", async (_, { path: filePath }) => {
+  const content = fs.readFileSync(filePath, "utf8");
+  return { ok: true, output: content };
 });
 
 ipcMain.handle("get_mvp_status", async () => ({

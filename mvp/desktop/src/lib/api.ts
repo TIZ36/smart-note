@@ -240,6 +240,14 @@ export async function fetchTagSource(tag: string, segmentId: number): Promise<{ 
   return res.json();
 }
 
+// Special Knowledge
+export type SpecialKnowledgeTopic = { id: number; topic: string; summary: string; folder: string; created_at: string };
+
+export async function fetchSpecialKnowledge(): Promise<{ topics: SpecialKnowledgeTopic[] }> {
+  const res = await fetch(`${BASE}/special-knowledge`);
+  return res.json();
+}
+
 // Builds
 export type BuildInfo = {
   id: string;

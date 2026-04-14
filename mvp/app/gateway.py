@@ -494,6 +494,53 @@ def api_build_delete(build_id: str) -> dict:
     return {"deleted": build_id}
 
 
+# ── Special Knowledge Ingest ──
+
+class SpecialIngestRequest(BaseModel):
+    folder_path: str
+    topic_name: str | None = None
+
+
+@app.post("/special-ingest")
+def api_special_ingest(req: SpecialIngestRequest) -> dict:
+    """Ingest a folder as a specialknowledge topic."""
+    from app.special_ingest import ingest_folder
+    try:
+        return ingest_folder(req.folder_path, topic_name=req.topic_name)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/special-knowledge")
+def api_special_knowledge() -> dict:
+    """List all specialknowledge topics."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT id, topic_name, summary, source_file, created_at FROM tag_segments WHERE tag = 'specialknowledge' ORDER BY created_at DESC"
+        ).fetchall()
+        # Count chunks per topic source
+        chunk_counts = {}
+        for row in conn.execute(
+            "SELECT source_file, COUNT(1) c FROM chunks WHERE dimension = 'specialknowledge' GROUP BY source_file"
+        ).fetchall():
+            # Map to folder
+            chunk_counts[row["source_file"]] = chunk_counts.get(row["source_file"], 0) + row["c"]
+    topics = []
+    seen = set()
+    for r in rows:
+        if r["topic_name"] in seen:
+            continue
+        seen.add(r["topic_name"])
+        topics.append({
+            "id": r["id"],
+            "topic": r["topic_name"],
+            "summary": r["summary"],
+            "folder": r["source_file"],
+            "created_at": r["created_at"],
+        })
+    return {"topics": topics}
+
+
 class TagAddRequest(BaseModel):
     name: str
     desc: str = ""

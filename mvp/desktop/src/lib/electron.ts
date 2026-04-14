@@ -92,6 +92,20 @@ export async function openPath(path: string): Promise<void> {
   await getDesktop().invoke("shell_open_path", { path });
 }
 
+export async function readFileFull(path: string): Promise<CmdResult> {
+  return getDesktop().invoke("read_file_full", { path }) as Promise<CmdResult>;
+}
+
+// ── Special Knowledge Ingest ──
+
+export async function specialIngestAsync(folderPath: string, topicName?: string): Promise<void> {
+  await getDesktop().invoke("special_ingest_async", { folderPath, topicName: topicName || undefined });
+}
+
+export async function pickFolder(): Promise<string | null> {
+  return getDesktop().invoke("dialog_open_folder") as Promise<string | null>;
+}
+
 // ── Global Hotkey ──
 
 export async function getHotkey(): Promise<string> {

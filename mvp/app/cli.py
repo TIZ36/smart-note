@@ -36,6 +36,17 @@ def cmd_rebuild_memory(_: argparse.Namespace) -> None:
     print("Q&A memories are now auto-created on feedback. No manual rebuild needed.")
 
 
+def cmd_special_ingest(args: argparse.Namespace) -> None:
+    from app.special_ingest import ingest_folder
+    try:
+        result = ingest_folder(args.folder, topic_name=args.topic)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    except Exception as e:
+        print(json.dumps({"inserted": 0, "files": 0, "message": f"Special ingest failed: {e}"}, ensure_ascii=False))
+        import sys
+        sys.exit(1)
+
+
 def cmd_serve(args: argparse.Namespace) -> None:
     uvicorn.run("app.gateway:app", host="127.0.0.1", port=args.port, reload=False)
 
@@ -64,6 +75,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("rebuild-memory")
     s.set_defaults(func=cmd_rebuild_memory)
+
+    s = sub.add_parser("special-ingest")
+    s.add_argument("--folder", required=True, help="Path to folder to ingest")
+    s.add_argument("--topic", default=None, help="Custom topic name (defaults to folder name)")
+    s.set_defaults(func=cmd_special_ingest)
 
     s = sub.add_parser("serve")
     s.add_argument("--port", type=int, default=8787)

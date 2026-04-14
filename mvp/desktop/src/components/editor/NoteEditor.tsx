@@ -4,7 +4,7 @@ import { EditorState } from "@codemirror/state";
 import { markdown } from "@codemirror/lang-markdown";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
-import { readTextFile } from "@/lib/electron";
+import { readFileFull } from "@/lib/electron";
 
 type Props = {
   filePath: string;
@@ -94,7 +94,7 @@ export function NoteEditor({ filePath, onSave, onDirty }: Props) {
     if (!containerRef.current) return;
 
     setLoading(true);
-    readTextFile(filePath).then((result) => {
+    readFileFull(filePath).then((result) => {
       const content = result.output || "";
       lastSavedRef.current = content;
 

@@ -11,6 +11,7 @@ import {
   Pencil,
   GripVertical,
   FileEdit,
+  BookPlus,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { ChannelId, ViewItem } from "@/lib/types";
@@ -127,6 +128,12 @@ export function Sidebar({ activeChannel, onSelect, views, tags, onTagsChanged, g
           icon={<FileEdit size={15} strokeWidth={2} />}
           active={activeChannel === "editor"}
           onClick={() => onSelect("editor")}
+        />
+        <NavItem
+          label="Special Knowledge"
+          icon={<BookPlus size={15} strokeWidth={2} />}
+          active={activeChannel === "special-knowledge"}
+          onClick={() => onSelect("special-knowledge")}
         />
         <NavItem
           label="Sync Rate"

@@ -9,6 +9,7 @@ import { Toast } from "./components/layout/Toast";
 import { VersionsPanel } from "./components/versions/VersionsPanel";
 import { SyncRatePanel } from "./components/sync/SyncRatePanel";
 import { NoteEditor } from "./components/editor/NoteEditor";
+import { SpecialKnowledgePanel } from "./components/special/SpecialKnowledgePanel";
 import { usePrefs } from "./hooks/usePrefs";
 import { useHealth } from "./hooks/useHealth";
 import { useViews } from "./hooks/useViews";
@@ -136,6 +137,7 @@ export default function App() {
       );
     }
     if (activeChannel === "sync-rate") return <SyncRatePanel />;
+    if (activeChannel === "special-knowledge") return <SpecialKnowledgePanel ingestBusy={ingestBusy} ingestSteps={ingestSteps} ingestResult={ingestResult} />;
     // Tag channels: "tag:learn", "tag:work", etc.
     if (activeChannel.startsWith("tag:")) {
       return <TagView tag={activeChannel.slice(4)} />;
