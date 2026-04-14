@@ -153,14 +153,14 @@ export function NoteEditor({ filePath, onSave, onDirty }: Props) {
   }, [filePath]); // Re-create editor when file changes
 
   return (
-    <div className="flex flex-col h-full min-h-0">
-      <div className="flex-1 min-h-0 overflow-hidden">
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+      <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
         {loading && (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--color-text-muted)", fontSize: 13 }}>
             Loading...
           </div>
         )}
-        <div ref={containerRef} style={{ height: "100%", display: loading ? "none" : "block" }} />
+        <div ref={containerRef} style={{ position: "absolute", inset: 0, display: loading ? "none" : "block" }} />
       </div>
     </div>
   );
