@@ -176,11 +176,16 @@ export function Sidebar({ activeChannel, onSelect, tags, onTagsChanged, gatewayO
                     <button
                       type="button"
                       onClick={(e) => { e.stopPropagation(); setColorPickerTag(colorPickerTag === t.name ? null : t.name); }}
-                      className={cn("proto-tag-dot", `proto-tag-dot-${t.color || "gray"}`)}
+                      className={cn(`proto-tag-color-${t.color || "gray"}`)}
+                      style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex" }}
                       title="Change color"
-                    />
+                    >
+                      <Tag size={14} strokeWidth={2} />
+                    </button>
                   ) : (
-                    <span className={cn("proto-tag-dot", `proto-tag-dot-${t.color || "gray"}`)} />
+                    <span className={cn(`proto-tag-color-${t.color || "gray"}`)}>
+                      <Tag size={14} strokeWidth={2} />
+                    </span>
                   )
                 }
                 active={activeChannel === `tag:${t.name}`}
