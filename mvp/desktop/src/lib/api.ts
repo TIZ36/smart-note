@@ -231,6 +231,36 @@ export async function fetchTagSource(tag: string, segmentId: number): Promise<{ 
   return res.json();
 }
 
+// Builds
+export type BuildInfo = {
+  id: string;
+  source_file: string;
+  chunk_count: number;
+  segment_count: number;
+  is_active: boolean;
+  token_usage: Record<string, number>;
+  estimated_cost_cny: number;
+  tags: Record<string, number>;
+  created_at: string;
+};
+
+export async function fetchBuilds(): Promise<{ builds: BuildInfo[] }> {
+  const res = await fetch(`${BASE}/builds`);
+  return res.json();
+}
+
+export async function activateBuild(buildId: string): Promise<void> {
+  await fetch(`${BASE}/builds/activate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ build_id: buildId }),
+  });
+}
+
+export async function deleteBuild(buildId: string): Promise<void> {
+  await fetch(`${BASE}/builds/${encodeURIComponent(buildId)}`, { method: "DELETE" });
+}
+
 export async function fetchGraph(): Promise<GraphData> {
   const res = await fetch(`${BASE}/graph`);
   return res.json();

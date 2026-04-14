@@ -3,6 +3,7 @@ import { Play, RefreshCw, ClipboardPaste, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/cn";
 import { ingestRawAsync, appendTextToRaw, readClipboard, pickRawFile, pickNoteFile } from "@/lib/electron";
+import * as api from "@/lib/api";
 import type { IngestStep } from "@/App";
 
 type Props = {
@@ -35,36 +36,38 @@ function formatElapsed(ms: number): string {
 
 export function IngestPanel({ rawPath, notePath, onSetRawPath, onSetNotePath, onIngestComplete, ingestBusy, ingestSteps, ingestResult }: Props) {
   const [pasteMsg, setPasteMsg] = useState("");
-  const [versions, setVersions] = useState<Version[]>([]);
-  const [expandedVersion, setExpandedVersion] = useState<string | null>(null);
-  const [versionBusy, setVersionBusy] = useState<string | null>(null);
+  const [builds, setBuilds] = useState<api.BuildInfo[]>([]);
+  const [expandedBuild, setExpandedBuild] = useState<string | null>(null);
+  const [buildBusy, setBuildBusy] = useState<string | null>(null);
 
-  useEffect(() => { loadVersions(); }, [ingestResult]);
+  useEffect(() => { loadBuilds(); }, [ingestResult]);
 
-  function loadVersions() {
-    fetch("http://127.0.0.1:8787/versions")
-      .then((r) => r.json())
-      .then((d) => setVersions(d.versions || []))
-      .catch(() => setVersions([]));
+  function loadBuilds() {
+    api.fetchBuilds()
+      .then((d) => setBuilds(d.builds || []))
+      .catch(() => setBuilds([]));
   }
 
-  async function handleRestore(id: string) {
-    if (!notePath || versionBusy) return;
-    setVersionBusy(id);
+  async function handleActivate(id: string) {
+    if (buildBusy) return;
+    setBuildBusy(id);
     try {
-      await fetch("http://127.0.0.1:8787/versions/restore", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version_id: id, note_path: notePath }) });
-      onIngestComplete();
-      loadVersions();
-    } catch (err) { setPasteMsg(`Restore failed: ${String(err)}`); }
-    finally { setVersionBusy(null); }
+      await api.activateBuild(id);
+      onIngestComplete();  // Refresh tags in sidebar
+      loadBuilds();
+    } catch {}
+    setBuildBusy(null);
   }
 
-  async function handleDelete(id: string) {
-    if (versionBusy) return;
-    setVersionBusy(id);
-    try { await fetch(`http://127.0.0.1:8787/versions/${encodeURIComponent(id)}`, { method: "DELETE" }); loadVersions(); }
-    catch {}
-    setVersionBusy(null);
+  async function handleDeleteBuild(id: string) {
+    if (buildBusy) return;
+    setBuildBusy(id);
+    try {
+      await api.deleteBuild(id);
+      loadBuilds();
+      onIngestComplete();
+    } catch {}
+    setBuildBusy(null);
   }
 
   async function handlePickRaw() { const p = await pickRawFile(); if (p) onSetRawPath(p); }
@@ -84,7 +87,7 @@ export function IngestPanel({ rawPath, notePath, onSetRawPath, onSetNotePath, on
     } catch (err) { setPasteMsg(`Failed: ${String(err)}`); }
   }
 
-  const hasActivity = ingestSteps.length > 0 || versions.length > 0;
+  const hasActivity = ingestSteps.length > 0 || builds.length > 0;
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -220,57 +223,51 @@ export function IngestPanel({ rawPath, notePath, onSetRawPath, onSetNotePath, on
               )}
             </AnimatePresence>
 
-            {/* Version Timeline */}
-            {versions.length > 0 && (
+            {/* Builds Timeline */}
+            {builds.length > 0 && (
               <div>
                 <h2 style={{ fontSize: 12, fontWeight: 500, color: "var(--color-text-muted)", marginBottom: 12 }}>
-                  Version History
+                  Builds
                 </h2>
-                {versions.map((v, i) => {
-                  const isCurrent = i === 0;
-                  const isLoading = versionBusy === v.version;
-                  const isExpanded = expandedVersion === v.version;
-                  const hasCost = v.estimated_cost_cny != null && v.estimated_cost_cny > 0;
+                {builds.map((b) => {
+                  const isLoading = buildBusy === b.id;
+                  const isExpanded = expandedBuild === b.id;
+                  const hasCost = b.estimated_cost_cny > 0;
                   return (
-                    <div key={v.version}>
-                      <div className="proto-version-item" style={{ cursor: "pointer" }} onClick={() => setExpandedVersion(isExpanded ? null : v.version)}>
-                        <div className={cn("proto-version-dot", !isCurrent && "proto-version-dot-old")} />
+                    <div key={b.id}>
+                      <div className="proto-version-item" style={{ cursor: "pointer" }} onClick={() => setExpandedBuild(isExpanded ? null : b.id)}>
+                        <div className={cn("proto-version-dot", !b.is_active && "proto-version-dot-old")} />
                         <div className="flex-1 min-w-0">
-                          <div className="proto-version-id">{v.version}</div>
+                          <div className="proto-version-id">{b.id}</div>
                           <div className="proto-version-meta">
-                            {v.reason} · {v.chunk_count} chunks
-                            {hasCost && <span style={{ color: "var(--color-warning)" }}> · ¥{v.estimated_cost_cny?.toFixed(2)}</span>}
+                            {b.chunk_count} chunks · {b.segment_count} segments
+                            {hasCost && <span style={{ color: "var(--color-warning)" }}> · ¥{b.estimated_cost_cny.toFixed(2)}</span>}
                           </div>
                         </div>
                         <div style={{ display: "flex", gap: 8, alignItems: "center" }} onClick={(e) => e.stopPropagation()}>
-                          {isCurrent && <span className="proto-version-current">current</span>}
-                          {!isCurrent && (
-                            <button type="button" onClick={() => handleRestore(v.version)} disabled={versionBusy !== null || ingestBusy} className="proto-version-action">
-                              {isLoading ? <Loader2 size={11} className="animate-spin" /> : "Restore"}
+                          {b.is_active ? (
+                            <span className="proto-version-current">active</span>
+                          ) : (
+                            <button type="button" onClick={() => handleActivate(b.id)} disabled={buildBusy !== null || ingestBusy} className="proto-version-action">
+                              {isLoading ? <Loader2 size={11} className="animate-spin" /> : "Activate"}
                             </button>
                           )}
-                          <button
-                            type="button"
-                            onClick={() => handleDelete(v.version)}
-                            disabled={versionBusy !== null || ingestBusy}
-                          className="proto-version-action-danger"
-                        >
-                          Delete
-                        </button>
+                          <button type="button" onClick={() => handleDeleteBuild(b.id)} disabled={buildBusy !== null || ingestBusy} className="proto-version-action-danger">
+                            Delete
+                          </button>
+                        </div>
                       </div>
-                      </div>
-                      {/* Expanded detail */}
                       {isExpanded && (
                         <div style={{ padding: "8px 0 8px 20px", fontSize: 12, color: "var(--color-text-secondary)", lineHeight: 1.6 }}>
-                          {v.token_usage && (
-                            <p>Tokens: {v.token_usage.prompt_tokens?.toLocaleString()} prompt + {v.token_usage.completion_tokens?.toLocaleString()} completion = {v.token_usage.total_tokens?.toLocaleString()} total</p>
+                          {b.token_usage?.total_tokens != null && (
+                            <p>Tokens: {b.token_usage.prompt_tokens?.toLocaleString()} prompt + {b.token_usage.completion_tokens?.toLocaleString()} completion = {b.token_usage.total_tokens?.toLocaleString()} total</p>
                           )}
-                          {hasCost && <p>Cost: ~¥{v.estimated_cost_cny?.toFixed(2)} (~${v.estimated_cost_cny ? (v.estimated_cost_cny / 7.2).toFixed(4) : "0"} USD)</p>}
-                          {v.segments != null && <p>Segments: {v.segments}</p>}
-                          {v.tags && Object.keys(v.tags).length > 0 && (
-                            <p>Tags: {Object.entries(v.tags).map(([t, c]) => `${t}(${c})`).join(", ")}</p>
+                          {hasCost && <p>Cost: ~¥{b.estimated_cost_cny.toFixed(2)} (~${(b.estimated_cost_cny / 7.2).toFixed(4)} USD)</p>}
+                          <p>Segments: {b.segment_count}</p>
+                          {Object.keys(b.tags).length > 0 && (
+                            <p>Tags: {Object.entries(b.tags).sort(([,a],[,b]) => b - a).map(([t, c]) => `${t}(${c})`).join(", ")}</p>
                           )}
-                          <p>Created: {v.created_at}</p>
+                          <p>Created: {b.created_at}</p>
                         </div>
                       )}
                     </div>

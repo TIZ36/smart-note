@@ -15,6 +15,7 @@ from app.embed import embed_texts
 from app.knowledge_graph import get_graph
 from app.memory import add_feedback, save_qa_memory
 from app.rerank import rerank, rerank_with_llm
+from app.builds import get_active_build_id, list_builds, activate_build, delete_build
 from app.tags import get_all_tags, get_tags_with_desc, add_tag, delete_tag, reorder_tags
 from app.retrieval import search
 from app.rewrite import (
@@ -470,6 +471,29 @@ def api_rewrite_reject(req: RewriteApproveRequest) -> dict:
 
 # ── Tags ──
 
+# ── Builds ──
+
+class BuildActivateRequest(BaseModel):
+    build_id: str
+
+
+@app.get("/builds")
+def api_builds() -> dict:
+    return {"builds": list_builds()}
+
+
+@app.post("/builds/activate")
+def api_build_activate(req: BuildActivateRequest) -> dict:
+    activate_build(req.build_id)
+    return {"active": req.build_id}
+
+
+@app.delete("/builds/{build_id}")
+def api_build_delete(build_id: str) -> dict:
+    delete_build(build_id)
+    return {"deleted": build_id}
+
+
 class TagAddRequest(BaseModel):
     name: str
     desc: str = ""
@@ -481,15 +505,24 @@ class TagReorderRequest(BaseModel):
 
 @app.get("/tags")
 def api_tags() -> dict:
-    """Get all available tags with segment counts."""
+    """Get all available tags with segment counts (from active build)."""
     tags_config = get_tags_with_desc()
+    active = get_active_build_id()
     with connect() as conn:
         counts = {}
-        for row in conn.execute(
-            "SELECT tag, COUNT(1) c, SUM(line_end - line_start + 1) lines FROM tag_segments GROUP BY tag"
-        ).fetchall():
-            counts[row["tag"]] = {"segments": row["c"], "lines": row["lines"]}
+        if active:
+            for row in conn.execute(
+                "SELECT tag, COUNT(1) c, SUM(line_end - line_start + 1) lines FROM tag_segments WHERE build_id = ? GROUP BY tag",
+                (active,),
+            ).fetchall():
+                counts[row["tag"]] = {"segments": row["c"], "lines": row["lines"]}
+        else:
+            for row in conn.execute(
+                "SELECT tag, COUNT(1) c, SUM(line_end - line_start + 1) lines FROM tag_segments GROUP BY tag"
+            ).fetchall():
+                counts[row["tag"]] = {"segments": row["c"], "lines": row["lines"]}
     return {
+        "active_build": active,
         "tags": [
             {
                 "name": t["name"],
@@ -498,7 +531,7 @@ def api_tags() -> dict:
                 "lines": counts.get(t["name"], {}).get("lines", 0),
             }
             for t in tags_config
-        ]
+        ],
     }
 
 
@@ -573,12 +606,19 @@ def api_tag_stats() -> dict:
 
 @app.get("/tags/{tag_name}")
 def api_tag_segments(tag_name: str) -> dict:
-    """Get all segments for a specific tag."""
+    """Get all segments for a specific tag (from active build)."""
+    active = get_active_build_id()
     with connect() as conn:
-        rows = conn.execute(
-            "SELECT id, source_file, tag, topic_name, line_start, line_end, summary, keywords_json, is_credential FROM tag_segments WHERE tag = ? ORDER BY source_file, line_start",
-            (tag_name,),
-        ).fetchall()
+        if active:
+            rows = conn.execute(
+                "SELECT id, source_file, tag, topic_name, line_start, line_end, summary, keywords_json, is_credential FROM tag_segments WHERE tag = ? AND build_id = ? ORDER BY source_file, line_start",
+                (tag_name, active),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, source_file, tag, topic_name, line_start, line_end, summary, keywords_json, is_credential FROM tag_segments WHERE tag = ? ORDER BY source_file, line_start",
+                (tag_name,),
+            ).fetchall()
     segments = [
         {
             "id": r["id"],

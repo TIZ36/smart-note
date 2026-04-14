@@ -11,6 +11,7 @@ from app.dimensions import detect_topic
 from app.embed import embed_texts
 from app.tokenizer import segment
 from app.ai_enrich import classify_lines
+from app.builds import create_build, finalize_build
 from app.versioning import create_snapshot
 
 
@@ -203,12 +204,16 @@ def ingest_raw(raw_path: str, note_path: str, reset: bool = False) -> dict:
 
     state = {"last_line": 0}
 
+    # Create a build ID for this ingest run
+    build_id = create_build(str(raw_file))
+    _progress("parse", 0, 0, f"Build {build_id}")
+
     if reset:
         _progress("parse", 0, 0, "Creating snapshot before rebuild...")
         try:
             create_snapshot(note_path, reason="pre-rebuild")
         except Exception:
-            pass  # Don't fail ingest if snapshot fails
+            pass
         _progress("parse", 0, 0, "Clearing existing data...")
         if note_file.exists():
             note_file.unlink()
@@ -296,10 +301,11 @@ def ingest_raw(raw_path: str, note_path: str, reset: bool = False) -> dict:
             all_tags = [seg["tag"]] + seg.get("secondary_tags", [])
             conn.execute(
                 """
-                INSERT INTO tag_segments(source_file, tag, topic_name, line_start, line_end, summary, keywords_json, entities_json, is_credential)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO tag_segments(build_id, source_file, tag, topic_name, line_start, line_end, summary, keywords_json, entities_json, is_credential)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
+                    build_id,
                     str(raw_file),
                     seg["tag"],
                     seg.get("topic_name", ""),
@@ -317,10 +323,10 @@ def ingest_raw(raw_path: str, note_path: str, reset: bool = False) -> dict:
                     try:
                         conn.execute(
                             """
-                            INSERT INTO tag_segments(source_file, tag, line_start, line_end, summary, keywords_json, entities_json, is_credential)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            INSERT INTO tag_segments(build_id, source_file, tag, line_start, line_end, summary, keywords_json, entities_json, is_credential)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
-                            (str(raw_file), stag, seg["line_start"], seg["line_end"],
+                            (build_id, str(raw_file), stag, seg["line_start"], seg["line_end"],
                              seg.get("summary", ""), json.dumps(seg.get("keywords", []), ensure_ascii=False),
                              json.dumps(seg.get("entities", []), ensure_ascii=False),
                              1 if seg.get("is_credential") else 0),
@@ -408,6 +414,16 @@ def ingest_raw(raw_path: str, note_path: str, reset: bool = False) -> dict:
     prompt_cost = usage.get("prompt_tokens", 0) * 0.5 / 1_000_000
     completion_cost = usage.get("completion_tokens", 0) * 1.5 / 1_000_000
     total_cost = prompt_cost + completion_cost
+
+    # Finalize build — mark as active, store metadata
+    finalize_build(
+        build_id,
+        chunk_count=inserted,
+        segment_count=len(tag_segments),
+        tags=tag_counts,
+        token_usage=usage,
+        cost_cny=round(total_cost * 7.2, 2),
+    )
 
     # Build human-readable summary
     tag_list = sorted(tag_counts.items(), key=lambda x: -x[1])

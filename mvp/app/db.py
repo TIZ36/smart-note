@@ -119,10 +119,24 @@ CREATE TABLE IF NOT EXISTS query_profiles (
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS builds (
+  id TEXT PRIMARY KEY,
+  source_file TEXT NOT NULL,
+  chunk_count INTEGER NOT NULL DEFAULT 0,
+  segment_count INTEGER NOT NULL DEFAULT 0,
+  is_active INTEGER NOT NULL DEFAULT 0,
+  token_usage_json TEXT NOT NULL DEFAULT '{}',
+  estimated_cost_cny REAL NOT NULL DEFAULT 0,
+  tags_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS tag_segments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  build_id TEXT NOT NULL DEFAULT '',
   source_file TEXT NOT NULL,
   tag TEXT NOT NULL,
+  topic_name TEXT NOT NULL DEFAULT '',
   line_start INTEGER NOT NULL,
   line_end INTEGER NOT NULL,
   summary TEXT NOT NULL DEFAULT '',
@@ -132,6 +146,7 @@ CREATE TABLE IF NOT EXISTS tag_segments (
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX IF NOT EXISTS idx_tag_segments_build ON tag_segments(build_id);
 CREATE INDEX IF NOT EXISTS idx_tag_segments_tag ON tag_segments(tag);
 CREATE INDEX IF NOT EXISTS idx_tag_segments_file ON tag_segments(source_file);
 
@@ -258,6 +273,23 @@ def migrate_db() -> None:
                 """
             )
 
+        if "builds" not in tables:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS builds (
+                  id TEXT PRIMARY KEY,
+                  source_file TEXT NOT NULL,
+                  chunk_count INTEGER NOT NULL DEFAULT 0,
+                  segment_count INTEGER NOT NULL DEFAULT 0,
+                  is_active INTEGER NOT NULL DEFAULT 0,
+                  token_usage_json TEXT NOT NULL DEFAULT '{}',
+                  estimated_cost_cny REAL NOT NULL DEFAULT 0,
+                  tags_json TEXT NOT NULL DEFAULT '{}',
+                  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+
         if "tag_segments" not in tables:
             conn.executescript(
                 """
@@ -279,10 +311,11 @@ def migrate_db() -> None:
                 """
             )
         else:
-            # Add topic_name column if missing
             ts_cols = {r[1] for r in conn.execute("PRAGMA table_info(tag_segments)").fetchall()}
             if "topic_name" not in ts_cols:
                 conn.execute("ALTER TABLE tag_segments ADD COLUMN topic_name TEXT NOT NULL DEFAULT ''")
+            if "build_id" not in ts_cols:
+                conn.execute("ALTER TABLE tag_segments ADD COLUMN build_id TEXT NOT NULL DEFAULT ''")
 
         if "search_history" not in tables:
             conn.execute(
