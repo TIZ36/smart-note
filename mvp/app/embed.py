@@ -17,11 +17,12 @@ def _embed_local(texts: list[str]) -> list[list[float]]:
 
 
 def _embed_api(texts: list[str]) -> list[list[float]]:
+    # Use separate embedding provider if configured, else fall back to chat provider
     headers = {
-        "Authorization": f"Bearer {settings.provider_api_key}",
+        "Authorization": f"Bearer {settings.effective_embed_api_key}",
         "Content-Type": "application/json",
     }
-    url = f"{settings.provider_base_url.rstrip('/')}/embeddings"
+    url = f"{settings.effective_embed_base_url.rstrip('/')}/embeddings"
     payload = {"model": settings.provider_embed_model, "input": texts}
     resp = requests.post(url, headers=headers, json=payload, timeout=30)
     resp.raise_for_status()

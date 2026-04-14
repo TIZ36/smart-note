@@ -77,10 +77,15 @@ export type FeedbackResponse = {
 
 export type AppSettings = {
   embedding_mode: string;
+  // Chat / AI provider
   provider_base_url: string;
   provider_api_key: string;
   provider_chat_model: string;
+  // Embedding provider (separate, falls back to chat if empty)
+  embed_base_url: string;
+  embed_api_key: string;
   provider_embed_model: string;
+  // AI ingestion
   ingest_ai_enabled: boolean;
   ingest_ai_model: string;
 };

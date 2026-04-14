@@ -20,6 +20,8 @@ export function SettingsPanel() {
     provider_base_url: "https://api.openai.com/v1",
     provider_api_key: "",
     provider_chat_model: "gpt-4o-mini",
+    embed_base_url: "",
+    embed_api_key: "",
     provider_embed_model: "text-embedding-3-small",
     ingest_ai_enabled: false,
     ingest_ai_model: "",
@@ -159,33 +161,63 @@ export function SettingsPanel() {
           <div className="proto-form-divider" />
 
           <section className="proto-form-section">
-            <h2 className="proto-form-section-title">
-              Provider API
-              {settings.embedding_mode === "mock" && (
-                <span className="ml-2 text-[11px] text-[var(--color-text-muted)] font-normal">(chat + AI ingestion only)</span>
-              )}
-            </h2>
+            <h2 className="proto-form-section-title">Chat Provider</h2>
+            <p className="proto-form-hint" style={{ marginBottom: 12 }}>Used for AI answers, AI ingestion, and reranking.</p>
             <Field label="Base URL">
-              <input type="text" value={settings.provider_base_url} onChange={(e) => update("provider_base_url", e.target.value)} placeholder="https://api.openai.com/v1" className={inputCls} />
+              <input type="text" value={settings.provider_base_url} onChange={(e) => update("provider_base_url", e.target.value)} placeholder="https://api.deepseek.com/v1" className={inputCls} />
             </Field>
             <Field label="API Key">
               <input type="password" value={settings.provider_api_key} onChange={(e) => update("provider_api_key", e.target.value)} placeholder="sk-..." className={inputCls} />
             </Field>
-            <div className="proto-form-row">
-              <Field label="Chat Model">
-                <input type="text" value={settings.provider_chat_model} onChange={(e) => update("provider_chat_model", e.target.value)} placeholder="gpt-4o-mini" className={inputCls} />
-              </Field>
-              <Field label={settings.embedding_mode === "api" ? "Embed Model" : "Embed Model (not used)"}>
-                <input
-                  type="text"
-                  value={settings.provider_embed_model}
-                  onChange={(e) => update("provider_embed_model", e.target.value)}
-                  placeholder="text-embedding-3-small"
-                  disabled={settings.embedding_mode !== "api"}
-                  className={cn(inputCls, settings.embedding_mode !== "api" && "opacity-30 cursor-not-allowed")}
-                />
-              </Field>
-            </div>
+            <Field label="Chat Model">
+              <input type="text" value={settings.provider_chat_model} onChange={(e) => update("provider_chat_model", e.target.value)} placeholder="deepseek-chat" className={inputCls} />
+            </Field>
+          </section>
+
+          <div className="proto-form-divider" />
+
+          <section className="proto-form-section">
+            <h2 className="proto-form-section-title">
+              Embedding Provider
+              {settings.embedding_mode !== "api" && (
+                <span style={{ fontWeight: 400, fontSize: 11, color: "var(--color-text-muted)", marginLeft: 8 }}>
+                  (not used in {settings.embedding_mode} mode)
+                </span>
+              )}
+            </h2>
+            <p className="proto-form-hint" style={{ marginBottom: 12 }}>
+              Used when embedding mode = api. Leave blank to use the Chat Provider above.
+            </p>
+            <Field label="Base URL (blank = same as Chat)">
+              <input
+                type="text"
+                value={settings.embed_base_url}
+                onChange={(e) => update("embed_base_url", e.target.value)}
+                placeholder={settings.provider_base_url || "https://api.openai.com/v1"}
+                disabled={settings.embedding_mode !== "api"}
+                className={cn(inputCls, settings.embedding_mode !== "api" && "opacity-30 cursor-not-allowed")}
+              />
+            </Field>
+            <Field label="API Key (blank = same as Chat)">
+              <input
+                type="password"
+                value={settings.embed_api_key}
+                onChange={(e) => update("embed_api_key", e.target.value)}
+                placeholder={settings.embed_base_url ? "sk-..." : "(uses Chat API Key)"}
+                disabled={settings.embedding_mode !== "api"}
+                className={cn(inputCls, settings.embedding_mode !== "api" && "opacity-30 cursor-not-allowed")}
+              />
+            </Field>
+            <Field label="Embed Model">
+              <input
+                type="text"
+                value={settings.provider_embed_model}
+                onChange={(e) => update("provider_embed_model", e.target.value)}
+                placeholder="text-embedding-3-small"
+                disabled={settings.embedding_mode !== "api"}
+                className={cn(inputCls, settings.embedding_mode !== "api" && "opacity-30 cursor-not-allowed")}
+              />
+            </Field>
           </section>
 
           <div className="proto-form-divider" />
