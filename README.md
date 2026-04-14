@@ -43,46 +43,83 @@ python -m app.cli init-db
 cp .env.example .env   # Edit with your API key and preferences
 ```
 
-### 2. Configure `.env`
+### 2. Start Docker Embedding Service (Recommended)
+
+Local embedding gives you offline vector search without sending content to external APIs.
+
+```bash
+# Start the embedding service (runs sentence-transformers on port 8009)
+./restart-docker.sh
+```
+
+> Requires Docker Desktop. First start downloads the model (~500MB), subsequent starts are fast.
+
+### 3. Configure `.env`
+
+```bash
+cp .env.example .env
+```
+
+**Recommended config with DeepSeek (cheapest, great for Chinese):**
 
 ```env
-# Embedding mode: mock | local | api
-EMBEDDING_MODE=mock
+EMBEDDING_MODE=local          # Use Docker embedding (recommended)
 
-# LLM Provider (for chat + AI ingestion)
-PROVIDER_BASE_URL=https://api.openai.com/v1
-PROVIDER_API_KEY=sk-your-key-here
-PROVIDER_CHAT_MODEL=gpt-4o-mini
+PROVIDER_BASE_URL=https://api.deepseek.com/v1
+PROVIDER_API_KEY=sk-your-deepseek-key
+PROVIDER_CHAT_MODEL=deepseek-chat
 
-# AI-powered tag classification during ingest
 INGEST_AI_ENABLED=true
-INGEST_AI_MODEL=          # Leave empty to use PROVIDER_CHAT_MODEL
-
-# Concurrency for AI enrichment (higher = faster build, more API load)
 INGEST_CONCURRENCY=600
 ```
 
-### 3. Start Backend
+**Or with OpenAI ChatGPT:**
+
+```env
+EMBEDDING_MODE=local          # Use Docker embedding (recommended)
+
+PROVIDER_BASE_URL=https://api.openai.com/v1
+PROVIDER_API_KEY=sk-your-openai-key
+PROVIDER_CHAT_MODEL=gpt-4o-mini
+
+INGEST_AI_ENABLED=true
+INGEST_CONCURRENCY=600
+```
+
+**Embedding mode comparison:**
+
+| Mode | Speed | Quality | Cost | Requires |
+|------|-------|---------|------|----------|
+| `local` | Fast | Best | Free | Docker |
+| `api` | Medium | Good | ~$0.02/1M tokens | API key |
+| `mock` | Instant | No semantic search | Free | Nothing |
+
+**LLM provider comparison (for chat + AI ingestion):**
+
+| Provider | Model | Cost | Chinese | Speed |
+|----------|-------|------|---------|-------|
+| DeepSeek | `deepseek-chat` | ~¥1/1M tokens | Excellent | Fast |
+| OpenAI | `gpt-4o-mini` | ~$0.15/1M tokens | Good | Fast |
+| OpenAI | `gpt-4o` | ~$2.5/1M tokens | Good | Slower |
+
+> DeepSeek is recommended for Chinese-heavy notes — best quality/cost ratio. Token cost is shown after each build in the version history.
+
+### 4. Start Backend
 
 ```bash
 ./restart-server.sh
-# Or manually:
-# .venv/bin/python -m app.cli serve --port 8787
 ```
 
-### 4. Start Desktop Client
+### 5. Start Desktop Client
 
 ```bash
-cd desktop
-npm install
-npm run electron:dev
+./restart-client.sh
 ```
 
 ### Or use the all-in-one script:
 
 ```bash
-./restart-all.sh              # Backend + Client
-./restart-all.sh --with-docker  # + Docker embedding service
+./restart-all.sh --with-docker   # Recommended: Docker embedding + Backend + Client
 ```
 
 ## Usage
