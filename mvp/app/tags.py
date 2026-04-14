@@ -57,11 +57,14 @@ def get_tags_with_desc() -> list[dict]:
 
 
 def add_tag(name: str, desc: str = "") -> list[dict]:
-    """Add a new tag. Returns updated tag list."""
+    """Add a new tag. Auto-generates desc from name if not provided."""
     tags = _load_tags()
     if any(t["name"] == name for t in tags):
         return tags  # Already exists
-    tags.append({"name": name, "desc": desc or "User-defined category"})
+    if not desc:
+        # Generate a useful description from the tag name
+        desc = f"Notes related to {name.replace('_', ' ')}"
+    tags.append({"name": name, "desc": desc})
     _save_tags(tags)
     return tags
 

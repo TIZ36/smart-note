@@ -64,10 +64,15 @@ export function Sidebar({ activeChannel, onSelect, views, tags, onTagsChanged, g
   const [dropIdx, setDropIdx] = useState<number | null>(null);
 
   async function handleAddTag() {
-    const name = newTag.trim();
-    if (!name || busy) return;
+    const raw = newTag.trim();
+    if (!raw || busy) return;
+    // Support "name:description" syntax
+    const colonIdx = raw.indexOf(":");
+    const name = colonIdx > 0 ? raw.slice(0, colonIdx).trim() : raw;
+    const desc = colonIdx > 0 ? raw.slice(colonIdx + 1).trim() : "";
+    if (!name) return;
     setBusy(true);
-    try { await api.addTag(name); setNewTag(""); onTagsChanged(); } catch {}
+    try { await api.addTag(name, desc); setNewTag(""); onTagsChanged(); } catch {}
     setBusy(false);
   }
 
@@ -177,7 +182,7 @@ export function Sidebar({ activeChannel, onSelect, views, tags, onTagsChanged, g
                 value={newTag}
                 onChange={(e) => setNewTag(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleAddTag()}
-                placeholder="New tag..."
+                placeholder="name:description"
                 className="proto-form-input proto-tag-add-input"
               />
               <button type="button" onClick={handleAddTag} disabled={!newTag.trim() || busy} className="proto-btn proto-btn-primary proto-tag-add-btn">
