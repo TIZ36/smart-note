@@ -1,13 +1,20 @@
 import { useState, useEffect } from "react";
 import { Save } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { readSettings, writeSettings } from "@/lib/electron";
+import { readSettings, writeSettings, getHotkey, setHotkey } from "@/lib/electron";
 import type { AppSettings } from "@/lib/types";
 import { cn } from "@/lib/cn";
 import { useTheme, type ThemeMode } from "@/hooks/useTheme";
 
 export function SettingsPanel() {
   const { mode: themeMode, setMode: setThemeMode } = useTheme();
+  const [hotkey, setHotkeyState] = useState("CommandOrControl+Shift+V");
+  const [hotkeyEditing, setHotkeyEditing] = useState(false);
+  const [hotkeyInput, setHotkeyInput] = useState("");
+
+  useEffect(() => {
+    getHotkey().then(setHotkeyState).catch(() => {});
+  }, []);
   const [settings, setSettings] = useState<AppSettings>({
     embedding_mode: "local",
     provider_base_url: "https://api.openai.com/v1",
@@ -81,6 +88,53 @@ export function SettingsPanel() {
                   </button>
                 ))}
               </div>
+            </Field>
+          </section>
+
+          <div className="proto-form-divider" />
+
+          <section className="proto-form-section">
+            <h2 className="proto-form-section-title">Global Hotkey</h2>
+            <Field label="Quick paste to raw file">
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                {hotkeyEditing ? (
+                  <>
+                    <input
+                      type="text"
+                      value={hotkeyInput}
+                      onChange={(e) => setHotkeyInput(e.target.value)}
+                      placeholder="e.g. CommandOrControl+Shift+V"
+                      className={inputCls}
+                      style={{ flex: 1 }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          setHotkey(hotkeyInput || hotkey).then((r) => {
+                            setHotkeyState(r.hotkey);
+                            setHotkeyEditing(false);
+                          });
+                        }
+                        if (e.key === "Escape") setHotkeyEditing(false);
+                      }}
+                    />
+                    <button type="button" onClick={() => {
+                      setHotkey(hotkeyInput || hotkey).then((r) => {
+                        setHotkeyState(r.hotkey);
+                        setHotkeyEditing(false);
+                      });
+                    }} className="proto-btn proto-btn-primary">Save</button>
+                  </>
+                ) : (
+                  <>
+                    <code style={{ fontSize: 13, color: "var(--color-text-primary)", background: "var(--color-bg-elevated)", padding: "4px 10px", borderRadius: "var(--radius-proto)" }}>
+                      {hotkey.replace("CommandOrControl", "Cmd")}
+                    </code>
+                    <button type="button" onClick={() => { setHotkeyInput(hotkey); setHotkeyEditing(true); }} className="proto-btn proto-btn-secondary">Change</button>
+                  </>
+                )}
+              </div>
+              <p className="proto-form-hint">
+                Press this shortcut anywhere to paste clipboard content to your raw file and trigger incremental ingest.
+              </p>
             </Field>
           </section>
 

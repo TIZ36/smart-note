@@ -9,4 +9,9 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.on("ingest:status", listener);
     return () => ipcRenderer.removeListener("ingest:status", listener);
   },
+  onHotkeyPasted(callback) {
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on("hotkey:pasted", listener);
+    return () => ipcRenderer.removeListener("hotkey:pasted", listener);
+  },
 });

@@ -91,3 +91,23 @@ export async function writeSettings(settings: AppSettings): Promise<CmdResult> {
 export async function openPath(path: string): Promise<void> {
   await getDesktop().invoke("shell_open_path", { path });
 }
+
+// ── Global Hotkey ──
+
+export async function getHotkey(): Promise<string> {
+  return getDesktop().invoke("get_hotkey") as Promise<string>;
+}
+
+export async function setHotkey(hotkey: string): Promise<{ ok: boolean; hotkey: string }> {
+  return getDesktop().invoke("set_hotkey", { hotkey }) as Promise<{ ok: boolean; hotkey: string }>;
+}
+
+export async function saveRawPathForHotkey(rawPath: string): Promise<void> {
+  await getDesktop().invoke("save_raw_path_for_hotkey", { rawPath });
+}
+
+export function onHotkeyPasted(
+  handler: (data: { rawPath: string; lineCount: number }) => void
+): () => void {
+  return getDesktop().onHotkeyPasted(handler);
+}

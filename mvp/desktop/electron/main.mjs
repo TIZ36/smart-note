@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, clipboard } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, shell, clipboard, globalShortcut, Notification } from "electron";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
@@ -347,4 +347,117 @@ ipcMain.handle("clipboard_read_text", async () => clipboard.readText() || null);
 ipcMain.handle("shell_open_path", async (_, { path: target }) => {
   const err = await shell.openPath(target);
   if (err) throw new Error(err);
+});
+
+// ── Global Hotkey: Clipboard → Paste to raw → Save → Incremental ingest ──
+
+const HOTKEY_CONFIG_FILE = path.join(appRoot(), "data", "hotkey.json");
+let currentHotkey = "CommandOrControl+Shift+V";
+
+function loadHotkeyConfig() {
+  try {
+    if (fs.existsSync(HOTKEY_CONFIG_FILE)) {
+      const data = JSON.parse(fs.readFileSync(HOTKEY_CONFIG_FILE, "utf8"));
+      if (data.hotkey) currentHotkey = data.hotkey;
+    }
+  } catch {}
+}
+
+function saveHotkeyConfig(hotkey) {
+  const dir = path.dirname(HOTKEY_CONFIG_FILE);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(HOTKEY_CONFIG_FILE, JSON.stringify({ hotkey }, null, 2), "utf8");
+}
+
+function getRawPathFromPrefs() {
+  // Read from the renderer's localStorage isn't possible here,
+  // so we read from a shared prefs file
+  const prefsFile = path.join(appRoot(), "data", "prefs.json");
+  try {
+    if (fs.existsSync(prefsFile)) {
+      const data = JSON.parse(fs.readFileSync(prefsFile, "utf8"));
+      return data.rawPath || null;
+    }
+  } catch {}
+  return null;
+}
+
+function pasteClipboardToRaw() {
+  const rawPath = getRawPathFromPrefs();
+  if (!rawPath) {
+    new Notification({ title: "IntelliNote", body: "No raw file configured. Open Raw Input to set one." }).show();
+    return;
+  }
+
+  const text = clipboard.readText();
+  if (!text || !text.trim()) {
+    new Notification({ title: "IntelliNote", body: "Clipboard is empty." }).show();
+    return;
+  }
+
+  // Check file type compatibility (text-based files only)
+  const ext = path.extname(rawPath).toLowerCase();
+  const textExts = [".md", ".txt", ".rtf", ".org", ".rst", ""];
+  if (!textExts.includes(ext)) {
+    new Notification({ title: "IntelliNote", body: `File type ${ext} not supported for paste.` }).show();
+    return;
+  }
+
+  try {
+    const dir = path.dirname(rawPath);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.appendFileSync(rawPath, `\n${text.trim()}\n`, "utf8");
+
+    new Notification({ title: "IntelliNote", body: `Pasted ${text.trim().split("\n").length} lines to raw file.` }).show();
+
+    // Notify renderer to trigger incremental ingest
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("hotkey:pasted", { rawPath, lineCount: text.trim().split("\n").length });
+    }
+  } catch (err) {
+    new Notification({ title: "IntelliNote", body: `Paste failed: ${err.message}` }).show();
+  }
+}
+
+function registerHotkey() {
+  globalShortcut.unregisterAll();
+  try {
+    const ok = globalShortcut.register(currentHotkey, pasteClipboardToRaw);
+    if (!ok) console.warn(`[hotkey] Failed to register ${currentHotkey}`);
+    else console.log(`[hotkey] Registered: ${currentHotkey}`);
+  } catch (err) {
+    console.warn(`[hotkey] Registration error: ${err.message}`);
+  }
+}
+
+// Register on app ready (after createWindow)
+app.whenReady().then(() => {
+  loadHotkeyConfig();
+  registerHotkey();
+});
+
+app.on("will-quit", () => {
+  globalShortcut.unregisterAll();
+});
+
+// IPC: get/set hotkey + save prefs for raw path
+ipcMain.handle("get_hotkey", () => currentHotkey);
+
+ipcMain.handle("set_hotkey", async (_, { hotkey }) => {
+  currentHotkey = hotkey;
+  saveHotkeyConfig(hotkey);
+  registerHotkey();
+  return { ok: true, hotkey: currentHotkey };
+});
+
+ipcMain.handle("save_raw_path_for_hotkey", async (_, { rawPath }) => {
+  const prefsFile = path.join(appRoot(), "data", "prefs.json");
+  const dir = path.dirname(prefsFile);
+  fs.mkdirSync(dir, { recursive: true });
+  let prefs = {};
+  try {
+    if (fs.existsSync(prefsFile)) prefs = JSON.parse(fs.readFileSync(prefsFile, "utf8"));
+  } catch {}
+  prefs.rawPath = rawPath;
+  fs.writeFileSync(prefsFile, JSON.stringify(prefs, null, 2), "utf8");
 });

@@ -16,6 +16,9 @@ declare global {
           message: string;
         }) => void
       ) => () => void;
+      onHotkeyPasted: (
+        callback: (data: { rawPath: string; lineCount: number }) => void
+      ) => () => void;
     };
   }
 }
