@@ -210,11 +210,13 @@ def search(query: str, topk: int = 5, tag_filter: str | None = None, include_spk
         # Path 5: Q&A memory answer hits (from recall_qa_memories above)
 
         # ── Path 6: Tag metadata match (topic_name, summary, keywords) ──
-        # Match query against tag_segments' enriched metadata
-        # Chunks covered by matching segments get a boost
+        # Match query against tag_segments' AI-enriched metadata.
+        # If a segment matches, ALL its covered chunks are added to the pool
+        # (not just boosted — this is a recall path, not just a boost).
         from app.builds import get_active_build_id as _get_active_build
         active_build = _get_active_build()
-        tag_meta_boost: dict[int, float] = {}  # chunk_id → boost score
+        tag_meta_boost: dict[int, float] = {}
+        tag_meta_chunks: list[tuple[float, object]] = []  # (score, row) for chunks found via metadata
         try:
             if active_build:
                 seg_rows = conn.execute(
@@ -227,7 +229,6 @@ def search(query: str, topk: int = 5, tag_filter: str | None = None, include_spk
                 ).fetchall()
 
             for seg in seg_rows:
-                # Score this segment's metadata against the query
                 meta_text = f"{seg['topic_name']} {seg['summary']} {seg['tag']}"
                 kws = []
                 try:
@@ -238,16 +239,16 @@ def search(query: str, topk: int = 5, tag_filter: str | None = None, include_spk
 
                 seg_score = _substring_score(query, meta_text) * 0.6 + _ngram_score(query, meta_text) * 0.4
                 if seg_score > 0.15:
-                    # Find chunks covered by this segment's line range
                     for row in all_rows:
-                        ref = row["source_ref"]  # e.g. "raw.md:line:5:line"
+                        ref = row["source_ref"]
                         try:
                             parts = ref.split(":")
                             if len(parts) >= 3:
-                                line_no = int(parts[2])
+                                line_no = int(parts[2].split("-")[0])
                                 if seg["line_start"] <= line_no <= seg["line_end"]:
                                     rid = row["id"]
                                     tag_meta_boost[rid] = max(tag_meta_boost.get(rid, 0), seg_score)
+                                    tag_meta_chunks.append((seg_score, row))
                         except (ValueError, IndexError):
                             pass
         except Exception:
@@ -300,10 +301,15 @@ def search(query: str, topk: int = 5, tag_filter: str | None = None, include_spk
             kws = _safe_json_list(row["keywords_json"])
             item["kw"] = max(item["kw"], _keyword_score(q_tokens, kws))
 
+        # Tag metadata recall: add chunks found via segment metadata match
+        for seg_score, row in tag_meta_chunks:
+            item = _ensure(row)
+            item["tag_meta"] = max(item.get("tag_meta", 0), seg_score)
+
         # N-gram score + tag metadata boost for all candidates
         for rid, item in merged.items():
             item["ngram"] = _ngram_score(query, item["text"])
-            item["tag_meta"] = tag_meta_boost.get(rid, 0.0)
+            item["tag_meta"] = max(item.get("tag_meta", 0), tag_meta_boost.get(rid, 0.0))
 
         # ── Feedback bias ──
         positive_bias = 0.0
