@@ -24,6 +24,12 @@ export function SourceCard({ index, result, highlighted, onClick }: Props) {
       <div className="proto-source-meta">
         <span>{index}</span>
         <span className={cn("proto-source-meta-dim", `proto-tag-color-${result._tagColor || "gray"}`)}>{result.dimension}</span>
+        {result.segment_range && (
+          <span style={{ fontSize: 10, color: "var(--color-accent)", fontFamily: "ui-monospace, monospace" }}>{result.segment_range}</span>
+        )}
+        {result.segment_topic && (
+          <span style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>{result.segment_topic}</span>
+        )}
         <span className="proto-source-meta-score">
           {Number(result.score || 0).toFixed(2)}
         </span>
