@@ -8,6 +8,7 @@ import { SettingsPanel } from "./components/settings/SettingsPanel";
 import { Toast } from "./components/layout/Toast";
 import { VersionsPanel } from "./components/versions/VersionsPanel";
 import { SyncRatePanel } from "./components/sync/SyncRatePanel";
+import { NoteEditor } from "./components/editor/NoteEditor";
 import { usePrefs } from "./hooks/usePrefs";
 import { useHealth } from "./hooks/useHealth";
 import { useViews } from "./hooks/useViews";
@@ -111,7 +112,29 @@ export default function App() {
     if (activeChannel === "raw-input") {
       return <IngestPanel rawPath={prefs.rawPath} notePath={prefs.notePath} onSetRawPath={prefs.setRawPath} onSetNotePath={prefs.setNotePath} onIngestComplete={handleIngestComplete} ingestBusy={ingestBusy} ingestSteps={ingestSteps} ingestResult={ingestResult} />;
     }
-    // versions merged into raw-input panel
+    if (activeChannel === "editor" && prefs.rawPath) {
+      return (
+        <NoteEditor
+          filePath={prefs.rawPath}
+          onSave={async (content) => {
+            try {
+              const d = (window as any).desktop;
+              if (d) {
+                // Write file via Electron
+                const fs = await d.invoke("write_file", { path: prefs.rawPath, content });
+                // Trigger incremental ingest
+                if (prefs.notePath) {
+                  d.invoke("ingest_raw_async", { rawPath: prefs.rawPath, notePath: prefs.notePath, reset: false });
+                }
+                setToast({ message: "Saved & ingesting...", type: "info" });
+              }
+            } catch {
+              setToast({ message: "Save failed", type: "error" });
+            }
+          }}
+        />
+      );
+    }
     if (activeChannel === "sync-rate") return <SyncRatePanel />;
     // Tag channels: "tag:learn", "tag:work", etc.
     if (activeChannel.startsWith("tag:")) {

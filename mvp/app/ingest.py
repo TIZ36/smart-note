@@ -204,9 +204,14 @@ def ingest_raw(raw_path: str, note_path: str, reset: bool = False) -> dict:
 
     state = {"last_line": 0}
 
-    # Create a build ID for this ingest run
-    build_id = create_build(str(raw_file))
-    _progress("parse", 0, 0, f"Build {build_id}")
+    # Build ID: incremental reuses active build, rebuild creates new
+    from app.builds import get_active_build_id
+    if reset:
+        build_id = create_build(str(raw_file))
+        _progress("parse", 0, 0, f"New build {build_id}")
+    else:
+        build_id = get_active_build_id() or create_build(str(raw_file))
+        _progress("parse", 0, 0, f"Appending to build {build_id}")
 
     if reset:
         _progress("parse", 0, 0, "Creating snapshot before rebuild...")

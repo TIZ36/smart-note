@@ -344,6 +344,11 @@ ipcMain.handle("dialog_save_note", async () => {
 
 ipcMain.handle("clipboard_read_text", async () => clipboard.readText() || null);
 
+ipcMain.handle("write_file", async (_, { path: filePath, content }) => {
+  fs.writeFileSync(filePath, content, "utf8");
+  return { ok: true };
+});
+
 ipcMain.handle("shell_open_path", async (_, { path: target }) => {
   const err = await shell.openPath(target);
   if (err) throw new Error(err);

@@ -10,6 +10,7 @@ import {
   X,
   Pencil,
   GripVertical,
+  FileEdit,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { ChannelId, ViewItem } from "@/lib/types";
@@ -120,6 +121,12 @@ export function Sidebar({ activeChannel, onSelect, views, tags, onTagsChanged, g
           active={activeChannel === "raw-input"}
           onClick={() => onSelect("raw-input")}
           trailing={ingestBusy ? <Loader2 size={12} className="text-[var(--color-accent)] animate-spin ml-auto shrink-0" /> : undefined}
+        />
+        <NavItem
+          label="Editor"
+          icon={<FileEdit size={15} strokeWidth={2} />}
+          active={activeChannel === "editor"}
+          onClick={() => onSelect("editor")}
         />
         <NavItem
           label="Sync Rate"
