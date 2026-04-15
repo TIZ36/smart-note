@@ -289,6 +289,72 @@ export async function saveOcrConfig(ocrLangs: string): Promise<{ ok: boolean; oc
   return res.json();
 }
 
+// MCP Servers
+export type McpServer = { name: string; url: string; transport: string; auth: Record<string, string> };
+export type McpTool = { name: string; description: string; input_schema: Record<string, unknown> };
+export type McpResource = { uri: string; name: string; description: string; mimeType: string };
+
+export async function fetchMcpServers(): Promise<{ servers: McpServer[] }> {
+  const res = await fetch(`${BASE}/mcp/servers`);
+  return res.json();
+}
+
+export async function addMcpServer(name: string, url: string, transport = "streamable_http"): Promise<{ servers: McpServer[] }> {
+  const res = await fetch(`${BASE}/mcp/servers`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, url, transport }),
+  });
+  return res.json();
+}
+
+export async function deleteMcpServer(name: string): Promise<{ servers: McpServer[] }> {
+  const res = await fetch(`${BASE}/mcp/servers/${encodeURIComponent(name)}`, { method: "DELETE" });
+  return res.json();
+}
+
+export async function fetchMcpTools(serverName: string): Promise<{ tools: McpTool[] }> {
+  const res = await fetch(`${BASE}/mcp/servers/${encodeURIComponent(serverName)}/tools`);
+  return res.json();
+}
+
+export async function callMcpTool(serverName: string, toolName: string, args: Record<string, unknown> = {}): Promise<{ content: string }> {
+  const res = await fetch(`${BASE}/mcp/servers/${encodeURIComponent(serverName)}/call`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tool_name: toolName, arguments: args }),
+  });
+  return res.json();
+}
+
+export async function fetchMcpResources(serverName: string): Promise<{ resources: McpResource[] }> {
+  const res = await fetch(`${BASE}/mcp/servers/${encodeURIComponent(serverName)}/resources`);
+  return res.json();
+}
+
+// Wiki import
+export async function importWikiUrl(url: string, topicName = ""): Promise<Record<string, unknown>> {
+  const res = await fetch(`${BASE}/wiki/import-url`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url, topic_name: topicName }),
+  });
+  return res.json();
+}
+
+export async function importWikiMcp(serverName: string, opts: { doc_url?: string; document_id?: string; topic_name?: string }): Promise<Record<string, unknown>> {
+  const res = await fetch(`${BASE}/wiki/import-mcp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ server_name: serverName, ...opts }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `Import failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 // Builds
 export type BuildInfo = {
   id: string;
@@ -321,5 +387,32 @@ export async function deleteBuild(buildId: string): Promise<void> {
 
 export async function fetchGraph(): Promise<GraphData> {
   const res = await fetch(`${BASE}/graph`);
+  return res.json();
+}
+
+// Wiki document graph
+export type WikiGraphNode = {
+  id: string;
+  name: string;
+  summary: string;
+  folder: string;
+  files: { path: string; chunks: number }[];
+  chunk_count: number;
+};
+
+export type WikiGraphEdge = {
+  source: string;
+  target: string;
+  shared_keywords: string[];
+  weight: number;
+};
+
+export type WikiGraphData = {
+  nodes: WikiGraphNode[];
+  edges: WikiGraphEdge[];
+};
+
+export async function fetchWikiGraph(): Promise<WikiGraphData> {
+  const res = await fetch(`${BASE}/wiki-graph`);
   return res.json();
 }

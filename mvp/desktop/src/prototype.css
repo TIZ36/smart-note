@@ -680,7 +680,7 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 
 .proto-sources-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
   gap: 12px;
 }
 
@@ -690,6 +690,8 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   border-radius: var(--radius-proto);
   cursor: pointer;
   transition: background 0.1s;
+  overflow: hidden;
+  min-width: 0;
 }
 
 .proto-source-card:hover {
@@ -732,6 +734,8 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   background: color-mix(in oklab, var(--color-wiki) 6%, transparent);
   border: 1px solid color-mix(in oklab, var(--color-wiki) 15%, transparent);
   border-radius: var(--radius-proto);
+  flex-wrap: wrap;
+  overflow: hidden;
 }
 
 .proto-wiki-suggest-topic {
@@ -764,6 +768,8 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 /* ── Wiki selectable cards ── */
 .proto-wiki-selectable {
   position: relative;
+  min-width: 0;
+  overflow: hidden;
 }
 .proto-wiki-checkbox {
   position: absolute;
@@ -792,20 +798,47 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 .proto-source-meta {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   margin-bottom: 6px;
   font-size: 11px;
   color: var(--color-text-muted);
+  min-width: 0;
+  overflow: hidden;
 }
 
 .proto-source-meta-dim {
   font-weight: 500;
   letter-spacing: 0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 120px;
+  flex-shrink: 1;
+}
+
+.proto-source-meta-range {
+  font-size: 10px;
+  color: var(--color-accent);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.proto-source-meta-topic {
+  font-size: 10px;
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 1;
+  min-width: 0;
 }
 
 .proto-source-meta-score {
   margin-left: auto;
   font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 /* Top-ranked results: accent-colored index number */
@@ -822,6 +855,8 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .proto-source-ref {
@@ -833,6 +868,8 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   text-overflow: ellipsis;
   white-space: nowrap;
   letter-spacing: -0.01em;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .proto-source-ref-dir {
@@ -1497,6 +1534,40 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   background: var(--color-bg-hover);
 }
 
+/* Import source tabs */
+.proto-import-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--color-border);
+  padding: 0 20px;
+  gap: 0;
+}
+
+.proto-import-tab {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--color-text-muted);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color 0.1s, border-color 0.1s;
+  margin-bottom: -1px;
+}
+
+.proto-import-tab:hover {
+  color: var(--color-text-secondary);
+}
+
+.proto-import-tab-active {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+}
+
 .proto-dialog-body {
   padding: 20px;
   overflow-y: auto;
@@ -1763,11 +1834,174 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   opacity: 0.4;
 }
 
+/* ── Wiki Graph ── */
+
+.proto-wiki-graph {
+  padding: 16px;
+}
+
+.proto-wiki-graph-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.proto-wiki-graph-svg {
+  width: 100%;
+  max-height: 300px;
+  display: block;
+}
+
+.proto-wiki-graph-edge {
+  stroke: var(--color-border);
+  stroke-opacity: 0.6;
+}
+
+.proto-wiki-graph-node circle {
+  fill: color-mix(in oklab, var(--color-accent) 12%, var(--color-bg-elevated));
+  stroke: color-mix(in oklab, var(--color-accent) 30%, transparent);
+  stroke-width: 1.5;
+  transition: fill 0.15s, stroke 0.15s;
+}
+
+.proto-wiki-graph-node:hover circle {
+  fill: color-mix(in oklab, var(--color-accent) 20%, var(--color-bg-elevated));
+  stroke: var(--color-accent);
+}
+
+.proto-wiki-graph-node-active circle {
+  fill: color-mix(in oklab, var(--color-accent) 25%, var(--color-bg-elevated));
+  stroke: var(--color-accent);
+  stroke-width: 2;
+}
+
+.proto-wiki-graph-label {
+  font-size: 10px;
+  fill: var(--color-text-secondary);
+  pointer-events: none;
+}
+
+.proto-wiki-graph-node-active .proto-wiki-graph-label {
+  fill: var(--color-text-primary);
+  font-weight: 500;
+}
+
+.proto-wiki-graph-detail {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-proto);
+  background: var(--color-bg-surface);
+}
+
+.proto-wiki-graph-detail-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin-bottom: 4px;
+}
+
+.proto-wiki-graph-detail-summary {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+  margin-bottom: 6px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.proto-wiki-graph-detail-meta {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-bottom: 8px;
+}
+
+.proto-wiki-graph-detail-files {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.proto-wiki-graph-file-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 8px;
+  border: none;
+  background: none;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  text-align: left;
+  border-radius: 3px;
+  transition: background 0.1s;
+}
+
+.proto-wiki-graph-file-btn:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
+.proto-wiki-graph-file-count {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.proto-wiki-graph-file-more {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  padding: 2px 8px;
+}
+
 /* Wiki header inline elements */
 .proto-wiki-header-count {
   font-size: 12px;
   font-weight: 400;
   color: var(--color-text-muted);
+}
+
+.proto-wiki-header-tabs {
+  display: flex;
+  gap: 2px;
+  margin-left: 8px;
+  background: var(--color-bg-elevated);
+  border-radius: var(--radius-proto);
+  padding: 2px;
+}
+
+.proto-wiki-header-tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border: none;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: color 0.1s, background 0.1s;
+}
+
+.proto-wiki-header-tab:hover {
+  color: var(--color-text-secondary);
+}
+
+.proto-wiki-header-tab-active {
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
 }
 
 .proto-wiki-header-status {

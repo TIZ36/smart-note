@@ -290,6 +290,51 @@ ipcMain.handle("special_ingest_async", async (event, { folderPath, filePath, top
   });
 });
 
+ipcMain.handle("mcp_import_async", async (event, { serverName, docUrl, documentId, topicName }) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  wikiIngestRunning = true;
+  emitWikiIngest(win, { status: "started", step: "fetch", current: 0, total: 0, elapsed_ms: 0, message: "Fetching document via MCP..." });
+
+  const args = ["-m", "app.cli", "mcp-import", "--server", serverName];
+  if (docUrl) args.push("--url", docUrl);
+  if (documentId) args.push("--doc-id", documentId);
+  if (topicName) args.push("--topic", topicName);
+  const proc = spawn(pythonBin(), args, { cwd: appRoot(), stdio: ["ignore", "pipe", "pipe"] });
+
+  proc.on("error", (e) => {
+    wikiIngestRunning = false;
+    emitWikiIngest(win, { status: "error", step: "", current: 0, total: 0, elapsed_ms: 0, message: `Failed: ${e.message}` });
+  });
+
+  if (proc.stderr) {
+    const rl = readline.createInterface({ input: proc.stderr });
+    rl.on("line", (line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      try {
+        const parsed = JSON.parse(trimmed);
+        emitWikiIngest(win, {
+          status: parsed.step === "done" ? "completed" : "progress",
+          step: parsed.step ?? "",
+          current: Number(parsed.current ?? 0),
+          total: Number(parsed.total ?? 0),
+          elapsed_ms: 0,
+          message: parsed.detail ?? "",
+        });
+      } catch {}
+    });
+  }
+
+  let stdoutBuf = "";
+  proc.stdout?.on("data", (c) => { stdoutBuf += c.toString(); });
+  proc.on("close", (code) => {
+    wikiIngestRunning = false;
+    let message = "MCP import completed.";
+    try { message = JSON.parse(stdoutBuf.trim())?.message ?? message; } catch {}
+    emitWikiIngest(win, { status: code === 0 ? "completed" : "error", step: "done", current: 0, total: 0, elapsed_ms: 0, message });
+  });
+});
+
 ipcMain.handle("dialog_open_folder", async () => {
   const r = await dialog.showOpenDialog(mainWindow ?? undefined, {
     properties: ["openDirectory"],

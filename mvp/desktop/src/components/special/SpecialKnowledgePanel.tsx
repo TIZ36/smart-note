@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
-import { BookOpen, FolderOpen, FileText, Loader2, Plus, X, Trash2, Code, FileSearch, Archive } from "lucide-react";
+import { BookOpen, FolderOpen, FileText, Loader2, Plus, X, Trash2, Code, FileSearch, Archive, GitBranch, Link, Server } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { specialIngestAsync, pickFolder, pickPdf } from "@/lib/electron";
+import { specialIngestAsync, mcpImportAsync, pickFolder, pickPdf } from "@/lib/electron";
+import { WikiGraph } from "./WikiGraph";
 import * as api from "@/lib/api";
 import type { WikiCategory } from "@/lib/api";
 import type { IngestStep } from "@/App";
@@ -18,11 +19,15 @@ type Props = {
   ingestSteps: IngestStep[];
   ingestResult: { message: string; type: "success" | "error" } | null;
   onTopicsChanged?: (count: number) => void;
+  onSelectSource?: (filePath: string) => void;
 };
 
-export function SpecialKnowledgePanel({ ingestBusy, ingestSteps, ingestResult, onTopicsChanged }: Props) {
+type ViewTab = "topics" | "graph";
+
+export function SpecialKnowledgePanel({ ingestBusy, ingestSteps, ingestResult, onTopicsChanged, onSelectSource }: Props) {
   const [topics, setTopics] = useState<api.SpecialKnowledgeTopic[]>([]);
   const [showDialog, setShowDialog] = useState(false);
+  const [viewTab, setViewTab] = useState<ViewTab>("topics");
 
   useEffect(() => { loadTopics(); }, [ingestResult]);
 
@@ -49,6 +54,15 @@ export function SpecialKnowledgePanel({ ingestBusy, ingestSteps, ingestResult, o
         <span className="proto-wiki-header-count">
           {topics.length} {topics.length === 1 ? "topic" : "topics"}
         </span>
+        <div className="proto-wiki-header-tabs">
+          <button type="button" onClick={() => setViewTab("topics")} className={cn("proto-wiki-header-tab", viewTab === "topics" && "proto-wiki-header-tab-active")}>
+            Topics
+          </button>
+          <button type="button" onClick={() => setViewTab("graph")} className={cn("proto-wiki-header-tab", viewTab === "graph" && "proto-wiki-header-tab-active")}>
+            <GitBranch size={12} />
+            Graph
+          </button>
+        </div>
         {/* Inline ingest status when dialog is closed */}
         {ingestBusy && !showDialog && (
           <span className="proto-wiki-header-status" onClick={() => setShowDialog(true)}>
@@ -75,8 +89,9 @@ export function SpecialKnowledgePanel({ ingestBusy, ingestSteps, ingestResult, o
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {/* Topic list grouped by category */}
-        {topics.length > 0 ? (
+        {viewTab === "graph" ? (
+          <WikiGraph onSelectSource={onSelectSource} />
+        ) : topics.length > 0 ? (
           <div className="proto-wiki-topic-list">
             {(["research", "codebase", "docs", "reference"] as WikiCategory[])
               .filter((cat) => topics.some((t) => (t.category || "reference") === cat))
@@ -145,86 +160,195 @@ export function SpecialKnowledgePanel({ ingestBusy, ingestSteps, ingestResult, o
 
 /* ── Import Dialog ── */
 
+type ImportTab = "file" | "url" | "mcp";
+
 function WikiImportDialog({ ingestBusy, ingestSteps, ingestResult, onClose }: {
   ingestBusy: boolean;
   ingestSteps: IngestStep[];
   ingestResult: { message: string; type: "success" | "error" } | null;
   onClose: () => void;
 }) {
-  const [path, setPath] = useState("");
+  const [tab, setTab] = useState<ImportTab>("file");
   const [topicName, setTopicName] = useState("");
 
+  // File tab
+  const [path, setPath] = useState("");
+
+  // URL tab
+  const [url, setUrl] = useState("");
+  const [urlBusy, setUrlBusy] = useState(false);
+  const [urlMsg, setUrlMsg] = useState("");
+
+  // MCP tab
+  const [mcpServers, setMcpServers] = useState<api.McpServer[]>([]);
+  const [selectedServer, setSelectedServer] = useState("");
+  const [docUrl, setDocUrl] = useState("");
+  const [showAddServer, setShowAddServer] = useState(false);
+  const [newServerName, setNewServerName] = useState("");
+  const [newServerUrl, setNewServerUrl] = useState("");
+
   useEffect(() => {
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape" && !ingestBusy) onClose();
-    }
+    function handleKey(e: KeyboardEvent) { if (e.key === "Escape" && !ingestBusy) onClose(); }
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
   }, [onClose, ingestBusy]);
 
+  useEffect(() => {
+    if (tab === "mcp") {
+      api.fetchMcpServers().then((d) => {
+        setMcpServers(d.servers);
+        if (d.servers.length === 1) setSelectedServer(d.servers[0].name);
+      }).catch(() => {});
+    }
+  }, [tab]);
+
+  // ── File ──
   async function handlePickFolder() {
     const p = await pickFolder();
     if (p) { setPath(p); if (!topicName) setTopicName(p.split("/").pop() || ""); }
   }
-
   async function handlePickPdf() {
     const p = await pickPdf();
     if (p) { setPath(p); if (!topicName) setTopicName(p.split("/").pop()?.replace(/\.pdf$/i, "") || ""); }
   }
-
-  const isPdf = path.toLowerCase().endsWith(".pdf");
-
-  async function handleIngest() {
+  async function handleFileIngest() {
     if (!path || ingestBusy) return;
-    if (isPdf) {
-      await specialIngestAsync({ filePath: path, topicName: topicName || undefined });
-    } else {
-      await specialIngestAsync({ folderPath: path, topicName: topicName || undefined });
-    }
-    setPath("");
-    setTopicName("");
+    const isPdf = path.toLowerCase().endsWith(".pdf");
+    await specialIngestAsync(isPdf ? { filePath: path, topicName: topicName || undefined } : { folderPath: path, topicName: topicName || undefined });
+    setPath(""); setTopicName("");
+  }
+
+  // ── URL ──
+  async function handleUrlImport() {
+    if (!url.trim() || urlBusy) return;
+    setUrlBusy(true); setUrlMsg("");
+    try {
+      const r = await api.importWikiUrl(url.trim(), topicName);
+      setUrlMsg(`Imported: ${(r as any).message || "done"}`);
+      setUrl(""); setTopicName("");
+    } catch (e) { setUrlMsg(`Failed: ${e}`); }
+    setUrlBusy(false);
+  }
+
+  // ── MCP doc ──
+  async function handleAddServer() {
+    if (!newServerName.trim() || !newServerUrl.trim()) return;
+    const d = await api.addMcpServer(newServerName.trim(), newServerUrl.trim());
+    setMcpServers(d.servers);
+    setSelectedServer(newServerName.trim());
+    setNewServerName(""); setNewServerUrl(""); setShowAddServer(false);
+  }
+  async function handleDeleteServer(name: string) {
+    const d = await api.deleteMcpServer(name);
+    setMcpServers(d.servers);
+    if (selectedServer === name) setSelectedServer("");
+  }
+  async function handleMcpImport() {
+    if (!selectedServer || !docUrl.trim()) return;
+    // Uses subprocess pipeline — progress streams through wiki ingest events
+    await mcpImportAsync({
+      serverName: selectedServer,
+      docUrl: docUrl.trim(),
+      topicName: topicName || undefined,
+    });
+    setDocUrl(""); setTopicName("");
   }
 
   const hasProgress = ingestSteps.length > 0 && ingestSteps.some(s => s.status !== "pending");
+  const busy = ingestBusy || urlBusy;
 
   return (
-    <div className="proto-dialog-overlay" onClick={() => !ingestBusy && onClose()}>
-      <div className="proto-dialog" onClick={(e) => e.stopPropagation()} style={{ width: 480 }}>
+    <div className="proto-dialog-overlay" onClick={() => !busy && onClose()}>
+      <div className="proto-dialog" onClick={(e) => e.stopPropagation()} style={{ width: 520 }}>
         <div className="proto-dialog-header">
           <span>Import to Wiki</span>
           <button type="button" onClick={onClose} className="proto-dialog-close"><X size={14} /></button>
         </div>
 
-        <div className="proto-dialog-body">
-          {/* Source selection */}
-          <div className="proto-form-field">
-            <label className="proto-form-label">Source (file or folder)</label>
-            <div style={{ display: "flex", gap: 8 }}>
-              <input type="text" value={path} onChange={(e) => setPath(e.target.value)} placeholder="Select file or folder..." className="proto-form-input proto-form-input-mono" style={{ flex: 1, minWidth: 0 }} />
-              <button type="button" onClick={handlePickFolder} className="proto-btn proto-btn-secondary" style={{ flexShrink: 0 }}>
-                <FolderOpen size={13} /> Folder
-              </button>
-              <button type="button" onClick={handlePickPdf} className="proto-btn proto-btn-secondary" style={{ flexShrink: 0 }}>
-                <FileText size={13} /> PDF
-              </button>
-            </div>
-          </div>
-
-          {/* Topic name + import button */}
-          <div className="proto-form-field">
-            <label className="proto-form-label">Topic name</label>
-            <input type="text" value={topicName} onChange={(e) => setTopicName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleIngest()} placeholder="e.g. Attention Is All You Need" className="proto-form-input" />
-            <p className="proto-form-hint">Use <code style={{ fontSize: 12, padding: "1px 4px", background: "var(--color-bg-elevated)", borderRadius: 3 }}>@topic_name</code> in search to focus on this topic.</p>
-          </div>
-
-          <button type="button" onClick={handleIngest} disabled={ingestBusy || !path} className="proto-btn proto-btn-primary" style={{ width: "100%", justifyContent: "center", marginBottom: hasProgress || ingestResult ? 20 : 0 }}>
-            {ingestBusy ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-            {ingestBusy ? "Importing..." : "Import"}
+        <div className="proto-import-tabs">
+          <button type="button" onClick={() => setTab("file")} className={cn("proto-import-tab", tab === "file" && "proto-import-tab-active")}>
+            <FolderOpen size={13} /> File
           </button>
+          <button type="button" onClick={() => setTab("url")} className={cn("proto-import-tab", tab === "url" && "proto-import-tab-active")}>
+            <Link size={13} /> URL
+          </button>
+          <button type="button" onClick={() => setTab("mcp")} className={cn("proto-import-tab", tab === "mcp" && "proto-import-tab-active")}>
+            <Server size={13} /> MCP
+          </button>
+        </div>
 
-          {/* Pipeline progress */}
+        <div className="proto-dialog-body">
+          {/* ── File tab ── */}
+          {tab === "file" && (
+            <>
+              <div className="proto-form-field">
+                <label className="proto-form-label">Source</label>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input type="text" value={path} onChange={(e) => setPath(e.target.value)} placeholder="Select file or folder..." className="proto-form-input proto-form-input-mono" style={{ flex: 1, minWidth: 0 }} />
+                  <button type="button" onClick={handlePickFolder} className="proto-btn proto-btn-secondary" style={{ flexShrink: 0 }}><FolderOpen size={13} /> Folder</button>
+                  <button type="button" onClick={handlePickPdf} className="proto-btn proto-btn-secondary" style={{ flexShrink: 0 }}><FileText size={13} /> PDF</button>
+                </div>
+              </div>
+              <TopicNameField value={topicName} onChange={setTopicName} onSubmit={handleFileIngest} />
+              <ImportButton busy={ingestBusy} disabled={!path} onClick={handleFileIngest} label="Import" busyLabel="Importing..." />
+            </>
+          )}
+
+          {/* ── URL tab ── */}
+          {tab === "url" && (
+            <>
+              <div className="proto-form-field">
+                <label className="proto-form-label">URL</label>
+                <input type="text" value={url} onChange={(e) => setUrl(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleUrlImport()} placeholder="https://..." className="proto-form-input proto-form-input-mono" />
+              </div>
+              <TopicNameField value={topicName} onChange={setTopicName} onSubmit={handleUrlImport} />
+              <ImportButton busy={urlBusy} disabled={!url.trim()} onClick={handleUrlImport} label="Import URL" busyLabel="Fetching..." icon={<Link size={14} />} />
+              {urlMsg && <p className="proto-form-hint" style={{ marginTop: 8 }}>{urlMsg}</p>}
+            </>
+          )}
+
+          {/* ── MCP tab (document-focused) ── */}
+          {tab === "mcp" && (
+            <>
+              <div className="proto-form-field">
+                <label className="proto-form-label">MCP Server</label>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <select value={selectedServer} onChange={(e) => setSelectedServer(e.target.value)} className="proto-form-input" style={{ flex: 1 }}>
+                    <option value="">Select server...</option>
+                    {mcpServers.map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}
+                  </select>
+                  <button type="button" onClick={() => setShowAddServer(!showAddServer)} className="proto-btn proto-btn-secondary" style={{ flexShrink: 0 }}><Plus size={13} /></button>
+                  {selectedServer && (
+                    <button type="button" onClick={() => handleDeleteServer(selectedServer)} className="proto-btn proto-btn-secondary" style={{ flexShrink: 0, color: "var(--color-danger)" }}><Trash2 size={13} /></button>
+                  )}
+                </div>
+              </div>
+
+              {showAddServer && (
+                <div style={{ background: "var(--color-bg-elevated)", padding: 12, borderRadius: "var(--radius-proto)", display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+                  <input type="text" value={newServerName} onChange={(e) => setNewServerName(e.target.value)} placeholder="Name (e.g. feishu)" className="proto-form-input" />
+                  <input type="text" value={newServerUrl} onChange={(e) => setNewServerUrl(e.target.value)} placeholder="MCP stream URL" className="proto-form-input proto-form-input-mono" style={{ fontSize: 11 }} />
+                  <button type="button" onClick={handleAddServer} disabled={!newServerName.trim() || !newServerUrl.trim()} className="proto-btn proto-btn-primary" style={{ alignSelf: "flex-start" }}>Add</button>
+                </div>
+              )}
+
+              {selectedServer && (
+                <>
+                  <div className="proto-form-field">
+                    <label className="proto-form-label">Document URL</label>
+                    <input type="text" value={docUrl} onChange={(e) => setDocUrl(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleMcpImport()} placeholder="https://xxx.feishu.cn/wiki/..." className="proto-form-input proto-form-input-mono" />
+                    <p className="proto-form-hint">Paste a Feishu/Lark document link. The document ID will be extracted automatically.</p>
+                  </div>
+                  <TopicNameField value={topicName} onChange={setTopicName} onSubmit={handleMcpImport} />
+                  <ImportButton busy={ingestBusy} disabled={!docUrl.trim()} onClick={handleMcpImport} label="Import Document" busyLabel="Importing..." icon={<Server size={14} />} />
+                </>
+              )}
+            </>
+          )}
+
+          {/* Pipeline progress (file import) */}
           {hasProgress && (
-            <div className="proto-pipeline" style={{ marginBottom: ingestResult ? 16 : 0 }}>
+            <div className="proto-pipeline" style={{ marginTop: 16 }}>
               <div className="proto-pipeline-header" style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span>Pipeline</span>
                 {ingestBusy && <Loader2 size={12} className="animate-spin text-[var(--color-accent)] ml-auto" />}
@@ -243,12 +367,8 @@ function WikiImportDialog({ ingestBusy, ingestSteps, ingestResult, onClose }: {
                     {step.status === "error" && "\u2717"}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <span className={cn("text-[13px]", step.status === "active" ? "text-[var(--color-text-primary)]" : step.status === "done" ? "text-[var(--color-text-secondary)]" : "text-[var(--color-text-muted)] opacity-40")}>
-                      {step.label}
-                    </span>
-                    {step.status === "active" && step.total > 0 && (
-                      <span style={{ fontSize: 11, color: "var(--color-accent)", marginLeft: 8 }}>{step.current}/{step.total}</span>
-                    )}
+                    <span className={cn("text-[13px]", step.status === "active" ? "text-[var(--color-text-primary)]" : step.status === "done" ? "text-[var(--color-text-secondary)]" : "text-[var(--color-text-muted)] opacity-40")}>{step.label}</span>
+                    {step.status === "active" && step.total > 0 && <span style={{ fontSize: 11, color: "var(--color-accent)", marginLeft: 8 }}>{step.current}/{step.total}</span>}
                     {step.detail && <p className="proto-step-detail" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{step.detail}</p>}
                   </div>
                 </div>
@@ -256,14 +376,31 @@ function WikiImportDialog({ ingestBusy, ingestSteps, ingestResult, onClose }: {
             </div>
           )}
 
-          {/* Result */}
           {ingestResult && (
-            <div className={cn("proto-wiki-result", ingestResult.type === "success" ? "proto-wiki-result-success" : "proto-wiki-result-error")} style={{ padding: "8px 12px", borderRadius: "var(--radius-proto)", border: "1px solid var(--color-border)", fontSize: 13 }}>
+            <div className={cn("proto-wiki-result", ingestResult.type === "success" ? "proto-wiki-result-success" : "proto-wiki-result-error")} style={{ padding: "8px 12px", borderRadius: "var(--radius-proto)", border: "1px solid var(--color-border)", fontSize: 13, marginTop: 12 }}>
               {ingestResult.type === "success" ? "\u2713" : "\u2717"} {ingestResult.message}
             </div>
           )}
         </div>
       </div>
     </div>
+  );
+}
+
+function TopicNameField({ value, onChange, onSubmit }: { value: string; onChange: (v: string) => void; onSubmit: () => void }) {
+  return (
+    <div className="proto-form-field">
+      <label className="proto-form-label">Topic name (optional)</label>
+      <input type="text" value={value} onChange={(e) => onChange(e.target.value)} onKeyDown={(e) => e.key === "Enter" && onSubmit()} placeholder="Auto-detected from content" className="proto-form-input" />
+    </div>
+  );
+}
+
+function ImportButton({ busy, disabled, onClick, label, busyLabel, icon }: { busy: boolean; disabled: boolean; onClick: () => void; label: string; busyLabel: string; icon?: React.ReactNode }) {
+  return (
+    <button type="button" onClick={onClick} disabled={busy || disabled} className="proto-btn proto-btn-primary" style={{ width: "100%", justifyContent: "center" }}>
+      {busy ? <Loader2 size={14} className="animate-spin" /> : icon || <Plus size={14} />}
+      {busy ? busyLabel : label}
+    </button>
   );
 }

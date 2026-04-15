@@ -70,7 +70,7 @@ class ChatRequest(BaseModel):
     query: str
     evidence_ids: list[int] = []
     history: list[ChatHistoryItem] = []  # Previous Q&A for follow-ups
-    topk: int = 10
+    topk: int = 15
 
 
 class FeedbackRequest(BaseModel):
@@ -178,9 +178,8 @@ def api_chat(req: ChatRequest) -> dict:
         sr = search(req.query, req.topk)
         evidence = sr["results"]
 
-    # Send top 75% of evidence to LLM (generous context, not just topk)
-    cutoff = max(1, int(len(evidence) * 0.75))
-    evidence_to_send = evidence[:cutoff]
+    # Send ALL evidence to LLM — let the model decide what's relevant
+    evidence_to_send = evidence
 
     evidence_lines = []
     for i, e in enumerate(evidence_to_send):
@@ -193,10 +192,11 @@ def api_chat(req: ChatRequest) -> dict:
 
     user_prompt = (
         f"问题: {req.query}\n\n"
-        f"以下是从用户的个人知识库中检索到的 {len(evidence_lines)} 条相关笔记。\n"
-        f"请综合这些笔记内容回答问题。引用时使用 [1] [2] 等编号。\n\n"
-        f"笔记内容:\n{evidence_text}\n\n"
-        f"请先总结关键信息，再给出建议。"
+        f"以下是从知识库中检索到的 {len(evidence_lines)} 条相关内容片段，可能来自不同文档（需求、技术方案、测试、产品等）。\n"
+        f"请综合所有片段回答问题。如果信息分布在多个片段中，请跨片段整合。\n"
+        f"引用时使用 [1] [2] 等编号标注来源。如果片段中包含表格，请保留表格格式。\n\n"
+        f"内容片段:\n{evidence_text}\n\n"
+        f"请直接回答问题，引用具体来源。"
     )
 
     # Build messages with conversation history for follow-ups
@@ -207,9 +207,12 @@ def api_chat(req: ChatRequest) -> dict:
 
     try:
         answer = _chat_completion(
-            "You are a precise knowledge assistant. Always cite evidence using [N] notation. "
-            "Answer in the same language as the question. Avoid unsupported claims. "
-            "If this is a follow-up question, reference the previous conversation context.",
+            "You are a precise knowledge assistant for a team documentation system. "
+            "The knowledge base contains requirements, technical designs, test plans, product specs, and meeting notes. "
+            "Always cite evidence using [N] notation. Synthesize information across multiple documents when needed. "
+            "If a question spans multiple document types (e.g. requirement + test plan), connect them explicitly. "
+            "Preserve table formatting in your answer when the source contains tables. "
+            "Answer in the same language as the question. Never fabricate information not in the evidence.",
             messages,
         )
     except Exception as exc:
@@ -394,6 +397,85 @@ def api_graph() -> dict:
     return get_graph()
 
 
+@app.get("/wiki-graph")
+def api_wiki_graph() -> dict:
+    """Return a document-level graph of wiki topics with shared keyword edges."""
+    with connect() as conn:
+        # Get all wiki tag_segments (one per topic)
+        seg_rows = conn.execute(
+            "SELECT tag, topic_name, summary, keywords_json, source_file FROM tag_segments WHERE tag LIKE 'wiki:%'"
+        ).fetchall()
+
+        # Get source files per topic
+        file_rows = conn.execute(
+            "SELECT dimension, source_file, COUNT(1) chunk_count FROM chunks WHERE dimension LIKE 'wiki:%' GROUP BY dimension, source_file ORDER BY dimension, source_file"
+        ).fetchall()
+
+    # Build topic nodes
+    topics: dict[str, dict] = {}
+    for row in seg_rows:
+        topic = row["topic_name"]
+        if topic in topics:
+            continue
+        kws = []
+        try:
+            kws = json.loads(row["keywords_json"]) if row["keywords_json"] else []
+        except (json.JSONDecodeError, TypeError):
+            pass
+        topics[topic] = {
+            "id": topic,
+            "name": topic,
+            "summary": row["summary"] or "",
+            "keywords": [k.lower() for k in kws[:50] if isinstance(k, str)],
+            "folder": row["source_file"] or "",
+            "files": [],
+            "chunk_count": 0,
+        }
+
+    # Attach source files
+    for row in file_rows:
+        dim = row["dimension"]
+        topic = dim.replace("wiki:", "", 1)
+        if topic in topics:
+            topics[topic]["files"].append({
+                "path": row["source_file"],
+                "chunks": row["chunk_count"],
+            })
+            topics[topic]["chunk_count"] += row["chunk_count"]
+
+    # Build edges: shared keywords between topics
+    edges = []
+    topic_list = list(topics.values())
+    for i in range(len(topic_list)):
+        kws_i = set(topic_list[i]["keywords"])
+        for j in range(i + 1, len(topic_list)):
+            kws_j = set(topic_list[j]["keywords"])
+            shared = kws_i & kws_j
+            # Only meaningful shared keywords (filter out stopwords)
+            shared = {w for w in shared if len(w) > 2}
+            if len(shared) >= 2:
+                edges.append({
+                    "source": topic_list[i]["id"],
+                    "target": topic_list[j]["id"],
+                    "shared_keywords": sorted(shared)[:10],
+                    "weight": len(shared),
+                })
+
+    # Clean up keywords from response (too large)
+    nodes = []
+    for t in topic_list:
+        nodes.append({
+            "id": t["id"],
+            "name": t["name"],
+            "summary": t["summary"],
+            "folder": t["folder"],
+            "files": t["files"],
+            "chunk_count": t["chunk_count"],
+        })
+
+    return {"nodes": nodes, "edges": edges}
+
+
 # ── Version management ──
 
 class RestoreRequest(BaseModel):
@@ -551,23 +633,38 @@ def api_special_knowledge() -> dict:
 
 @app.delete("/special-knowledge/{topic_name}")
 def api_special_knowledge_delete(topic_name: str) -> dict:
-    """Delete a wiki topic and all its chunks."""
+    """Delete a wiki topic, its chunks, and source .md files on disk."""
     dimension = f"wiki:{topic_name}"
+    files_deleted = []
     with connect() as conn:
-        # Find and delete the dedicated wiki build
+        # Collect source files before deleting chunks
+        source_rows = conn.execute(
+            "SELECT DISTINCT source_file FROM chunks WHERE dimension = ?", (dimension,)
+        ).fetchall()
         build_rows = conn.execute(
             "SELECT DISTINCT build_id FROM chunks WHERE dimension = ?", (dimension,)
         ).fetchall()
         chunk_del = conn.execute("DELETE FROM chunks WHERE dimension = ?", (dimension,)).rowcount
         seg_del = conn.execute("DELETE FROM tag_segments WHERE tag = ?", (dimension,)).rowcount
-        # Clean up empty wiki builds (no remaining chunks)
         for br in build_rows:
             bid = br["build_id"]
             remaining = conn.execute("SELECT COUNT(1) c FROM chunks WHERE build_id = ?", (bid,)).fetchone()["c"]
             if remaining == 0:
                 conn.execute("DELETE FROM builds WHERE id = ?", (bid,))
         conn.commit()
-    return {"deleted": topic_name, "chunks_removed": chunk_del, "segments_removed": seg_del}
+
+    # Delete source .md files from disk
+    for row in source_rows:
+        sf = row["source_file"]
+        p = Path(sf)
+        if p.exists() and p.suffix == ".md":
+            try:
+                p.unlink()
+                files_deleted.append(sf)
+            except OSError:
+                pass
+
+    return {"deleted": topic_name, "chunks_removed": chunk_del, "segments_removed": seg_del, "files_deleted": files_deleted}
 
 
 @app.get("/wiki-sources")
@@ -599,8 +696,10 @@ def api_wiki_sources() -> dict:
                 category = meta.get("category", "reference")
         except (json.JSONDecodeError, TypeError):
             pass
+        # Resolve to absolute path so Electron can read the file
+        abs_path = str(Path(sf).resolve()) if not sf.startswith("/") else sf
         sources.append({
-            "path": sf,
+            "path": abs_path,
             "name": Path(sf).stem,
             "topic": r["topic_name"] or "",
             "category": category,
@@ -635,6 +734,189 @@ def api_ocr_config(req: OcrConfigRequest) -> dict:
     # Update runtime
     settings.ocr_langs = req.ocr_langs
     return {"ok": True, "ocr_langs": req.ocr_langs}
+
+
+# ── MCP Server Management ──
+
+@app.get("/mcp/servers")
+def api_mcp_servers() -> dict:
+    from app.mcp_client import list_servers
+    return {"servers": list_servers()}
+
+
+class McpServerRequest(BaseModel):
+    name: str
+    url: str
+    transport: str = "streamable_http"
+    auth: dict = {}
+
+
+@app.post("/mcp/servers")
+def api_mcp_server_add(req: McpServerRequest) -> dict:
+    from app.mcp_client import add_server
+    servers = add_server(req.name, req.url, req.transport, req.auth)
+    return {"servers": servers}
+
+
+@app.delete("/mcp/servers/{name}")
+def api_mcp_server_delete(name: str) -> dict:
+    from app.mcp_client import remove_server
+    servers = remove_server(name)
+    return {"servers": servers}
+
+
+@app.get("/mcp/servers/{name}/tools")
+def api_mcp_tools(name: str) -> dict:
+    from app.mcp_client import mcp_list_tools
+    try:
+        tools = mcp_list_tools(name)
+        return {"tools": tools}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+class McpCallRequest(BaseModel):
+    tool_name: str
+    arguments: dict = {}
+
+
+@app.post("/mcp/servers/{name}/call")
+def api_mcp_call(name: str, req: McpCallRequest) -> dict:
+    from app.mcp_client import mcp_call_tool
+    try:
+        result = mcp_call_tool(name, req.tool_name, req.arguments)
+        return {"content": result}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.get("/mcp/servers/{name}/resources")
+def api_mcp_resources(name: str) -> dict:
+    from app.mcp_client import mcp_list_resources
+    try:
+        resources = mcp_list_resources(name)
+        return {"resources": resources}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+class McpReadResourceRequest(BaseModel):
+    uri: str
+
+
+@app.post("/mcp/servers/{name}/resources/read")
+def api_mcp_read_resource(name: str, req: McpReadResourceRequest) -> dict:
+    from app.mcp_client import mcp_read_resource
+    try:
+        content = mcp_read_resource(name, req.uri)
+        return {"content": content}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+# ── Wiki Import: URL ──
+
+class UrlImportRequest(BaseModel):
+    url: str
+    topic_name: str = ""
+
+
+@app.post("/wiki/import-url")
+def api_wiki_import_url(req: UrlImportRequest) -> dict:
+    """Fetch a URL, convert to markdown, and ingest as wiki topic."""
+    from app.url_import import import_url
+    from app.special_ingest import ingest_folder
+
+    wiki_dir = Path(settings.db_path).resolve().parent / "wiki_sources"
+    try:
+        result = import_url(req.url, str(wiki_dir), req.topic_name or None)
+        md_path = Path(result["md_path"]).resolve()
+        # Ingest only the directory containing this specific file
+        ingest_result = ingest_folder(str(md_path.parent), topic_name=result["topic_name"])
+        return {**ingest_result, "md_path": str(md_path), "source_url": req.url}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Wiki Import: MCP Document ──
+
+class McpDocImportRequest(BaseModel):
+    server_name: str
+    doc_url: str = ""       # Feishu doc URL — auto-extract doc ID
+    document_id: str = ""   # Or pass doc ID directly
+    topic_name: str = ""
+
+
+def _extract_feishu_doc_id(url: str) -> str:
+    """Extract document ID from Feishu/Lark wiki/doc URL.
+    e.g. https://xxx.feishu.cn/wiki/Jt78wVLEJiqPN3kPIorcoOtjngf → Jt78wVLEJiqPN3kPIorcoOtjngf
+    """
+    import re
+    # Match wiki or docx URLs
+    m = re.search(r'(?:wiki|docx|docs)/([A-Za-z0-9]+)', url)
+    if m:
+        return m.group(1)
+    # Fallback: last path segment
+    parts = [p for p in url.rstrip("/").split("/") if p]
+    return parts[-1] if parts else ""
+
+
+def _extract_title_from_content(content: str) -> str:
+    """Extract document title from content — first non-empty line."""
+    for line in content.split("\n"):
+        stripped = line.strip().lstrip("# ").strip()
+        if stripped and len(stripped) < 200:
+            return stripped
+    return ""
+
+
+@app.post("/wiki/import-mcp")
+def api_wiki_import_mcp(req: McpDocImportRequest) -> dict:
+    """Fetch document from MCP server and ingest as wiki topic."""
+    from app.mcp_client import mcp_call_tool
+
+    try:
+        # Resolve document ID
+        doc_id = req.document_id
+        if not doc_id and req.doc_url:
+            doc_id = _extract_feishu_doc_id(req.doc_url)
+        if not doc_id:
+            raise ValueError("Provide a document URL or document_id")
+
+        # Call docx_v1_document_rawContent
+        content = mcp_call_tool(
+            req.server_name,
+            "docx_v1_document_rawContent",
+            {"path": {"document_id": doc_id}},
+        )
+
+        if not content or not content.strip():
+            raise ValueError("MCP returned empty document content")
+
+        # Extract title from content (already unwrapped at mcp_client layer)
+        title = _extract_title_from_content(content)
+        topic = req.topic_name or title or doc_id
+
+        # Save as .md — per-topic subdirectory to avoid cross-contamination
+        wiki_dir = Path(settings.db_path).resolve().parent / "wiki_sources"
+        import re as _re
+        safe_name = _re.sub(r'[^\w\s\u4e00-\u9fff-]', '_', topic)[:80]
+        topic_dir = wiki_dir / safe_name
+        topic_dir.mkdir(parents=True, exist_ok=True)
+        md_path = topic_dir / f"{safe_name}.md"
+        md_path.write_text(content, encoding="utf-8")
+
+        # Ingest only this topic's directory
+        from app.special_ingest import ingest_folder
+        result = ingest_folder(str(topic_dir), topic_name=topic)
+        return {
+            **result,
+            "md_path": str(md_path.resolve()),
+            "title": title,
+            "source": f"mcp:{req.server_name}",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 class TagAddRequest(BaseModel):

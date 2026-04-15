@@ -115,6 +115,15 @@ export async function specialIngestAsync(opts: { folderPath?: string; filePath?:
   });
 }
 
+export async function mcpImportAsync(opts: { serverName: string; docUrl?: string; documentId?: string; topicName?: string }): Promise<void> {
+  await getDesktop().invoke("mcp_import_async", {
+    serverName: opts.serverName,
+    docUrl: opts.docUrl,
+    documentId: opts.documentId,
+    topicName: opts.topicName || undefined,
+  });
+}
+
 export async function pickFolder(): Promise<string | null> {
   return getDesktop().invoke("dialog_open_folder") as Promise<string | null>;
 }

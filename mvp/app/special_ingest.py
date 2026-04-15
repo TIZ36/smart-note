@@ -129,6 +129,13 @@ _GO_BOUNDARY_RE = re.compile(r'^(?:func |type |var |const )', re.MULTILINE)
 _RS_BOUNDARY_RE = re.compile(r'^(?:fn |pub fn |pub\(crate\) fn |impl |struct |enum |trait |mod |use )', re.MULTILINE)
 _MD_BOUNDARY_RE = re.compile(r'^#{1,4}\s', re.MULTILINE)
 
+# Table detection
+_TABLE_ROW_RE = re.compile(r'^\|.+\|$', re.MULTILINE)
+_TABLE_SEP_RE = re.compile(r'^\|[-:\s|]+\|$', re.MULTILINE)
+
+# Cross-document reference patterns
+_XREF_RE = re.compile(r'(?:详见|参见|参考|见|see|refer to|cf\.)\s*[《「【]?([^》」】\n]{3,40})[》」】]?', re.IGNORECASE)
+
 # ── Academic paper regex ──
 
 # Common section headings in papers (case-insensitive matching done in code)
@@ -152,6 +159,42 @@ _TERM_ITALIC_RE = re.compile(r'(?<!\*)\*([^*]+)\*(?!\*)')
 _TERM_DEFINE_RE = re.compile(r'(?:we (?:define|propose|introduce|present)|called|known as|referred to as)\s+["\']?(\w[\w\s]{2,30})["\']?', re.IGNORECASE)
 
 PAPER_CHUNK_MAX = 1500  # Papers need larger context per chunk
+
+
+def _extract_doc_metadata(content: str, source_name: str) -> dict:
+    """Extract document-level metadata: title, type, references."""
+    meta = {"title": "", "doc_type": "", "references": []}
+
+    # Title = first heading or filename
+    heading_match = _HEADING_RE.search(content[:2000])
+    if heading_match:
+        meta["title"] = heading_match.group(1).strip()
+    else:
+        meta["title"] = source_name.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+
+    # Detect doc type from title/content keywords
+    title_lower = meta["title"].lower()
+    content_lower = content[:3000].lower()
+    for keyword, dtype in [
+        ("需求", "requirement"), ("prd", "requirement"), ("requirement", "requirement"),
+        ("技术方案", "technical"), ("架构", "technical"), ("设计", "technical"), ("design", "technical"),
+        ("测试", "testing"), ("test", "testing"), ("qa", "testing"),
+        ("上线", "deployment"), ("发布", "deployment"), ("deploy", "deployment"), ("release", "deployment"),
+        ("产品", "product"), ("product", "product"),
+        ("会议", "meeting"), ("meeting", "meeting"),
+        ("api", "api"), ("接口", "api"),
+    ]:
+        if keyword in title_lower or keyword in content_lower:
+            meta["doc_type"] = dtype
+            break
+
+    # Cross-document references
+    for m in _XREF_RE.finditer(content):
+        ref = m.group(1).strip()
+        if ref and len(ref) > 3:
+            meta["references"].append(ref)
+
+    return meta
 
 
 def _extract_structural_keywords(content: str, ext: str) -> list[str]:
@@ -451,12 +494,109 @@ def _chunk_file(text: str, source_name: str, ext: str) -> list[dict]:
             return _chunk_by_boundaries(text, source_name, boundary_re, CODE_MAX_CHUNK)
         return _chunk_lines(text, source_name, FALLBACK_MAX_CHUNK)
 
-    # Prose files (markdown, etc.)
+    # Prose files (markdown, etc.) — table-aware chunking with context prefix
     if ext in PROSE_EXTENSIONS:
-        return _chunk_by_boundaries(text, source_name, _MD_BOUNDARY_RE, PROSE_MAX_CHUNK)
+        return _chunk_prose(text, source_name, PROSE_MAX_CHUNK)
 
     # Fallback
     return _chunk_lines(text, source_name, FALLBACK_MAX_CHUNK)
+
+
+def _chunk_prose(text: str, source_name: str, max_len: int) -> list[dict]:
+    """Smart prose chunking: keeps tables intact, adds heading context prefix."""
+    lines = text.splitlines()
+    if not lines:
+        return []
+
+    chunks = []
+    current_heading = ""
+    buf: list[str] = []
+    buf_start = 1
+    in_table = False
+    table_buf: list[str] = []
+    table_start = 0
+
+    def _flush_buf():
+        nonlocal buf, buf_start
+        if not buf:
+            return
+        content = "\n".join(buf).strip()
+        if content:
+            # Prepend heading context if this chunk doesn't start with a heading
+            if current_heading and not content.startswith("#"):
+                content = f"[{current_heading}]\n{content}"
+            chunks.append({
+                "text": content,
+                "source_ref": f"{source_name}:line:{buf_start}-{buf_start + len(buf) - 1}",
+                "line_start": buf_start,
+                "line_end": buf_start + len(buf) - 1,
+            })
+        buf = []
+
+    def _flush_table():
+        nonlocal table_buf, in_table
+        if not table_buf:
+            return
+        content = "\n".join(table_buf).strip()
+        if content:
+            # Table always gets heading context
+            if current_heading:
+                content = f"[{current_heading}]\n{content}"
+            chunks.append({
+                "text": content,
+                "source_ref": f"{source_name}:line:{table_start}-{table_start + len(table_buf) - 1}",
+                "line_start": table_start,
+                "line_end": table_start + len(table_buf) - 1,
+            })
+        table_buf = []
+        in_table = False
+
+    for i, line in enumerate(lines):
+        line_no = i + 1
+
+        # Detect table rows
+        is_table_row = bool(_TABLE_ROW_RE.match(line)) or bool(_TABLE_SEP_RE.match(line))
+
+        if is_table_row:
+            if not in_table:
+                # Starting a table — flush the text buffer first
+                _flush_buf()
+                in_table = True
+                table_start = line_no
+                table_buf = []
+            table_buf.append(line)
+            continue
+
+        if in_table:
+            # Exiting a table — flush it as a single chunk
+            _flush_table()
+
+        # Heading boundary — flush and start new section
+        if _MD_BOUNDARY_RE.match(line):
+            _flush_buf()
+            heading_text = line.lstrip("#").strip()
+            current_heading = heading_text
+            buf = [line]
+            buf_start = line_no
+            continue
+
+        # Normal line — accumulate
+        if not buf:
+            buf_start = line_no
+        buf.append(line)
+
+        # Check size limit
+        buf_len = sum(len(l) + 1 for l in buf)
+        if buf_len >= max_len:
+            _flush_buf()
+            buf_start = line_no + 1
+
+    # Flush remaining
+    if in_table:
+        _flush_table()
+    _flush_buf()
+
+    return chunks
 
 
 def _is_academic_paper(text: str) -> bool:
@@ -800,9 +940,20 @@ def ingest_folder(folder_path: str, topic_name: str | None = None) -> dict:
             all_structural_kws.extend(_extract_structural_keywords(content, ext))
             file_chunks = _chunk_file(content, str(rel), ext)
 
+        # Extract document-level metadata
+        doc_meta = _extract_doc_metadata(content, str(rel))
+        if doc_meta["title"]:
+            all_structural_kws.append(doc_meta["title"])
+        if doc_meta["doc_type"]:
+            all_structural_kws.append(doc_meta["doc_type"])
+        for ref in doc_meta.get("references", []):
+            all_structural_kws.append(ref)
+
         for chunk in file_chunks:
             chunk["source_file"] = str(f)
             chunk["ext"] = ext
+            chunk["doc_title"] = doc_meta.get("title", "")
+            chunk["doc_type"] = doc_meta.get("doc_type", "")
         all_chunks.extend(file_chunks)
         if (i + 1) % 10 == 0 or i + 1 == len(files):
             _progress("parse", i + 1, len(files), f"{i + 1}/{len(files)} files, {len(all_chunks)} chunks")
@@ -869,6 +1020,14 @@ def ingest_folder(folder_path: str, topic_name: str | None = None) -> dict:
             for kw in unique_structural:
                 if kw.lower() in chunk_text_lower:
                     chunk_keywords.update(_split_identifier(kw))
+
+            # Add document-level metadata as keywords
+            if chunk.get("doc_title"):
+                for word in chunk["doc_title"].split():
+                    if len(word) > 1:
+                        chunk_keywords.add(word.lower())
+            if chunk.get("doc_type"):
+                chunk_keywords.add(chunk["doc_type"])
 
             # Add AI-extracted keywords
             ai_summary = ""

@@ -31,10 +31,10 @@ export function SourceCard({ index, result, highlighted, starred, onClick }: Pro
         {isWiki && <BookOpen size={12} className="proto-wiki-badge-icon" />}
         <span className={cn("proto-source-meta-dim", isWiki ? "proto-wiki-dim" : `proto-tag-color-${result._tagColor || "gray"}`)}>{displayDim}</span>
         {result.segment_range && (
-          <span style={{ fontSize: 10, color: "var(--color-accent)", fontFamily: "ui-monospace, monospace" }}>{result.segment_range}</span>
+          <span className="proto-source-meta-range">{result.segment_range}</span>
         )}
         {result.segment_topic && (
-          <span style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>{result.segment_topic}</span>
+          <span className="proto-source-meta-topic">{result.segment_topic}</span>
         )}
         <span className="proto-source-meta-score">
           {Number(result.score || 0).toFixed(2)}

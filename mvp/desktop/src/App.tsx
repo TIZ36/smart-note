@@ -37,13 +37,15 @@ const STEP_LABELS: Record<string, string> = {
 const STEP_ORDER = ["parse", "embed", "segment", "ai_enrich", "store", "views"];
 
 const WIKI_STEP_LABELS: Record<string, string> = {
+  fetch: "Fetching document",
+  rewrite: "AI formatting to Markdown",
   parse: "Scanning files",
   embed: "Generating embeddings",
   segment: "Text segmentation",
   ai_enrich: "AI enrichment",
   store: "Storing chunks",
 };
-const WIKI_STEP_ORDER = ["parse", "embed", "segment", "ai_enrich", "store"];
+const WIKI_STEP_ORDER = ["fetch", "rewrite", "parse", "embed", "segment", "ai_enrich", "store"];
 
 function initialSteps(): IngestStep[] {
   return STEP_ORDER.map((key) => ({
@@ -203,7 +205,7 @@ export default function App() {
         />
       );
     }
-    if (activeChannel === "special-knowledge") return <SpecialKnowledgePanel ingestBusy={wikiIngestBusy} ingestSteps={wikiIngestSteps} ingestResult={wikiIngestResult} onTopicsChanged={handleWikiTopicsChanged} />;
+    if (activeChannel === "special-knowledge") return <SpecialKnowledgePanel ingestBusy={wikiIngestBusy} ingestSteps={wikiIngestSteps} ingestResult={wikiIngestResult} onTopicsChanged={handleWikiTopicsChanged} onSelectSource={(path) => setActiveChannel(`source:${path}` as ChannelId)} />;
     if (activeChannel.startsWith("source:")) {
       const filePath = activeChannel.slice("source:".length);
       return <WikiSourceViewer filePath={filePath} />;

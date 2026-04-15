@@ -59,6 +59,22 @@ def cmd_special_ingest(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_mcp_import(args: argparse.Namespace) -> None:
+    from app.mcp_import import import_mcp_doc
+    try:
+        result = import_mcp_doc(
+            server_name=args.server,
+            doc_url=args.url or "",
+            document_id=args.doc_id or "",
+            topic_name=args.topic or "",
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    except Exception as e:
+        print(json.dumps({"inserted": 0, "files": 0, "message": f"MCP import failed: {e}"}, ensure_ascii=False))
+        import sys
+        sys.exit(1)
+
+
 def cmd_serve(args: argparse.Namespace) -> None:
     uvicorn.run("app.gateway:app", host="127.0.0.1", port=args.port, reload=False)
 
@@ -93,6 +109,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--file", default=None, help="Path to single file (e.g. PDF) to ingest")
     s.add_argument("--topic", default=None, help="Custom topic name (defaults to folder/file name)")
     s.set_defaults(func=cmd_special_ingest)
+
+    s = sub.add_parser("mcp-import")
+    s.add_argument("--server", required=True, help="MCP server name")
+    s.add_argument("--url", default=None, help="Document URL (e.g. Feishu wiki link)")
+    s.add_argument("--doc-id", default=None, help="Document ID (alternative to URL)")
+    s.add_argument("--topic", default=None, help="Custom topic name")
+    s.set_defaults(func=cmd_mcp_import)
 
     s = sub.add_parser("serve")
     s.add_argument("--port", type=int, default=8787)

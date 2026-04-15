@@ -75,6 +75,43 @@ def segment_code(text: str) -> str:
     return " ".join(tokens)
 
 
+# ── Domain synonym/abbreviation expansion ──
+# Maps abbreviations → full forms for bidirectional matching
+SYNONYMS: dict[str, list[str]] = {
+    "prd": ["需求文档", "product requirement"],
+    "需求": ["requirement", "prd"],
+    "技术方案": ["technical design", "架构设计"],
+    "上线": ["发布", "部署", "deploy", "release"],
+    "发布": ["上线", "deploy", "release"],
+    "部署": ["上线", "deploy"],
+    "灰度": ["canary", "灰度发布", "canary release"],
+    "api": ["接口", "endpoint"],
+    "接口": ["api", "endpoint"],
+    "bug": ["缺陷", "问题", "defect"],
+    "缺陷": ["bug", "defect"],
+    "测试": ["test", "qa"],
+    "回归": ["regression"],
+    "cr": ["code review", "代码评审"],
+    "ci": ["持续集成", "continuous integration"],
+    "cd": ["持续部署", "continuous deployment"],
+    "sdk": ["开发工具包"],
+    "ui": ["界面", "用户界面"],
+    "ux": ["用户体验"],
+}
+
+def _expand_synonyms(tokens: list[str]) -> list[str]:
+    """Expand tokens with known synonyms/abbreviations."""
+    expanded = list(tokens)
+    for tok in tokens:
+        lower = tok.lower()
+        if lower in SYNONYMS:
+            for syn in SYNONYMS[lower]:
+                for word in syn.split():
+                    if word.lower() not in {t.lower() for t in expanded}:
+                        expanded.append(word.lower())
+    return expanded
+
+
 def segment(text: str, is_code: bool = False) -> str:
     """Segment text into space-separated tokens for FTS5.
 
@@ -86,6 +123,7 @@ def segment(text: str, is_code: bool = False) -> str:
     - English words and numbers are preserved as-is
     - Punctuation is stripped
     - Code mode: splits camelCase, snake_case, strips code punctuation
+    - Synonym expansion: adds known abbreviation/synonym forms
     """
     if is_code:
         return segment_code(text)
@@ -102,6 +140,9 @@ def segment(text: str, is_code: bool = False) -> str:
         if re.match(r'^[\s\W]+$', tok) and not re.match(r'^[\w]+$', tok):
             continue
         result.append(tok.lower())
+
+    # Expand synonyms for better recall
+    result = _expand_synonyms(result)
     return " ".join(result)
 
 
