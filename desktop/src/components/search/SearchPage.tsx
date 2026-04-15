@@ -397,13 +397,24 @@ export function SearchPage({ searchState: s, tags }: Props) {
                 <RelatedQuestions questions={s.relatedQuestions} onSelect={(q) => handleSearch(q)} />
               )}
 
-              {/* Note Sources — card grid */}
+              {/* Note Sources — card grid with draw animation */}
               {noteResults.length > 0 && (
                 <div className="proto-sources-section">
                   <p className="proto-sources-label">Sources ({noteResults.length})</p>
-                  <div className="proto-sources-cards">
+                  <div className="proto-sources-cards" style={{ perspective: "800px" }}>
                     {noteResults.map((r, i) => (
-                      <div key={r.id} id={`source-card-${i + 1}`}>
+                      <motion.div
+                        key={`${s.activeQuery}-${r.id}`}
+                        id={`source-card-${i + 1}`}
+                        initial={{ opacity: 0, rotateY: -60, scale: 0.85, x: -30 }}
+                        animate={{ opacity: 1, rotateY: 0, scale: 1, x: 0 }}
+                        transition={{
+                          duration: 0.4,
+                          delay: i * 0.06,
+                          ease: [0.22, 1, 0.36, 1],
+                        }}
+                        style={{ transformStyle: "preserve-3d" }}
+                      >
                         <SourceCard
                           index={i + 1}
                           result={r}
@@ -411,7 +422,7 @@ export function SearchPage({ searchState: s, tags }: Props) {
                           highlighted={s.previewRef === r.source_ref || highlightIdx === i + 1}
                           onClick={r.source_ref?.startsWith("memory:") ? undefined : () => s.setPreviewRef(r.source_ref)}
                         />
-                      </div>
+                      </motion.div>
                     ))}
                   </div>
                 </div>

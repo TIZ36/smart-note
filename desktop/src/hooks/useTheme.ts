@@ -2,10 +2,11 @@ import { useState, useEffect, useCallback } from "react";
 
 export type ThemeMode = "system" | "light" | "dark" | "niho";
 
-const THEME_KEY = "intellinote-theme";
+const THEME_KEY = "smartnote-theme";
+const THEME_EVENT = "smartnote-theme-change";
 
 export function useTheme() {
-  const [mode, setMode] = useState<ThemeMode>(() => {
+  const [mode, setModeState] = useState<ThemeMode>(() => {
     return (localStorage.getItem(THEME_KEY) as ThemeMode) || "system";
   });
 
@@ -18,9 +19,27 @@ export function useTheme() {
     }
   }, []);
 
+  const setMode = useCallback((m: ThemeMode) => {
+    setModeState(m);
+    localStorage.setItem(THEME_KEY, m);
+    apply(m);
+    // Notify other useTheme instances in the same window
+    window.dispatchEvent(new CustomEvent(THEME_EVENT, { detail: m }));
+  }, [apply]);
+
+  // Listen for theme changes from other hook instances
+  useEffect(() => {
+    function onThemeChange(e: Event) {
+      const newMode = (e as CustomEvent).detail as ThemeMode;
+      setModeState(newMode);
+    }
+    window.addEventListener(THEME_EVENT, onThemeChange);
+    return () => window.removeEventListener(THEME_EVENT, onThemeChange);
+  }, []);
+
+  // Apply on mount
   useEffect(() => {
     apply(mode);
-    localStorage.setItem(THEME_KEY, mode);
   }, [mode, apply]);
 
   return { mode, setMode };

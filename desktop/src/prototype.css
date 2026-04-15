@@ -120,12 +120,40 @@
 /* ── Logo area ── */
 .proto-logo-particles { display: none; }
 
-:root[data-theme="niho"] .proto-sidebar-logo { position: relative; }
-
-:root[data-theme="niho"] .proto-logo-s {
-  text-shadow: 0 0 8px oklch(0.75 0.2 150 / 0.4);
+:root[data-theme="niho"] .proto-sidebar-logo {
+  position: relative;
+  gap: 2px;
 }
 
+/* Pixel font + neon glow for S */
+:root[data-theme="niho"] .proto-logo-s {
+  font-family: "Silkscreen", monospace;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0;
+  color: oklch(0.85 0.2 155);
+  text-shadow:
+    0 0 4px oklch(0.75 0.2 150 / 0.9),
+    0 0 12px oklch(0.75 0.2 150 / 0.5),
+    0 0 24px oklch(0.75 0.2 150 / 0.2);
+  animation: niho-neon-s 4s ease-in-out infinite;
+}
+
+/* Pixel font + dimmer neon for N */
+:root[data-theme="niho"] .proto-logo-n {
+  font-family: "Silkscreen", monospace;
+  font-size: 15px;
+  font-weight: 400;
+  letter-spacing: 0;
+  opacity: 1;
+  color: oklch(0.6 0.12 155);
+  text-shadow:
+    0 0 3px oklch(0.6 0.15 150 / 0.7),
+    0 0 8px oklch(0.6 0.15 150 / 0.3);
+  animation: niho-neon-n 4s ease-in-out infinite;
+}
+
+/* Ambient pixel particles around logo */
 :root[data-theme="niho"] .proto-logo-particles {
   display: block;
   position: absolute;
@@ -138,30 +166,27 @@
 :root[data-theme="niho"] .proto-logo-particles::after {
   content: "";
   position: absolute;
-  width: 3px;
-  height: 3px;
-  background: var(--color-accent);
+  width: 2px;
+  height: 2px;
+  background: oklch(0.75 0.2 150);
   border-radius: 0;
 }
 
 :root[data-theme="niho"] .proto-logo-particles::before {
   box-shadow:
-    38px 32px 0 0 var(--color-accent),
-    52px 14px 0 0 oklch(0.75 0.2 150 / 0.5),
-    70px 28px 0 0 oklch(0.75 0.2 150 / 0.3),
-    86px 10px 0 0 oklch(0.75 0.2 150 / 0.2),
-    20px 38px 0 0 oklch(0.75 0.2 150 / 0.15),
-    100px 22px 0 0 oklch(0.75 0.2 150 / 0.25);
+    40px 34px 0 0 oklch(0.75 0.2 150 / 0.4),
+    54px 12px 0 0 oklch(0.75 0.2 150 / 0.3),
+    72px 30px 0 0 oklch(0.75 0.2 150 / 0.2),
+    22px 38px 0 0 oklch(0.75 0.2 150 / 0.15);
   animation: niho-drift-a 4s ease-in-out infinite;
 }
 
 :root[data-theme="niho"] .proto-logo-particles::after {
   box-shadow:
-    44px 8px 0 0 oklch(0.75 0.2 150 / 0.4),
-    62px 36px 0 0 oklch(0.75 0.2 150 / 0.2),
-    78px 18px 0 0 oklch(0.75 0.2 150 / 0.35),
-    30px 6px 0 0 oklch(0.75 0.2 150 / 0.15),
-    110px 30px 0 0 oklch(0.75 0.2 150 / 0.2);
+    46px 8px 0 0 oklch(0.75 0.2 150 / 0.3),
+    64px 36px 0 0 oklch(0.75 0.2 150 / 0.15),
+    80px 20px 0 0 oklch(0.75 0.2 150 / 0.25),
+    32px 6px 0 0 oklch(0.75 0.2 150 / 0.1);
   animation: niho-drift-b 5s ease-in-out infinite;
 }
 
@@ -590,6 +615,78 @@
 @keyframes niho-drift-b {
   0%, 100% { opacity: 0.3; transform: translateY(0); }
   50% { opacity: 0.6; transform: translateY(-3px); }
+}
+
+/* Neon sign flicker for S — bright with occasional dim */
+@keyframes niho-neon-s {
+  0%, 100% {
+    color: oklch(0.85 0.2 155);
+    text-shadow: 0 0 4px oklch(0.75 0.2 150 / 0.9), 0 0 12px oklch(0.75 0.2 150 / 0.5), 0 0 24px oklch(0.75 0.2 150 / 0.2);
+  }
+  4% {
+    color: oklch(0.45 0.08 155);
+    text-shadow: 0 0 2px oklch(0.5 0.1 150 / 0.4);
+  }
+  6% {
+    color: oklch(0.85 0.2 155);
+    text-shadow: 0 0 4px oklch(0.75 0.2 150 / 0.9), 0 0 12px oklch(0.75 0.2 150 / 0.5), 0 0 24px oklch(0.75 0.2 150 / 0.2);
+  }
+  8% {
+    color: oklch(0.55 0.1 155);
+    text-shadow: 0 0 2px oklch(0.5 0.1 150 / 0.5);
+  }
+  10% {
+    color: oklch(0.85 0.2 155);
+    text-shadow: 0 0 4px oklch(0.75 0.2 150 / 0.9), 0 0 12px oklch(0.75 0.2 150 / 0.5), 0 0 24px oklch(0.75 0.2 150 / 0.2);
+  }
+  50% {
+    color: oklch(0.82 0.19 155);
+    text-shadow: 0 0 3px oklch(0.75 0.2 150 / 0.8), 0 0 10px oklch(0.75 0.2 150 / 0.4), 0 0 20px oklch(0.75 0.2 150 / 0.15);
+  }
+  52% {
+    color: oklch(0.5 0.08 155);
+    text-shadow: 0 0 2px oklch(0.5 0.1 150 / 0.3);
+  }
+  53% {
+    color: oklch(0.85 0.2 155);
+    text-shadow: 0 0 4px oklch(0.75 0.2 150 / 0.9), 0 0 12px oklch(0.75 0.2 150 / 0.5), 0 0 24px oklch(0.75 0.2 150 / 0.2);
+  }
+}
+
+/* Neon flicker for N — dimmer, offset timing from S */
+@keyframes niho-neon-n {
+  0%, 100% {
+    color: oklch(0.6 0.12 155);
+    text-shadow: 0 0 3px oklch(0.6 0.15 150 / 0.7), 0 0 8px oklch(0.6 0.15 150 / 0.3);
+  }
+  20% {
+    color: oklch(0.6 0.12 155);
+    text-shadow: 0 0 3px oklch(0.6 0.15 150 / 0.7), 0 0 8px oklch(0.6 0.15 150 / 0.3);
+  }
+  22% {
+    color: oklch(0.35 0.05 155);
+    text-shadow: 0 0 1px oklch(0.4 0.08 150 / 0.3);
+  }
+  24% {
+    color: oklch(0.6 0.12 155);
+    text-shadow: 0 0 3px oklch(0.6 0.15 150 / 0.7), 0 0 8px oklch(0.6 0.15 150 / 0.3);
+  }
+  70% {
+    color: oklch(0.55 0.1 155);
+    text-shadow: 0 0 2px oklch(0.5 0.12 150 / 0.5), 0 0 6px oklch(0.5 0.12 150 / 0.2);
+  }
+  72% {
+    color: oklch(0.3 0.04 155);
+    text-shadow: 0 0 1px oklch(0.35 0.06 150 / 0.2);
+  }
+  73% {
+    color: oklch(0.45 0.08 155);
+    text-shadow: 0 0 1px oklch(0.4 0.08 150 / 0.4);
+  }
+  75% {
+    color: oklch(0.6 0.12 155);
+    text-shadow: 0 0 3px oklch(0.6 0.15 150 / 0.7), 0 0 8px oklch(0.6 0.15 150 / 0.3);
+  }
 }
 
 @keyframes niho-pulse-dot {
@@ -2779,26 +2876,30 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 
 .proto-editor-empty-inner {
   text-align: center;
-  max-width: 360px;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.proto-editor-empty-icon {
+  color: var(--color-text-muted);
+  opacity: 0.5;
+  margin-bottom: 16px;
 }
 
 .proto-editor-empty-title {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
   color: var(--color-text-primary);
 }
 
 .proto-editor-empty-desc {
   font-size: 13px;
-  color: var(--color-text-secondary);
-  line-height: 1.6;
-  margin-bottom: 24px;
-}
-
-.proto-editor-empty-action {
-  width: 100%;
-  justify-content: center;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+  margin-bottom: 20px;
 }
 
 /* ── Note page (Linear-style redesign) ── */
@@ -2838,8 +2939,8 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 }
 
 .proto-note-header-dot {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   background: var(--color-warning);
   flex-shrink: 0;
@@ -2850,6 +2951,9 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   color: var(--color-text-muted);
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-variant-numeric: tabular-nums;
+  background: var(--color-bg-hover);
+  padding: 1px 5px;
+  border-radius: 3px;
 }
 
 .proto-wiki-source-badge {
@@ -2865,7 +2969,7 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 .proto-note-header-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
   flex-shrink: 0;
 }
 
@@ -2880,7 +2984,7 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
-  transition: color 0.1s, background 0.1s;
+  transition: color 0.12s, background 0.12s;
 }
 
 .proto-note-header-icon-btn:hover {
@@ -2888,9 +2992,14 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   color: var(--color-text-primary);
 }
 
+.proto-note-header-icon-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
 .proto-note-header-icon-btn-active {
   color: var(--color-accent);
-  background: color-mix(in oklab, var(--color-accent) 8%, transparent);
+  background: color-mix(in oklab, var(--color-accent) 10%, transparent);
 }
 
 /* Body: editor + tags panel */
@@ -3033,7 +3142,8 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 }
 
 .proto-note-tag-chip-active .proto-note-tag-chip-btn {
-  background: color-mix(in oklab, currentColor 6%, transparent);
+  background: color-mix(in oklab, currentColor 10%, transparent);
+  font-weight: 600;
 }
 
 .proto-note-tag-chip-count {
@@ -3153,18 +3263,17 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 
 /* Expanded segments below tag row */
 .proto-note-seg-expanded-inner {
-  max-height: 180px;
+  max-height: 200px;
   overflow-y: auto;
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding: 6px 16px 8px;
+  flex-direction: column;
+  padding: 4px 12px 8px;
 }
 
 .proto-note-seg-item {
   display: block;
   width: 100%;
-  padding: 8px 12px;
+  padding: 6px 10px;
   font-size: 12px;
   text-align: left;
   cursor: pointer;
@@ -3175,8 +3284,17 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   transition: background 0.1s;
 }
 
+.proto-note-seg-item + .proto-note-seg-item {
+  border-top: 1px solid color-mix(in oklab, var(--color-border) 50%, transparent);
+}
+
 .proto-note-seg-item:hover {
   background: var(--color-bg-hover);
+}
+
+.proto-note-seg-item:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
 }
 
 .proto-note-seg-range {

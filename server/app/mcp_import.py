@@ -122,7 +122,8 @@ def import_mcp_doc(
 
     # Step 4: Save .md file — use a dedicated subdirectory per topic
     # to avoid ingest_folder picking up other topics' files
-    wiki_dir = Path(settings.db_path).resolve().parent / "wiki_sources"
+    wiki_dir = Path(settings.wiki_sources_dir)
+    wiki_dir.mkdir(parents=True, exist_ok=True)
     topic_dir = wiki_dir / re.sub(r'[^\w\s\u4e00-\u9fff-]', '_', topic)[:80]
     topic_dir.mkdir(parents=True, exist_ok=True)
 

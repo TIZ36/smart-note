@@ -10,20 +10,20 @@ import readline from "readline";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-/** Project root: `mvp/` (parent of `desktop/`). Override with MVP_ROOT when packaged. */
-function appRoot() {
-  if (process.env.MVP_ROOT) return path.resolve(process.env.MVP_ROOT);
-  return path.join(__dirname, "..", "..");
+/** Server root: `server/` directory containing the Python backend. */
+function serverRoot() {
+  if (process.env.SERVER_ROOT) return path.resolve(process.env.SERVER_ROOT);
+  return path.join(__dirname, "..", "..", "server");
 }
 
 function pythonBin() {
-  const venv = path.join(appRoot(), ".venv", "bin", "python");
+  const venv = path.join(serverRoot(), ".venv", "bin", "python");
   if (fs.existsSync(venv)) return venv;
   return process.platform === "win32" ? "python" : "python3";
 }
 
 function readEmbeddingMode() {
-  const envPath = path.join(appRoot(), ".env");
+  const envPath = path.join(serverRoot(), ".env");
   if (!fs.existsSync(envPath)) return "unknown";
   try {
     const content = fs.readFileSync(envPath, "utf8");
@@ -68,7 +68,7 @@ function parseEnvFile(content) {
 function runIngestCmd(rawPath, notePath, doReset) {
   const args = ["-m", "app.cli", "ingest", "--raw", rawPath, "--note", notePath];
   if (doReset) args.push("--reset");
-  const proc = spawn(pythonBin(), args, { cwd: appRoot() });
+  const proc = spawn(pythonBin(), args, { cwd: serverRoot() });
   let stdout = "";
   let stderr = "";
   proc.stdout?.on("data", (c) => {
@@ -118,7 +118,7 @@ function ingestRawAsync(win, rawPath, notePath, doReset) {
   const args = ["-m", "app.cli", "ingest", "--raw", rawPath, "--note", notePath];
   if (doReset) args.push("--reset");
   const proc = spawn(pythonBin(), args, {
-    cwd: appRoot(),
+    cwd: serverRoot(),
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -261,7 +261,7 @@ ipcMain.handle("special_ingest_async", async (event, { folderPath, filePath, top
     args.push("--folder", folderPath);
   }
   if (topicName) args.push("--topic", topicName);
-  const proc = spawn(pythonBin(), args, { cwd: appRoot(), stdio: ["ignore", "pipe", "pipe"] });
+  const proc = spawn(pythonBin(), args, { cwd: serverRoot(), stdio: ["ignore", "pipe", "pipe"] });
 
   proc.on("error", (e) => {
     emitWikiIngest(win, { status: "error", step: "", current: 0, total: 0, elapsed_ms: 0, message: `Failed: ${e.message}` });
@@ -305,7 +305,7 @@ ipcMain.handle("mcp_import_async", async (event, { serverName, docUrl, documentI
   if (docUrl) args.push("--url", docUrl);
   if (documentId) args.push("--doc-id", documentId);
   if (topicName) args.push("--topic", topicName);
-  const proc = spawn(pythonBin(), args, { cwd: appRoot(), stdio: ["ignore", "pipe", "pipe"] });
+  const proc = spawn(pythonBin(), args, { cwd: serverRoot(), stdio: ["ignore", "pipe", "pipe"] });
 
   proc.on("error", (e) => {
     wikiIngestRunning = false;
@@ -405,7 +405,7 @@ ipcMain.handle("get_mvp_status", async () => ({
 }));
 
 ipcMain.handle("read_settings", async () => {
-  const envPath = path.join(appRoot(), ".env");
+  const envPath = path.join(serverRoot(), ".env");
   const content = fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf8") : "";
   const map = parseEnvFile(content);
   const ingestAi = map.get("INGEST_AI_ENABLED")?.toLowerCase() ?? "";
@@ -423,7 +423,7 @@ ipcMain.handle("read_settings", async () => {
 });
 
 ipcMain.handle("write_settings", async (_, { newSettings }) => {
-  const envPath = path.join(appRoot(), ".env");
+  const envPath = path.join(serverRoot(), ".env");
   const existing = fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf8") : "";
   const aiEnabledStr = newSettings.ingest_ai_enabled ? "true" : "false";
   const updates = new Map([
@@ -498,7 +498,7 @@ ipcMain.handle("shell_open_path", async (_, { path: target }) => {
 
 // ── Global Hotkey: Clipboard → Paste to raw → Save → Incremental ingest ──
 
-const HOTKEY_CONFIG_FILE = path.join(appRoot(), "data", "hotkey.json");
+const HOTKEY_CONFIG_FILE = path.join(serverRoot(), "data", "hotkey.json");
 let currentHotkey = "CommandOrControl+Shift+V";
 
 function loadHotkeyConfig() {
@@ -519,7 +519,7 @@ function saveHotkeyConfig(hotkey) {
 function getRawPathFromPrefs() {
   // Read from the renderer's localStorage isn't possible here,
   // so we read from a shared prefs file
-  const prefsFile = path.join(appRoot(), "data", "prefs.json");
+  const prefsFile = path.join(serverRoot(), "data", "prefs.json");
   try {
     if (fs.existsSync(prefsFile)) {
       const data = JSON.parse(fs.readFileSync(prefsFile, "utf8"));
@@ -595,7 +595,7 @@ ipcMain.handle("set_hotkey", async (_, { hotkey }) => {
 });
 
 ipcMain.handle("save_raw_path_for_hotkey", async (_, { rawPath }) => {
-  const prefsFile = path.join(appRoot(), "data", "prefs.json");
+  const prefsFile = path.join(serverRoot(), "data", "prefs.json");
   const dir = path.dirname(prefsFile);
   fs.mkdirSync(dir, { recursive: true });
   let prefs = {};

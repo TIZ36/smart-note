@@ -95,8 +95,8 @@ CODE_MAX_CHUNK = 1200
 PROSE_MAX_CHUNK = 1000
 FALLBACK_MAX_CHUNK = 800
 
-# AI enrichment
-AI_BATCH_SIZE = 5
+# AI enrichment — larger batches = fewer requests = faster
+AI_BATCH_SIZE = int(os.environ.get("INGEST_AI_BATCH_SIZE", "20"))
 MAX_AI_CONCURRENCY = int(os.environ.get("INGEST_CONCURRENCY", "10"))
 
 # ── Structural keyword regex ──
@@ -746,22 +746,9 @@ def _extract_academic_keywords(text: str) -> list[str]:
 # ── AI Enrichment ──
 
 def _build_wiki_enrich_prompt() -> str:
-    return """You are a code/document analyst. For each chunk, provide a brief analysis.
-
-OUTPUT FORMAT — JSON array (one object per chunk, same order as input):
-[
-  {
-    "summary": "1-2 sentence description of what this code/text does",
-    "keywords": ["semantic", "keywords", "describing", "purpose"],
-    "entities": ["library_names", "api_names", "services"]
-  }
-]
-
-RULES:
-- summary: describe WHAT the code does functionally, not its syntax
-- keywords: include purpose, patterns, algorithms, domain terms
-- entities: libraries, APIs, frameworks, services, data structures
-- Reply with ONLY the JSON array"""
+    return """For each chunk return JSON: [{"s":"one-sentence summary","k":["keyword1","keyword2"],"e":["entity1"]}]
+s=what it does (1 sentence, <30 words). k=3-6 domain keywords. e=libraries/APIs/services mentioned.
+ONLY output the JSON array, nothing else."""
 
 
 def _ai_enrich_batch(chunks: list[dict]) -> list[dict]:
@@ -771,8 +758,8 @@ def _ai_enrich_batch(chunks: list[dict]) -> list[dict]:
     system = _build_wiki_enrich_prompt()
     user_parts = []
     for i, c in enumerate(chunks):
-        text = c["text"][:2000]  # Truncate very long chunks for the prompt
-        user_parts.append(f"--- Chunk {i + 1} ---\n{text}")
+        text = c["text"][:1200]  # Truncate to fit more chunks per batch
+        user_parts.append(f"---{i+1}---\n{text}")
     user_msg = "\n\n".join(user_parts)
 
     raw = _call_llm(system, user_msg)
@@ -796,9 +783,9 @@ def _ai_enrich_batch(chunks: list[dict]) -> list[dict]:
             if i < len(parsed):
                 item = parsed[i]
                 results.append({
-                    "summary": item.get("summary", ""),
-                    "keywords": item.get("keywords", []),
-                    "entities": item.get("entities", []),
+                    "summary": item.get("s", "") or item.get("summary", ""),
+                    "keywords": item.get("k", []) or item.get("keywords", []),
+                    "entities": item.get("e", []) or item.get("entities", []),
                 })
             else:
                 results.append({"summary": "", "keywords": [], "entities": []})
@@ -887,17 +874,24 @@ def ingest_folder(folder_path: str, topic_name: str | None = None) -> dict:
         if f.is_file() and f.suffix == "" and f.name not in {".", ".."} and not f.name.startswith("."):
             files.append(f)
 
-    # Auto-convert PDFs to markdown
+    # Auto-convert PDFs to markdown → output to wiki_sources_dir
     pdf_files = sorted(folder.rglob("*.pdf"))
     converted_count = 0
     has_paper = False
     converted_from_pdf: set[Path] = set()  # track which .md files came from PDFs
     if pdf_files:
         from app.pdf_convert import convert_pdf_to_md
+        from app.config import settings as _cfg
+        wiki_dir = Path(_cfg.wiki_sources_dir)
+        wiki_dir.mkdir(parents=True, exist_ok=True)
         for pf in pdf_files:
-            md_target = pf.with_suffix(".md")
-            if md_target in files:
-                continue  # already have a .md with same name
+            # Check if already converted (same-name .md next to PDF or in wiki dir)
+            md_beside = pf.with_suffix(".md")
+            if md_beside in files:
+                continue
+            safe_pdf_name = re.sub(r'[^\w\s\u4e00-\u9fff-]', '_', pf.stem)[:80]
+            md_target = wiki_dir / (topic_name or safe_pdf_name) / f"{safe_pdf_name}.md"
+            md_target.parent.mkdir(parents=True, exist_ok=True)
             _progress("parse", 0, len(pdf_files), f"Converting PDF: {pf.name}")
             try:
                 md_path = convert_pdf_to_md(str(pf), str(md_target))
@@ -905,7 +899,6 @@ def ingest_folder(folder_path: str, topic_name: str | None = None) -> dict:
                 files.append(md_file)
                 converted_from_pdf.add(md_file)
                 converted_count += 1
-                # Check if any converted PDF is a paper
                 md_text = md_file.read_text(encoding="utf-8", errors="ignore")[:5000]
                 if _is_academic_paper(md_text):
                     has_paper = True
@@ -1108,14 +1101,14 @@ def ingest_folder(folder_path: str, topic_name: str | None = None) -> dict:
 def ingest_pdf(pdf_path: str, topic_name: str | None = None) -> dict:
     """Ingest a PDF file as a wiki topic.
 
-    Converts PDF → markdown via MarkItDown, then ingests the markdown
-    with academic paper-aware chunking and keyword extraction.
-    Stores the original PDF path for "view original" functionality.
+    Converts PDF → markdown, saves to wiki_sources_dir/{topic}/ (iCloud),
+    then ingests with academic paper-aware chunking and keyword extraction.
 
     Returns:
         dict with inserted count, topic, md_path, pdf_path, message
     """
     from app.pdf_convert import convert_pdf_to_md
+    from app.config import settings
 
     pdf = Path(pdf_path)
     if not pdf.exists():
@@ -1124,9 +1117,15 @@ def ingest_pdf(pdf_path: str, topic_name: str | None = None) -> dict:
     if not topic_name:
         topic_name = pdf.stem
 
+    # Output md to wiki_sources_dir/{safe_topic}/
+    safe_name = re.sub(r'[^\w\s\u4e00-\u9fff-]', '_', topic_name)[:80]
+    topic_dir = Path(settings.wiki_sources_dir) / safe_name
+    topic_dir.mkdir(parents=True, exist_ok=True)
+    md_output = topic_dir / f"{safe_name}.md"
+
     # Step 1: Convert PDF to markdown
     _progress("parse", 0, 1, f"Converting PDF: {pdf.name}")
-    md_path = convert_pdf_to_md(str(pdf))
+    md_path = convert_pdf_to_md(str(pdf), str(md_output))
     md_text = Path(md_path).read_text(encoding="utf-8")
     _progress("parse", 1, 1, f"Converted: {len(md_text)} chars")
 

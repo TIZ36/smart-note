@@ -927,7 +927,8 @@ def api_wiki_import_url(req: UrlImportRequest) -> dict:
     from app.url_import import import_url
     from app.special_ingest import ingest_folder
 
-    wiki_dir = Path(settings.db_path).resolve().parent / "wiki_sources"
+    wiki_dir = Path(settings.wiki_sources_dir)
+    wiki_dir.mkdir(parents=True, exist_ok=True)
     try:
         result = import_url(req.url, str(wiki_dir), req.topic_name or None)
         md_path = Path(result["md_path"]).resolve()
@@ -998,7 +999,8 @@ def api_wiki_import_mcp(req: McpDocImportRequest) -> dict:
         topic = req.topic_name or title or doc_id
 
         # Save as .md — per-topic subdirectory to avoid cross-contamination
-        wiki_dir = Path(settings.db_path).resolve().parent / "wiki_sources"
+        wiki_dir = Path(settings.wiki_sources_dir)
+        wiki_dir.mkdir(parents=True, exist_ok=True)
         import re as _re
         safe_name = _re.sub(r'[^\w\s\u4e00-\u9fff-]', '_', topic)[:80]
         topic_dir = wiki_dir / safe_name

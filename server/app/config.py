@@ -36,6 +36,13 @@ class Settings:
     )
     ingest_ai_model: str = os.getenv("INGEST_AI_MODEL", "")
 
+    # Wiki source files directory (markdown docs ingested from URL/MCP)
+    # Default: iCloud Drive ~/sn/source/  — synced across devices
+    wiki_sources_dir: str = os.getenv(
+        "WIKI_SOURCES_DIR",
+        os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/sn/source"),
+    )
+
     # OCR languages for scanned PDF import (e.g. "chi_sim+eng")
     ocr_langs: str = os.getenv("OCR_LANGS", "")
 

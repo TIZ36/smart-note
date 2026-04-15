@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Database, Tag, MoreHorizontal } from "lucide-react";
+import { Database, Tag, FolderOpen } from "lucide-react";
 import { NoteEditor } from "../editor/NoteEditor";
 import { NoteSegments } from "./NoteSegments";
 import { IngestDialog } from "./IngestDialog";
@@ -27,7 +27,7 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
   const [activeBuild, setActiveBuild] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [scrollTarget, setScrollTarget] = useState<{ start: number; end: number } | null>(null);
-  const [showTags, setShowTags] = useState(() => localStorage.getItem("intellinote-show-tags") !== "false");
+  const [showTags, setShowTags] = useState(() => localStorage.getItem("smartnote-show-tags") !== "false");
 
   useEffect(() => {
     api.fetchBuilds().then((d) => {
@@ -56,11 +56,12 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
     return (
       <div className="proto-editor-empty">
         <div className="proto-editor-empty-inner">
+          <FolderOpen size={28} className="proto-editor-empty-icon" />
           <h2 className="proto-editor-empty-title">Open a Note</h2>
           <p className="proto-editor-empty-desc">
-            Select your raw note file from iCloud Drive or local storage. This will be your primary knowledge source.
+            Select a raw note file (.md, .txt) as your knowledge source.
           </p>
-          <button type="button" onClick={handlePickFile} className="proto-btn proto-btn-primary proto-editor-empty-action">
+          <button type="button" onClick={handlePickFile} className="proto-btn proto-btn-primary">
             Choose file
           </button>
         </div>
@@ -82,7 +83,7 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
         <div className="proto-note-header-actions">
           <button
             type="button"
-            onClick={() => { const next = !showTags; setShowTags(next); localStorage.setItem("intellinote-show-tags", String(next)); }}
+            onClick={() => { const next = !showTags; setShowTags(next); localStorage.setItem("smartnote-show-tags", String(next)); }}
             className={cn("proto-note-header-icon-btn", showTags && "proto-note-header-icon-btn-active")}
             title={showTags ? "Hide tags" : "Show tags"}
           >
@@ -102,7 +103,7 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
             className="proto-note-header-icon-btn"
             title="Change file"
           >
-            <MoreHorizontal size={14} strokeWidth={2} />
+            <FolderOpen size={14} strokeWidth={2} />
           </button>
         </div>
       </div>
