@@ -1,7 +1,7 @@
 services:
   local-embed:
     build:
-      context: ./embedding_service
+      context: ./embedding
       dockerfile: Dockerfile
     ports:
       - "8009:8009"

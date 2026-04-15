@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "intellinote": {
-      "command": "mvp/.venv/bin/python",
-      "args": ["mvp/mcp_server.py"],
+      "command": "server/.venv/bin/python",
+      "args": ["server/mcp_server.py"],
       "env": {}
     }
   }

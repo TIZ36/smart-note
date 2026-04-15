@@ -9,16 +9,15 @@ build/
 
 # ── Node / Electron ──
 node_modules/
-mvp/desktop/dist/
-mvp/desktop/release/
-mvp/desktop/src-tauri/target/
+desktop/dist/
+desktop/release/
 
 # ── Data (user-specific, not committed) ──
-mvp/data/
-mvp/sample/note.md
-mvp/sample/views/
-mvp/sample/.state.json
-mvp/sample/candidates/
+server/data/
+sample/note.md
+sample/views/
+sample/.state.json
+sample/candidates/
 
 # ── Environment / Secrets ──
 .env
@@ -40,6 +39,9 @@ npm-debug.log*
 *.dmg
 *.app
 *.exe
+
+# ── Linter cache ──
+.ruff_cache/
 
 # ── Claude Code ──
 .claude/plans/

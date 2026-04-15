@@ -3,9 +3,9 @@
 # Handles: docker compose up, health check
 
 set -e
-cd "$(dirname "$0")"
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
-echo "=== IntelliNote Docker Services Restart ==="
+echo "=== SmartNote Docker Services Restart ==="
 
 # 1. Check docker is available
 if ! command -v docker &> /dev/null; then
@@ -16,16 +16,16 @@ fi
 
 # 2. Stop existing containers
 echo "[1/3] Stopping old containers..."
-if [ -f "docker-compose.embedding.yml" ]; then
-    docker compose -f docker-compose.embedding.yml down 2>/dev/null || true
+if [ -f "$ROOT_DIR/docker-compose.yml" ]; then
+    docker compose -f "$ROOT_DIR/docker-compose.yml" down 2>/dev/null || true
 else
-    echo "  No docker-compose.embedding.yml found, skipping"
+    echo "  No docker-compose.yml found, skipping"
     exit 0
 fi
 
 # 3. Start containers
 echo "[2/3] Starting embedding service..."
-docker compose -f docker-compose.embedding.yml up -d
+docker compose -f "$ROOT_DIR/docker-compose.yml" up -d
 
 # 4. Health check
 echo "[3/3] Waiting for embedding service..."
@@ -38,5 +38,5 @@ for i in $(seq 1 30); do
 done
 
 echo "WARNING: Embedding service not ready after 30s (may still be loading model)"
-echo "  Check: docker compose -f docker-compose.embedding.yml logs"
+echo "  Check: docker compose -f $ROOT_DIR/docker-compose.yml logs"
 exit 0

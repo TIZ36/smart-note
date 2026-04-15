@@ -3,9 +3,9 @@
 # Handles: dependency install, DB migration, kill old process
 
 set -e
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/../server"
 
-echo "=== IntelliNote Server Restart ==="
+echo "=== SmartNote Server Restart ==="
 
 # 1. Ensure venv exists
 if [ ! -d ".venv" ]; then

@@ -3,9 +3,9 @@
 # Handles: npm dependencies, kill old processes, dev or build mode
 
 set -e
-cd "$(dirname "$0")/desktop"
+cd "$(dirname "$0")/../desktop"
 
-echo "=== IntelliNote Client Restart ==="
+echo "=== SmartNote Client Restart ==="
 
 MODE="${1:-dev}"
 

@@ -1,27 +1,27 @@
 #!/bin/bash
-# restart-all.sh — Restart all IntelliNote services
-# Usage: ./restart-all.sh [--with-docker]
+# restart-all.sh — Restart all SmartNote services
+# Usage: ./scripts/restart-all.sh [--with-docker]
 
 set -e
-cd "$(dirname "$0")"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "======================================="
-echo "  IntelliNote Full Restart"
+echo "  SmartNote Full Restart"
 echo "======================================="
 echo ""
 
 # Optional: restart docker embedding service
-if [ "$1" = "--with-docker" ]; then
-    bash restart-docker.sh
+if [ "${1:-}" = "--with-docker" ]; then
+    bash "$SCRIPT_DIR/restart-docker.sh"
     echo ""
 fi
 
 # Restart backend (includes DB migration)
-bash restart-server.sh
+bash "$SCRIPT_DIR/restart-server.sh"
 echo ""
 
 # Restart client
-bash restart-client.sh
+bash "$SCRIPT_DIR/restart-client.sh"
 echo ""
 
 echo "======================================="
