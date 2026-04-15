@@ -3,7 +3,7 @@ import type { CmdResult, ViewsResult, MvpStatus, AppSettings } from "./types";
 function getDesktop() {
   const d = window.desktop;
   if (!d) {
-    throw new Error("Desktop API unavailable. Launch the IntelliNote Electron app.");
+    throw new Error("Desktop API unavailable. Launch the SmartNote Electron app.");
   }
   return d;
 }

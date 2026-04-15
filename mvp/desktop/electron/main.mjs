@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, clipboard } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, shell, clipboard, nativeImage } from "electron";
 import electron from "electron";
 const { globalShortcut, Notification } = electron;
 import path from "path";
@@ -195,6 +195,7 @@ function createWindow() {
     minWidth: 900,
     minHeight: 600,
     backgroundColor: "#faf9f7",
+    icon: path.join(__dirname, "..", "public", "icon.png"),
     webPreferences: {
       // CommonJS preload：ESM preload 在部分环境下会加载失败 → 白屏/黑屏且 window.desktop 不存在
       preload: path.join(__dirname, "preload.cjs"),
@@ -220,6 +221,11 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  // Set dock icon (macOS dev mode)
+  if (process.platform === "darwin" && app.dock) {
+    const iconPath = path.join(__dirname, "..", "public", "icon.png");
+    app.dock.setIcon(nativeImage.createFromPath(iconPath));
+  }
   createWindow();
   loadHotkeyConfig();
   registerHotkey();
@@ -526,13 +532,13 @@ function getRawPathFromPrefs() {
 function pasteClipboardToRaw() {
   const rawPath = getRawPathFromPrefs();
   if (!rawPath) {
-    new Notification({ title: "IntelliNote", body: "No raw file configured. Open Raw Input to set one." }).show();
+    new Notification({ title: "SmartNote", body: "No raw file configured. Open Raw Input to set one." }).show();
     return;
   }
 
   const text = clipboard.readText();
   if (!text || !text.trim()) {
-    new Notification({ title: "IntelliNote", body: "Clipboard is empty." }).show();
+    new Notification({ title: "SmartNote", body: "Clipboard is empty." }).show();
     return;
   }
 
@@ -540,7 +546,7 @@ function pasteClipboardToRaw() {
   const ext = path.extname(rawPath).toLowerCase();
   const textExts = [".md", ".txt", ".rtf", ".org", ".rst", ""];
   if (!textExts.includes(ext)) {
-    new Notification({ title: "IntelliNote", body: `File type ${ext} not supported for paste.` }).show();
+    new Notification({ title: "SmartNote", body: `File type ${ext} not supported for paste.` }).show();
     return;
   }
 
@@ -552,14 +558,14 @@ function pasteClipboardToRaw() {
     const sep = existing.length > 0 && !existing.endsWith("\n\n") ? (existing.endsWith("\n") ? "\n" : "\n\n") : "";
     fs.writeFileSync(rawPath, `${existing}${sep}${text.trim()}\n`, "utf8");
 
-    new Notification({ title: "IntelliNote", body: `Pasted ${text.trim().split("\n").length} lines to raw file.` }).show();
+    new Notification({ title: "SmartNote", body: `Pasted ${text.trim().split("\n").length} lines to raw file.` }).show();
 
     // Notify renderer to trigger incremental ingest
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send("hotkey:pasted", { rawPath, lineCount: text.trim().split("\n").length });
     }
   } catch (err) {
-    new Notification({ title: "IntelliNote", body: `Paste failed: ${err.message}` }).show();
+    new Notification({ title: "SmartNote", body: `Paste failed: ${err.message}` }).show();
   }
 }
 

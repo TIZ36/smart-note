@@ -21,6 +21,33 @@
   flex-shrink: 0;
 }
 
+.proto-sidebar-logo {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 1px;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.proto-logo-s {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--color-accent);
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.proto-logo-n {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  letter-spacing: -0.02em;
+  line-height: 1;
+  opacity: 0.6;
+}
+
 .proto-sidebar-nav {
   flex: 1;
   padding: 0 12px;

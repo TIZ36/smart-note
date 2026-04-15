@@ -43,7 +43,9 @@ function NavItem({
 export function Sidebar({ activeChannel, onSelect, gatewayOnline, ingestBusy, embeddingMode, wikiTopicCount = 0, wikiSources = [] }: Props) {
   return (
     <div className="proto-sidebar">
-      <div className="h-12 shrink-0" style={{ WebkitAppRegion: "drag" } as React.CSSProperties} />
+      <div className="proto-sidebar-logo" style={{ WebkitAppRegion: "drag" } as React.CSSProperties}>
+        <span className="proto-logo-s">S</span><span className="proto-logo-n">N</span>
+      </div>
 
       <div className="proto-sidebar-nav">
         <NavItem label="Search" icon={<Search size={15} strokeWidth={2} />} active={activeChannel === "search"} onClick={() => onSelect("search")} />

@@ -29,7 +29,7 @@ from app.rewrite import (
 from app.versioning import list_versions, restore_version, create_snapshot, delete_version
 
 
-app = FastAPI(title="IntelliNote Gateway")
+app = FastAPI(title="SmartNote Gateway")
 
 # Auto-migrate DB on startup
 try:

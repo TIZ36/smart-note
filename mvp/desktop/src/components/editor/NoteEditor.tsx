@@ -49,7 +49,7 @@ const highlightRangeField = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 });
 
-/** Dark theme matching IntelliNote's design tokens */
+/** Dark theme matching SmartNote's design tokens */
 const editorTheme = EditorView.theme({
   "&": {
     fontSize: "14px",

@@ -42,8 +42,8 @@
     "wait-on": "^8.0.1"
   },
   "build": {
-    "appId": "com.intellinote.desktop",
-    "productName": "IntelliNote",
+    "appId": "com.smartnote.desktop",
+    "productName": "SmartNote",
     "directories": {
       "output": "release"
     },
@@ -53,7 +53,14 @@
       "package.json"
     ],
     "mac": {
-      "category": "public.app-category.productivity"
+      "category": "public.app-category.productivity",
+      "icon": "public/icon.icns"
+    },
+    "linux": {
+      "icon": "public/icon.png"
+    },
+    "win": {
+      "icon": "public/icon.png"
     }
   }
 }
