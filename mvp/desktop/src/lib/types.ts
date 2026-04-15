@@ -75,6 +75,12 @@ export type ChatResponse = {
   latency_ms: number;
 };
 
+export type DeepChatResponse = ChatResponse & {
+  triage: string;
+  triage_ms: number;
+  expanded_source: { files: string[]; total_chars: number } | null;
+};
+
 export type FeedbackResponse = {
   status: string;
 };

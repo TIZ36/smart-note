@@ -78,6 +78,19 @@ export async function chat(
   return res.json();
 }
 
+// Deep chat: two-round AI with source expansion
+export async function deepChat(
+  query: string,
+  evidenceIds: number[] = [],
+): Promise<import("./types").DeepChatResponse> {
+  const res = await fetch(`${BASE}/chat/deep`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, evidence_ids: evidenceIds }),
+  });
+  return res.json();
+}
+
 // Stage 4: Feedback + Strengthen
 export async function feedback(
   answerId: number,

@@ -73,6 +73,11 @@ class ChatRequest(BaseModel):
     topk: int = 15
 
 
+class DeepChatRequest(BaseModel):
+    query: str
+    evidence_ids: list[int] = []
+
+
 class FeedbackRequest(BaseModel):
     answer_id: int
     query_text: str = ""  # For strengthening query profiles
@@ -243,6 +248,168 @@ def api_chat(req: ChatRequest) -> dict:
         "answer": answer,
         "evidence": evidence,
         "latency_ms": latency,
+    }
+
+
+# ── Deep Chat: Two-round AI with source expansion ──
+
+def _read_full_source(source_file: str) -> str:
+    """Read full text of a source file (for deep context injection)."""
+    p = Path(source_file)
+    if not p.exists():
+        return ""
+    try:
+        return p.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return ""
+
+
+@app.post("/chat/deep")
+def api_chat_deep(req: DeepChatRequest) -> dict:
+    """Two-round deep chat: triage sources → expand best → final answer.
+
+    Round 1: AI evaluates chunk snippets, identifies most relevant source
+    Round 2: System fetches full source content, AI gives deep answer
+    """
+    start = time.time()
+
+    # Load evidence chunks
+    if req.evidence_ids:
+        with connect() as conn:
+            placeholders = ",".join("?" for _ in req.evidence_ids)
+            rows = conn.execute(
+                f"SELECT id, text, source_ref, source_file, dimension FROM chunks WHERE id IN ({placeholders})",
+                req.evidence_ids,
+            ).fetchall()
+        evidence = [dict(r) for r in rows]
+    else:
+        sr = search(req.query, 20)
+        evidence = sr["results"]
+
+    if not evidence:
+        return {"answer_id": 0, "answer": "No evidence found.", "evidence": [], "latency_ms": 0,
+                "triage": "", "expanded_source": None}
+
+    # ── Round 1: Triage ──
+    snippet_lines = []
+    for i, e in enumerate(evidence):
+        text_preview = (e.get("text", "") or "")[:200].strip()
+        ref = e.get("source_ref", "")
+        dim = e.get("dimension", "")
+        snippet_lines.append(f"[{i+1}] dim={dim} ref={ref}\n{text_preview}")
+
+    triage_prompt = (
+        f"问题: {req.query}\n\n"
+        f"以下是从知识库检索到的 {len(snippet_lines)} 条内容摘要。"
+        f"请判断哪些来源最可能包含完整答案。\n\n"
+        + "\n\n".join(snippet_lines)
+        + "\n\n请回复JSON格式:\n"
+        '{"best_sources": [编号], "reason": "为什么这些来源最相关", "preliminary_answer": "基于摘要的初步回答", "need_full_doc": true/false}'
+    )
+
+    try:
+        triage_raw = _chat_completion(
+            "You are a source evaluator. Analyze evidence snippets and identify the most relevant sources. "
+            "Always respond with valid JSON. The best_sources array should contain 1-3 source numbers.",
+            [{"role": "user", "content": triage_prompt}],
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Triage failed: {exc}")
+
+    # Parse triage response
+    best_indices = []
+    need_full = True
+    triage_answer = triage_raw
+    try:
+        # Extract JSON from response (may have markdown code blocks)
+        cleaned = triage_raw.strip()
+        if "```" in cleaned:
+            cleaned = cleaned.split("```")[1]
+            if cleaned.startswith("json"):
+                cleaned = cleaned[4:]
+            cleaned = cleaned.strip()
+        triage_parsed = json.loads(cleaned)
+        best_indices = [int(i) - 1 for i in triage_parsed.get("best_sources", []) if 0 < int(i) <= len(evidence)]
+        need_full = triage_parsed.get("need_full_doc", True)
+        triage_answer = triage_parsed.get("preliminary_answer", triage_raw)
+    except (json.JSONDecodeError, ValueError, TypeError):
+        # Fallback: use top 3 evidence
+        best_indices = list(range(min(3, len(evidence))))
+
+    triage_ms = int((time.time() - start) * 1000)
+
+    # ── Round 2: Deep answer with expanded source ──
+    expanded_source = None
+    if need_full and best_indices:
+        # Collect source files from best evidence
+        source_files_seen = set()
+        full_texts = []
+        for idx in best_indices:
+            if idx >= len(evidence):
+                continue
+            sf = evidence[idx].get("source_file", "")
+            if sf and sf not in source_files_seen:
+                source_files_seen.add(sf)
+                full_text = _read_full_source(sf)
+                if full_text:
+                    fname = Path(sf).name
+                    # Cap per-source to avoid token overflow
+                    if len(full_text) > 50000:
+                        full_text = full_text[:50000] + f"\n\n[... truncated, {len(full_text) - 50000} more chars ...]"
+                    full_texts.append(f"=== Source: {fname} ===\n{full_text}")
+
+        if full_texts:
+            expanded_source = {
+                "files": list(source_files_seen),
+                "total_chars": sum(len(t) for t in full_texts),
+            }
+
+            deep_prompt = (
+                f"问题: {req.query}\n\n"
+                f"初步分析: {triage_answer}\n\n"
+                f"以下是最相关文档的完整内容，请基于完整上下文给出深度回答。\n"
+                f"引用时使用文档名标注来源。\n\n"
+                + "\n\n".join(full_texts)
+                + "\n\n请给出完整、深入的回答。"
+            )
+
+            try:
+                answer = _chat_completion(
+                    "You are a deep knowledge assistant. You have been given full document content for the most relevant sources. "
+                    "Provide a thorough, well-structured answer. Cite specific sections. "
+                    "Answer in the same language as the question. Use markdown formatting.",
+                    [{"role": "user", "content": deep_prompt}],
+                )
+            except Exception as exc:
+                # Fallback to triage answer
+                answer = triage_answer
+        else:
+            answer = triage_answer
+    else:
+        answer = triage_answer
+
+    latency = int((time.time() - start) * 1000)
+
+    # Save to answer_logs
+    evidence_ids = [e.get("id") for e in evidence if e.get("id")]
+    with connect() as conn:
+        qid_row = conn.execute("SELECT id FROM query_logs ORDER BY id DESC LIMIT 1").fetchone()
+        qid = qid_row["id"] if qid_row else 0
+        conn.execute(
+            "INSERT INTO answer_logs(query_id, answer_text, evidence_refs, model_name, latency_ms) VALUES(?, ?, ?, ?, ?)",
+            (qid, answer, json.dumps(evidence_ids), settings.provider_chat_model, latency),
+        )
+        answer_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.commit()
+
+    return {
+        "answer_id": answer_id,
+        "answer": answer,
+        "evidence": evidence,
+        "latency_ms": latency,
+        "triage": triage_answer,
+        "triage_ms": triage_ms,
+        "expanded_source": expanded_source,
     }
 
 

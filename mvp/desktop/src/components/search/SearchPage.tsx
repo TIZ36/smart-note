@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Sparkles, Zap, Send, BookOpen, MessageSquare } from "lucide-react";
+import { Sparkles, Zap, Send, BookOpen, MessageSquare, Layers } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { SearchBar } from "./SearchBar";
 import { AnswerPanel } from "./AnswerPanel";
@@ -153,6 +153,50 @@ export function SearchPage({ searchState: s, tags }: Props) {
       const suggestions = [...dims].slice(0, 3).map((dim) => `${dim}相关的其他内容?`);
       if (suggestions.length === 0) suggestions.push(`关于 ${searchQuery} 的更多信息?`);
       s.setRelatedQuestions(suggestions);
+    } catch {
+      setStages((st) => ({ ...st, answer: { status: "error" } }));
+    }
+  }
+
+  /** Deep AI: two-round — triage sources then expand best for deep answer */
+  async function handleDeepAsk() {
+    if (stages.answer.status === "running") return;
+    const searchQuery = s.activeQuery;
+    if (!searchQuery) return;
+
+    const wikiIds = [...selectedWikiIds].filter((id): id is number => typeof id === "number");
+    const allEvidenceIds = [...s.lastEvidenceIds.current, ...wikiIds];
+
+    s.setConversation([]);
+    s.setRelatedQuestions([]);
+    setStages((st) => ({ ...st, answer: { status: "running" } }));
+    try {
+      const data = await api.deepChat(searchQuery, allEvidenceIds);
+
+      const turns: ConversationTurn[] = [
+        { role: "user", content: searchQuery, timestamp: Date.now() },
+      ];
+
+      // Show triage as first assistant turn if we also got a deep answer
+      if (data.triage && data.expanded_source) {
+        const sourceInfo = data.expanded_source.files.map((f: string) => f.split("/").pop()).join(", ");
+        turns.push({
+          role: "assistant",
+          content: `**Source triage** (${data.triage_ms}ms)\n\n${data.triage}\n\n> Expanding full content from: ${sourceInfo}`,
+          timestamp: Date.now(),
+        });
+      }
+
+      // Final deep answer
+      turns.push({
+        role: "assistant",
+        content: data.answer,
+        answerId: data.answer_id,
+        timestamp: Date.now(),
+      });
+
+      s.setConversation(turns);
+      setStages((st) => ({ ...st, answer: { status: "done", ms: data.latency_ms } }));
     } catch {
       setStages((st) => ({ ...st, answer: { status: "error" } }));
     }
@@ -382,12 +426,16 @@ export function SearchPage({ searchState: s, tags }: Props) {
               {/* Manual "Ask AI" button — shown when AI is on, results exist, no conversation yet */}
               {s.aiEnabled && s.conversation.length === 0 && stages.answer.status !== "running" && stages.rerank.status === "done" && (
                 <div className="proto-ask-ai-row">
-                  <button type="button" onClick={handleAskAI} className="proto-btn proto-btn-primary proto-ask-ai-btn">
+                  <button type="button" onClick={handleAskAI} className="proto-btn proto-btn-secondary proto-ask-ai-btn">
                     <MessageSquare size={14} />
-                    Ask AI
+                    Quick
                     {selectedWikiIds.size > 0 && (
                       <span className="proto-ask-ai-wiki-count">+{selectedWikiIds.size} wiki</span>
                     )}
+                  </button>
+                  <button type="button" onClick={handleDeepAsk} className="proto-btn proto-btn-primary proto-ask-ai-btn">
+                    <Layers size={14} />
+                    Deep
                   </button>
                 </div>
               )}
