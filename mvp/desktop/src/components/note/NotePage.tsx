@@ -1,7 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
-import { Database, ChevronDown } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
+import { Database, Tag, MoreHorizontal } from "lucide-react";
 import { NoteEditor } from "../editor/NoteEditor";
+import { NoteSegments } from "./NoteSegments";
 import { IngestDialog } from "./IngestDialog";
+import { cn } from "@/lib/cn";
 import { pickRawFile, saveRawPathForHotkey } from "@/lib/electron";
 import * as api from "@/lib/api";
 import type { IngestStep } from "@/App";
@@ -15,12 +18,16 @@ type Props = {
   ingestBusy: boolean;
   ingestSteps: IngestStep[];
   ingestResult: { message: string; type: "success" | "error" } | null;
+  tags: { name: string; color?: string; desc?: string; segments: number }[];
+  onTagsChanged?: () => void;
 };
 
-export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIngestComplete, ingestBusy, ingestSteps, ingestResult }: Props) {
+export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIngestComplete, ingestBusy, ingestSteps, ingestResult, tags, onTagsChanged }: Props) {
   const [showIngest, setShowIngest] = useState(false);
   const [activeBuild, setActiveBuild] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
+  const [scrollTarget, setScrollTarget] = useState<number | null>(null);
+  const [showTags, setShowTags] = useState(() => localStorage.getItem("intellinote-show-tags") !== "false");
 
   useEffect(() => {
     api.fetchBuilds().then((d) => {
@@ -34,7 +41,6 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
     if (p) {
       onSetRawPath(p);
       saveRawPathForHotkey(p).catch(() => {});
-      // Auto-set note path in same directory
       const dir = p.replace(/\/[^/]+$/, "");
       onSetNotePath(`${dir}/note.md`);
     }
@@ -42,65 +48,87 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
 
   const handleSave = useCallback(async (content: string) => {
     try {
-      const d = (window as any).desktop;
-      if (d) {
-        await d.invoke("write_file", { path: rawPath, content });
+      if (window.desktop) {
+        await window.desktop.invoke("write_file", { path: rawPath, content });
       }
     } catch {}
   }, [rawPath]);
 
-  // First time: no file selected
   if (!rawPath) {
     return (
-      <div className="flex flex-col h-full min-h-0">
-        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div style={{ textAlign: "center", maxWidth: 360 }}>
-            <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12, color: "var(--color-text-primary)" }}>Open a Note</h2>
-            <p style={{ fontSize: 13, color: "var(--color-text-secondary)", lineHeight: 1.6, marginBottom: 24 }}>
-              Select your raw note file from iCloud Drive or local storage. This will be your primary knowledge source.
-            </p>
-            <button type="button" onClick={handlePickFile} className="proto-btn proto-btn-primary" style={{ width: "100%", justifyContent: "center" }}>
-              Choose file
-            </button>
-          </div>
+      <div className="proto-editor-empty">
+        <div className="proto-editor-empty-inner">
+          <h2 className="proto-editor-empty-title">Open a Note</h2>
+          <p className="proto-editor-empty-desc">
+            Select your raw note file from iCloud Drive or local storage. This will be your primary knowledge source.
+          </p>
+          <button type="button" onClick={handlePickFile} className="proto-btn proto-btn-primary proto-editor-empty-action">
+            Choose file
+          </button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full min-h-0">
-      {/* Top bar */}
-      <div className="proto-view-header">
-        <span>{rawPath.split("/").pop()}</span>
-        {dirty && <span style={{ fontSize: 11, color: "var(--color-warning)", fontWeight: 500 }}>unsaved</span>}
-        <span className="proto-view-header-file">{rawPath}</span>
-        <button type="button" onClick={handlePickFile} className="proto-view-open">Change</button>
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+    <div className="proto-note-page">
+      {/* Minimal header — Linear style */}
+      <div className="proto-note-header">
+        <div className="proto-note-header-left">
+          <span className="proto-note-header-name">{rawPath.split("/").pop()}</span>
+          {dirty && <span className="proto-note-header-dot" />}
           {activeBuild && (
-            <span style={{ fontSize: 11, color: "var(--color-text-muted)", fontFamily: "ui-monospace, monospace" }}>
-              v{activeBuild}
-            </span>
+            <span className="proto-note-header-build">v{activeBuild}</span>
           )}
+        </div>
+        <div className="proto-note-header-actions">
+          <button
+            type="button"
+            onClick={() => { const next = !showTags; setShowTags(next); localStorage.setItem("intellinote-show-tags", String(next)); }}
+            className={cn("proto-note-header-icon-btn", showTags && "proto-note-header-icon-btn-active")}
+            title={showTags ? "Hide tags" : "Show tags"}
+          >
+            <Tag size={14} strokeWidth={2} />
+          </button>
           <button
             type="button"
             onClick={() => setShowIngest(true)}
-            className="proto-btn proto-btn-secondary"
-            style={{ fontSize: 12, padding: "4px 10px" }}
+            className="proto-note-header-icon-btn"
+            title="Ingest"
           >
-            <Database size={13} />
-            Ingest
-            <ChevronDown size={11} />
+            <Database size={14} strokeWidth={2} />
+          </button>
+          <button
+            type="button"
+            onClick={handlePickFile}
+            className="proto-note-header-icon-btn"
+            title="Change file"
+          >
+            <MoreHorizontal size={14} strokeWidth={2} />
           </button>
         </div>
       </div>
 
-      {/* Editor */}
-      <div className="flex-1 min-h-0">
-        <NoteEditor filePath={rawPath} onSave={handleSave} onDirty={setDirty} />
+      {/* Editor + Tags panel */}
+      <div className="proto-note-body">
+        <div className="proto-note-editor-area">
+          <NoteEditor filePath={rawPath} onSave={handleSave} onDirty={setDirty} scrollToLine={scrollTarget} />
+        </div>
+        <AnimatePresence initial={false}>
+          {showTags && (
+            <motion.div
+              className="proto-note-segments-wrap"
+              initial={{ width: 0, opacity: 0 }}
+              animate={{ width: 300, opacity: 1 }}
+              exit={{ width: 0, opacity: 0 }}
+              transition={{ duration: 0.15, ease: [0.25, 1, 0.5, 1] }}
+            >
+              <NoteSegments refreshKey={ingestResult?.message} tags={tags} onScrollToLine={(line) => setScrollTarget(line)} onTagsChanged={onTagsChanged} />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
-      {/* Ingest Dialog */}
       {showIngest && (
         <IngestDialog
           rawPath={rawPath}

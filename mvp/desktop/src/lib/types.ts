@@ -39,6 +39,7 @@ export type SearchResult = {
   _tagColor?: string;
   segment_range?: string;
   segment_topic?: string;
+  is_wiki?: boolean;
 };
 
 export type SearchResponse = {
@@ -47,6 +48,7 @@ export type SearchResponse = {
   total_recall?: number;
   weights_used?: Record<string, number>;
   is_adaptive?: boolean;
+  wiki_topics_found?: Record<string, number>;
 };
 
 export type RerankResponse = {

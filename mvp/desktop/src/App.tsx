@@ -11,8 +11,8 @@ import { usePrefs } from "./hooks/usePrefs";
 import { useHealth } from "./hooks/useHealth";
 import { useSearchState } from "./hooks/useSearchState";
 import { useTags } from "./hooks/useTags";
-import { TagView } from "./components/tags/TagView";
-import { onIngestStatus } from "./lib/electron";
+// TagView removed — tags now expand inline in the NoteSegments panel
+import { onIngestStatus, onWikiIngestStatus } from "./lib/electron";
 import type { IngestEvent } from "./lib/electron";
 import type { ChannelId } from "./lib/types";
 
@@ -36,10 +36,30 @@ const STEP_LABELS: Record<string, string> = {
 };
 const STEP_ORDER = ["parse", "embed", "segment", "ai_enrich", "store", "views"];
 
+const WIKI_STEP_LABELS: Record<string, string> = {
+  parse: "Scanning files",
+  embed: "Generating embeddings",
+  segment: "Text segmentation",
+  store: "Storing chunks",
+};
+const WIKI_STEP_ORDER = ["parse", "embed", "segment", "store"];
+
 function initialSteps(): IngestStep[] {
   return STEP_ORDER.map((key) => ({
     key,
     label: STEP_LABELS[key] || key,
+    status: "pending" as const,
+    detail: "",
+    current: 0,
+    total: 0,
+    elapsedMs: 0,
+  }));
+}
+
+function initialWikiSteps(): IngestStep[] {
+  return WIKI_STEP_ORDER.map((key) => ({
+    key,
+    label: WIKI_STEP_LABELS[key] || key,
     status: "pending" as const,
     detail: "",
     current: 0,
@@ -54,6 +74,12 @@ export default function App() {
   const [ingestBusy, setIngestBusy] = useState(false);
   const [ingestSteps, setIngestSteps] = useState<IngestStep[]>([]);
   const [ingestResult, setIngestResult] = useState<{ message: string; type: "success" | "error" } | null>(null);
+
+  // Wiki ingest — separate from note ingest
+  const [wikiIngestBusy, setWikiIngestBusy] = useState(false);
+  const [wikiIngestSteps, setWikiIngestSteps] = useState<IngestStep[]>([]);
+  const [wikiIngestResult, setWikiIngestResult] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [wikiTopicCount, setWikiTopicCount] = useState(0);
 
   const prefs = usePrefs();
   const health = useHealth();
@@ -95,6 +121,35 @@ export default function App() {
     return () => { unlisten.then((fn) => fn()); };
   }, []);
 
+  // Wiki ingest listener — isolated from note ingest
+  useEffect(() => {
+    const unlisten = onWikiIngestStatus((event: IngestEvent) => {
+      if (event.status === "started") {
+        setWikiIngestBusy(true);
+        setWikiIngestResult(null);
+        setWikiIngestSteps(initialWikiSteps());
+      } else if (event.status === "progress") {
+        setWikiIngestSteps((prev) => prev.map((s) => {
+          if (s.key === event.step) return { ...s, status: "active", detail: event.message, current: event.current, total: event.total, elapsedMs: event.elapsed_ms };
+          const thisIdx = WIKI_STEP_ORDER.indexOf(s.key);
+          const eventIdx = WIKI_STEP_ORDER.indexOf(event.step);
+          if (thisIdx < eventIdx && s.status !== "done") return { ...s, status: "done" };
+          return s;
+        }));
+      } else if (event.status === "completed") {
+        setWikiIngestBusy(false);
+        setWikiIngestSteps((prev) => prev.map((s) => ({ ...s, status: "done" })));
+        setWikiIngestResult({ message: event.message, type: "success" });
+        setToast({ message: event.message, type: "success" });
+      } else if (event.status === "error") {
+        setWikiIngestBusy(false);
+        setWikiIngestResult({ message: event.message, type: "error" });
+        setToast({ message: event.message, type: "error" });
+      }
+    });
+    return () => { unlisten.then((fn) => fn()); };
+  }, []);
+
   const handleIngestComplete = useCallback(() => {
     refreshTags();
   }, [refreshTags]);
@@ -113,15 +168,13 @@ export default function App() {
           ingestBusy={ingestBusy}
           ingestSteps={ingestSteps}
           ingestResult={ingestResult}
+          tags={tags}
+          onTagsChanged={refreshTags}
         />
       );
     }
     if (activeChannel === "sync-rate") return <SyncRatePanel />;
-    if (activeChannel === "special-knowledge") return <SpecialKnowledgePanel ingestBusy={ingestBusy} ingestSteps={ingestSteps} ingestResult={ingestResult} />;
-    // Tag channels: "tag:learn", "tag:work", etc.
-    if (activeChannel.startsWith("tag:")) {
-      return <TagView tag={activeChannel.slice(4)} />;
-    }
+    if (activeChannel === "special-knowledge") return <SpecialKnowledgePanel ingestBusy={wikiIngestBusy} ingestSteps={wikiIngestSteps} ingestResult={wikiIngestResult} onTopicsChanged={setWikiTopicCount} />;
     return <div className="flex items-center justify-center h-full text-text-muted text-[13px]">Select a page</div>;
   }
 
@@ -130,12 +183,10 @@ export default function App() {
       <Sidebar
         activeChannel={activeChannel}
         onSelect={setActiveChannel}
-        tags={tags}
-        onTagsChanged={refreshTags}
         gatewayOnline={health.gatewayOnline}
         ingestBusy={ingestBusy}
         embeddingMode={health.embeddingMode}
-        kbVersion={ingestSteps.some(s => s.status === "done") ? `v${Date.now()}` : undefined}
+        wikiTopicCount={wikiTopicCount}
       />
       <main className="flex-1 min-w-0 overflow-hidden bg-[var(--color-bg-primary)]">
         {renderMainPanel()}

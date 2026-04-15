@@ -115,15 +115,15 @@ export function IngestPanel({ rawPath, notePath, onSetRawPath, onSetNotePath, on
 
             {/* Action buttons — stacked vertically for clarity */}
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 32 }}>
-              <button type="button" onClick={() => handleIngest(false)} disabled={ingestBusy || !rawPath || !notePath} className="proto-btn proto-btn-primary disabled:opacity-30" style={{ justifyContent: "center" }}>
+              <button type="button" onClick={() => handleIngest(false)} disabled={ingestBusy || !rawPath || !notePath} className="proto-btn proto-btn-primary" style={{ justifyContent: "center" }}>
                 {ingestBusy ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
                 Ingest new content
               </button>
               <div className="proto-btn-group">
-                <button type="button" onClick={() => handleIngest(true)} disabled={ingestBusy || !rawPath || !notePath} className="proto-btn proto-btn-secondary disabled:opacity-30" style={{ flex: 1, justifyContent: "center" }}>
+                <button type="button" onClick={() => handleIngest(true)} disabled={ingestBusy || !rawPath || !notePath} className="proto-btn proto-btn-secondary" style={{ flex: 1, justifyContent: "center" }}>
                   <RefreshCw size={14} /> Rebuild all
                 </button>
-                <button type="button" onClick={handlePaste} disabled={ingestBusy || !rawPath} className="proto-btn proto-btn-secondary disabled:opacity-30" style={{ flex: 1, justifyContent: "center" }}>
+                <button type="button" onClick={handlePaste} disabled={ingestBusy || !rawPath} className="proto-btn proto-btn-secondary" style={{ flex: 1, justifyContent: "center" }}>
                   <ClipboardPaste size={14} /> Paste to raw
                 </button>
               </div>

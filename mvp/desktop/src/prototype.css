@@ -50,9 +50,13 @@
 }
 
 .proto-nav-item-active {
-  background: var(--color-bg-active);
+  background: color-mix(in oklab, var(--color-accent) 8%, var(--color-bg-active));
   color: var(--color-text-primary);
   font-weight: 500;
+}
+
+.proto-nav-item-active svg {
+  color: var(--color-accent);
 }
 
 .proto-nav-item svg {
@@ -161,6 +165,11 @@
   border-color: var(--color-accent);
 }
 
+.proto-form-input:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 .proto-form-input-mono {
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-size: 12px;
@@ -207,11 +216,16 @@
 
 .proto-btn-primary {
   background: var(--color-accent);
-  color: #fff;
+  color: oklch(0.98 0.005 250);
 }
 
-.proto-btn-primary:hover {
+.proto-btn-primary:hover:not(:disabled) {
   background: var(--color-accent-hover);
+}
+
+.proto-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -263,7 +277,7 @@
   width: 36px;
   height: 20px;
   border-radius: 10px;
-  background: #ccc;
+  background: var(--color-border);
   position: relative;
   cursor: pointer;
   flex-shrink: 0;
@@ -405,21 +419,21 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 }
 
 /* Special knowledge @mention chips */
-.proto-spkn-chip {
+.proto-wiki-chip {
   display: inline-flex;
   align-items: center;
   gap: 3px;
   font-size: 11px;
   font-weight: 500;
-  color: oklch(0.58 0.18 300);
-  background: color-mix(in oklab, oklch(0.58 0.18 300) 12%, transparent);
+  color: var(--color-wiki);
+  background: color-mix(in oklab, var(--color-wiki) 12%, transparent);
   padding: 2px 6px;
   border-radius: 4px;
   flex-shrink: 0;
   white-space: nowrap;
 }
 
-.proto-spkn-chip-remove {
+.proto-wiki-chip-remove {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -432,12 +446,12 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   transition: opacity 0.1s;
 }
 
-.proto-spkn-chip-remove:hover {
+.proto-wiki-chip-remove:hover {
   opacity: 1;
 }
 
 /* @ dropdown */
-.proto-spkn-dropdown {
+.proto-wiki-dropdown {
   position: absolute;
   top: 100%;
   left: 0;
@@ -452,7 +466,7 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   overflow-y: auto;
 }
 
-.proto-spkn-dropdown-label {
+.proto-wiki-dropdown-label {
   padding: 6px 12px;
   font-size: 11px;
   font-weight: 500;
@@ -460,7 +474,7 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   border-bottom: 1px solid var(--color-border);
 }
 
-.proto-spkn-dropdown-item {
+.proto-wiki-dropdown-item {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -476,7 +490,7 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   transition: background 0.1s;
 }
 
-.proto-spkn-dropdown-item:hover {
+.proto-wiki-dropdown-item:hover {
   background: var(--color-bg-hover);
   color: var(--color-text-primary);
 }
@@ -495,6 +509,27 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   color: var(--color-text-muted);
 }
 
+/* Search bar + AI toggle on one row (empty state) */
+.proto-search-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.proto-search-bar-row-input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Top/Recall pickers row below search bar */
+.proto-search-controls {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
 .proto-search-hint {
   margin-top: 12px;
   text-align: center;
@@ -508,6 +543,17 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   border-bottom: 1px solid var(--color-border);
 }
 
+.proto-results-topbar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.proto-results-topbar-search {
+  flex: 1;
+  min-width: 0;
+}
+
 .proto-pipeline-inline {
   display: flex;
   align-items: center;
@@ -519,7 +565,7 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 }
 
 .proto-pipeline-inline-done {
-  color: var(--color-text-secondary);
+  color: var(--color-success);
 }
 
 /* Answer + sources */
@@ -577,8 +623,12 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   color: var(--color-text-secondary);
 }
 
+.proto-feedback-given {
+  color: var(--color-success) !important;
+}
+
 .proto-related-section {
-  padding: 0 32px 16px;
+  padding: 16px 32px;
 }
 
 .proto-related-label {
@@ -612,7 +662,7 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 }
 
 .proto-sources-section {
-  padding: 16px 32px 32px;
+  padding: 24px 32px;
 }
 
 .proto-sources-label {
@@ -622,10 +672,16 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   margin-bottom: 12px;
 }
 
+.proto-sources-label-icon {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .proto-sources-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 10px;
+  gap: 12px;
 }
 
 .proto-source-card {
@@ -643,6 +699,94 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 .proto-source-card-active {
   border-color: color-mix(in oklab, var(--color-accent) 35%, transparent);
   background: color-mix(in oklab, var(--color-accent) 6%, transparent);
+}
+
+/* Wiki source card — subtle background tint (no border-left stripe) */
+.proto-source-card-wiki-tint {
+  background: color-mix(in oklab, var(--color-wiki) 5%, transparent);
+}
+
+.proto-source-card-wiki-tint:hover {
+  background: color-mix(in oklab, var(--color-wiki) 9%, transparent);
+}
+
+.proto-wiki-badge-icon {
+  color: var(--color-wiki);
+  flex-shrink: 0;
+}
+
+.proto-wiki-dim {
+  color: var(--color-wiki);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.proto-wiki-suggest {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  margin: 0 32px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  background: color-mix(in oklab, var(--color-wiki) 6%, transparent);
+  border: 1px solid color-mix(in oklab, var(--color-wiki) 15%, transparent);
+  border-radius: var(--radius-proto);
+}
+
+.proto-wiki-suggest-topic {
+  color: var(--color-wiki);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.proto-wiki-suggest-topic:hover {
+  text-decoration: underline;
+}
+
+/* ── Ask AI button row ── */
+.proto-ask-ai-row {
+  display: flex;
+  padding: 8px 32px;
+}
+.proto-ask-ai-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.proto-ask-ai-wiki-count {
+  font-size: 11px;
+  opacity: 0.7;
+  margin-left: 2px;
+}
+
+/* ── Wiki selectable cards ── */
+.proto-wiki-selectable {
+  position: relative;
+}
+.proto-wiki-checkbox {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 2;
+  cursor: pointer;
+}
+.proto-wiki-checkbox input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--color-wiki, var(--color-accent));
+  cursor: pointer;
+}
+.proto-wiki-selected {
+  outline: 2px solid color-mix(in oklab, var(--color-wiki, var(--color-accent)) 60%, transparent);
+  border-radius: var(--radius-proto);
+}
+.proto-wiki-select-hint {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--color-text-muted);
+  margin-left: 8px;
 }
 
 .proto-source-meta {
@@ -664,6 +808,12 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   font-variant-numeric: tabular-nums;
 }
 
+/* Top-ranked results: accent-colored index number */
+.proto-source-meta-starred {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
 .proto-source-text {
   font-size: 13px;
   color: var(--color-text-secondary);
@@ -676,14 +826,173 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 
 .proto-source-ref {
   font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text-muted);
   margin-top: 6px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  letter-spacing: -0.01em;
 }
 
-/* View topic */
+.proto-source-ref-dir {
+  opacity: 0.5;
+}
+
+.proto-source-ref-file {
+  color: var(--color-text-secondary);
+}
+
+.proto-source-ref-range {
+  color: var(--color-accent);
+  opacity: 0.7;
+}
+
+/* ── Source Preview Slide Panel ── */
+
+.proto-preview-slide {
+  flex-shrink: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--color-border);
+}
+
+.proto-preview-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 340px;
+  min-width: 340px;
+  background: var(--color-bg-sidebar);
+}
+
+.proto-preview-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 10px 0 14px;
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.proto-preview-header-icon {
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.proto-preview-header-file {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.proto-preview-header-line {
+  font-size: 11px;
+  color: var(--color-accent);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.proto-preview-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+  transition: background 0.1s, color 0.1s;
+}
+
+.proto-preview-close:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-secondary);
+}
+
+.proto-preview-close:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.proto-preview-body {
+  flex: 1;
+  overflow-y: auto;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.proto-preview-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 14px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.proto-preview-error {
+  padding: 16px 14px;
+  color: var(--color-danger);
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.proto-preview-line {
+  display: flex;
+  padding: 0 14px;
+  transition: background 0.08s;
+}
+
+.proto-preview-line:hover {
+  background: var(--color-bg-hover);
+}
+
+.proto-preview-line-highlight {
+  background: color-mix(in oklab, var(--color-accent) 8%, transparent);
+}
+
+.proto-preview-line-highlight:hover {
+  background: color-mix(in oklab, var(--color-accent) 12%, transparent);
+}
+
+.proto-preview-line-num {
+  width: 32px;
+  text-align: right;
+  color: var(--color-text-muted);
+  opacity: 0.4;
+  user-select: none;
+  flex-shrink: 0;
+  margin-right: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.proto-preview-line-highlight .proto-preview-line-num {
+  color: var(--color-accent);
+  opacity: 0.6;
+}
+
+.proto-preview-line-text {
+  flex: 1;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--color-text-secondary);
+}
+
+.proto-preview-line-text-active {
+  color: var(--color-text-primary);
+}
+
+/* View header */
 .proto-view-header {
   display: flex;
   align-items: center;
@@ -696,6 +1005,8 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 }
 
 .proto-view-header-file {
+  flex: 1;
+  min-width: 0;
   font-size: 12px;
   color: var(--color-text-muted);
   font-weight: 400;
@@ -705,17 +1016,21 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 }
 
 .proto-view-open {
-  margin-left: auto;
   font-size: 12px;
   color: var(--color-text-secondary);
   cursor: pointer;
   background: none;
   border: none;
   font-family: inherit;
+  padding: 2px 6px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  transition: color 0.12s, background 0.12s;
 }
 
 .proto-view-open:hover {
   color: var(--color-text-primary);
+  background: var(--color-bg-hover);
 }
 
 .proto-view-content {
@@ -968,6 +1283,46 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   color: var(--color-text-muted);
 }
 
+/* TopK picker */
+.proto-topk-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 2px;
+  flex-shrink: 0;
+}
+
+.proto-topk-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  padding: 0 6px;
+}
+
+.proto-topk-option {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: 4px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  transition: background 0.1s, color 0.1s;
+}
+
+.proto-topk-option:hover {
+  background: var(--color-bg-hover);
+}
+
+.proto-topk-option-active {
+  background: var(--color-accent);
+  color: oklch(0.98 0.005 250);
+}
+
 /* Follow-up input */
 .proto-followup-row {
   display: flex;
@@ -1186,116 +1541,16 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   border: none;
   cursor: pointer;
   padding: 0;
-  transition: transform 0.1s;
+  transition: transform 0.15s cubic-bezier(0.25, 1, 0.5, 1), outline-offset 0.15s cubic-bezier(0.25, 1, 0.5, 1);
 }
 
 .proto-tag-color-swatch:hover {
-  transform: scale(1.3);
+  transform: scale(1.35);
 }
 
 .proto-tag-color-swatch-active {
   outline: 2px solid var(--color-text-primary);
-  outline-offset: 1px;
-}
-
-/* Sidebar edit controls */
-.proto-sidebar-edit-btn {
-  font-size: 11px;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  background: none;
-  border: none;
-  font-family: inherit;
-  padding: 1px 4px;
-  border-radius: 3px;
-  transition: color 0.1s, background 0.1s;
-}
-
-.proto-sidebar-edit-btn:hover {
-  color: var(--color-text-secondary);
-  background: var(--color-bg-hover);
-}
-
-/* Tag drag-and-drop */
-.proto-tag-drag-item {
-  display: flex;
-  align-items: center;
-  transition: background 0.1s;
-  border-radius: var(--radius-proto);
-}
-
-.proto-tag-drag-item[draggable="true"] {
-  cursor: grab;
-}
-
-.proto-tag-drag-item[draggable="true"]:active {
-  cursor: grabbing;
-}
-
-.proto-tag-dragging {
-  opacity: 0.4;
-}
-
-.proto-tag-drop-target {
-  background: var(--color-bg-hover);
-  box-shadow: 0 -1px 0 var(--color-accent);
-}
-
-.proto-tag-grip {
-  display: flex;
-  align-items: center;
-  padding: 0 2px;
-  color: var(--color-text-muted);
-  opacity: 0.3;
-  flex-shrink: 0;
-}
-
-.proto-tag-drag-item:hover .proto-tag-grip {
-  opacity: 0.6;
-}
-
-.proto-tag-delete-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 3px;
-  border: none;
-  background: none;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.1s, color 0.1s, background 0.1s;
-  flex-shrink: 0;
-}
-
-.proto-tag-drag-item:hover .proto-tag-delete-btn,
-.proto-tag-delete-btn:focus-visible {
-  opacity: 1;
-}
-
-.proto-tag-delete-btn:hover {
-  color: var(--color-danger);
-  background: color-mix(in oklab, var(--color-danger) 8%, transparent);
-}
-
-.proto-tag-add-row {
-  display: flex;
-  gap: 4px;
-  padding: 6px 12px;
-}
-
-.proto-tag-add-input {
-  padding: 4px 8px !important;
-  font-size: 12px !important;
-  flex: 1;
-  min-width: 0;
-}
-
-.proto-tag-add-btn {
-  padding: 4px 8px !important;
-  flex-shrink: 0;
+  outline-offset: 2px;
 }
 
 /* Version delete — consistent with other destructive actions */
@@ -1321,72 +1576,6 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   cursor: default;
 }
 
-/* Tag segments */
-.proto-tag-segment {
-  padding: 12px 0;
-  border-bottom: 1px solid var(--color-border);
-}
-
-.proto-tag-segment:last-child {
-  border-bottom: none;
-}
-
-.proto-tag-segment-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.proto-tag-segment-range {
-  font-size: 11px;
-  font-weight: 600;
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  color: var(--color-accent);
-  background: color-mix(in oklab, var(--color-accent) 10%, transparent);
-  padding: 2px 6px;
-  border-radius: 4px;
-  flex-shrink: 0;
-}
-
-.proto-tag-credential-badge {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--color-warning);
-  background: color-mix(in oklab, var(--color-warning) 10%, transparent);
-  padding: 2px 6px;
-  border-radius: 4px;
-}
-
-.proto-tag-segment-summary {
-  flex: 1;
-  font-size: 13px;
-  color: var(--color-text-primary);
-  min-width: 0;
-}
-
-.proto-tag-view-btn {
-  font-size: 12px;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  background: none;
-  border: none;
-  font-family: inherit;
-  padding: 2px 8px;
-  border-radius: var(--radius-proto);
-  flex-shrink: 0;
-  transition: background 0.1s, color 0.1s;
-}
-
-.proto-tag-view-btn:hover {
-  background: var(--color-bg-hover);
-  color: var(--color-text-primary);
-}
-
-.proto-tag-view-btn-active {
-  color: var(--color-accent);
-}
-
 .proto-tag-keywords {
   display: flex;
   gap: 4px;
@@ -1400,43 +1589,6 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   background: var(--color-bg-elevated);
   padding: 1px 6px;
   border-radius: 4px;
-}
-
-.proto-tag-source {
-  margin-top: 8px;
-  background: var(--color-bg-surface, var(--color-bg-elevated));
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-proto);
-  overflow: hidden;
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: 12px;
-}
-
-.proto-tag-source-line {
-  display: flex;
-  padding: 1px 12px;
-  line-height: 1.6;
-}
-
-.proto-tag-source-line:hover {
-  background: var(--color-bg-hover);
-}
-
-.proto-tag-source-linenum {
-  width: 36px;
-  text-align: right;
-  color: var(--color-text-muted);
-  opacity: 0.5;
-  flex-shrink: 0;
-  margin-right: 12px;
-  user-select: none;
-}
-
-.proto-tag-source-text {
-  flex: 1;
-  color: var(--color-text-secondary);
-  white-space: pre-wrap;
-  word-break: break-all;
 }
 
 /* Citation links in AI answer — [1] [2] etc */
@@ -1458,4 +1610,707 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 
 .proto-citation-link:hover {
   background: color-mix(in oklab, var(--color-accent) 20%, transparent);
+}
+
+/* ── Wiki panel ── */
+
+.proto-wiki-result-success {
+  color: var(--color-success);
+}
+
+.proto-wiki-result-error {
+  color: var(--color-danger);
+}
+
+.proto-wiki-topic-list {
+  padding: 8px 0;
+}
+
+.proto-wiki-topic-item {
+  display: flex;
+  gap: 12px;
+  padding: 12px 24px;
+  transition: background 0.1s;
+}
+
+.proto-wiki-topic-item:hover {
+  background: var(--color-bg-hover);
+}
+
+.proto-wiki-topic-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-proto);
+  background: color-mix(in oklab, var(--color-wiki) 10%, transparent);
+  color: var(--color-wiki);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.proto-wiki-topic-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.proto-wiki-topic-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.proto-wiki-topic-summary {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  margin-top: 2px;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.proto-wiki-topic-meta {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-top: 4px;
+}
+
+.proto-wiki-topic-meta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Wiki empty state */
+.proto-wiki-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 32px;
+  text-align: center;
+}
+
+.proto-wiki-empty-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  margin-top: 16px;
+}
+
+.proto-wiki-empty-desc {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  margin-top: 6px;
+  max-width: 320px;
+  line-height: 1.5;
+}
+
+.proto-wiki-empty-icon {
+  color: var(--color-text-muted);
+  opacity: 0.4;
+}
+
+/* Wiki header inline elements */
+.proto-wiki-header-count {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+
+.proto-wiki-header-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--color-accent);
+  cursor: pointer;
+  margin-left: 4px;
+}
+
+.proto-wiki-header-status-success {
+  color: var(--color-success);
+  cursor: default;
+}
+
+.proto-wiki-header-status-error {
+  color: var(--color-danger);
+  cursor: default;
+}
+
+/* Sidebar section divider */
+.proto-sidebar-divider {
+  height: 1px;
+  background: var(--color-border);
+  margin: 8px 12px;
+}
+
+/* ── Editor (NotePage) ── */
+
+/* Empty state — no file selected */
+.proto-editor-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 24px;
+}
+
+.proto-editor-empty-inner {
+  text-align: center;
+  max-width: 360px;
+}
+
+.proto-editor-empty-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--color-text-primary);
+}
+
+.proto-editor-empty-desc {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+  margin-bottom: 24px;
+}
+
+.proto-editor-empty-action {
+  width: 100%;
+  justify-content: center;
+}
+
+/* ── Note page (Linear-style redesign) ── */
+
+.proto-note-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+/* Minimal header */
+.proto-note-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 40px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.proto-note-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.proto-note-header-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proto-note-header-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-warning);
+  flex-shrink: 0;
+}
+
+.proto-note-header-build {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.proto-note-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.proto-note-header-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-proto);
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: color 0.1s, background 0.1s;
+}
+
+.proto-note-header-icon-btn:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
+.proto-note-header-icon-btn-active {
+  color: var(--color-accent);
+  background: color-mix(in oklab, var(--color-accent) 8%, transparent);
+}
+
+/* Body: editor + tags panel */
+.proto-note-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.proto-note-editor-area {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Segments panel animation wrapper */
+.proto-note-segments-wrap {
+  flex-shrink: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--color-border);
+}
+
+/* Editor container & loading skeleton */
+.proto-editor-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.proto-editor-pane {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.proto-editor-cm {
+  position: absolute;
+  inset: 0;
+}
+
+.proto-editor-loading {
+  display: flex;
+  align-items: flex-start;
+  padding: 24px 56px;
+  height: 100%;
+}
+
+.proto-editor-loading-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 480px;
+}
+
+.proto-editor-loading-line {
+  height: 10px;
+  border-radius: 3px;
+}
+
+/* ── Note Segments (inline tag sidebar) ── */
+
+.proto-note-segments {
+  width: 300px;
+  min-width: 300px;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-sidebar);
+  overflow-y: auto;
+  padding-bottom: 12px;
+}
+
+.proto-note-segments-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.proto-note-segments-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.proto-note-segments-count {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.proto-note-segments-edit-btn {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  background: none;
+  border: none;
+  font-family: inherit;
+  padding: 1px 4px;
+  border-radius: 3px;
+  transition: color 0.1s, background 0.1s;
+}
+
+.proto-note-segments-edit-btn:hover {
+  color: var(--color-text-secondary);
+  background: var(--color-bg-hover);
+}
+
+.proto-note-segments-empty {
+  padding: 24px 16px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.proto-note-seg-group {
+  margin-bottom: 2px;
+  transition: background 0.1s, opacity 0.1s;
+  border-radius: var(--radius-proto);
+}
+
+.proto-note-seg-group[draggable="true"] {
+  cursor: grab;
+}
+
+.proto-note-seg-group[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+.proto-note-seg-dragging {
+  opacity: 0.35;
+}
+
+.proto-note-seg-drop-target {
+  background: color-mix(in oklab, var(--color-accent) 8%, transparent);
+  box-shadow: 0 -2px 0 var(--color-accent);
+}
+
+.proto-note-seg-grip {
+  display: flex;
+  align-items: center;
+  padding: 0 2px;
+  color: var(--color-text-muted);
+  opacity: 0.3;
+  flex-shrink: 0;
+}
+
+.proto-note-seg-group:hover .proto-note-seg-grip {
+  opacity: 0.6;
+}
+
+.proto-note-seg-group-row {
+  display: flex;
+  align-items: center;
+}
+
+.proto-note-seg-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  background: none;
+  text-align: left;
+  font-family: inherit;
+  transition: background 0.1s;
+}
+
+.proto-note-seg-group-header:hover {
+  background: var(--color-bg-hover);
+}
+
+.proto-note-seg-chevron {
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+  transition: transform 0.15s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.proto-note-seg-chevron-open {
+  transform: rotate(90deg);
+}
+
+.proto-note-seg-tag-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: inherit;
+}
+
+.proto-note-seg-count {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  background: var(--color-bg-hover);
+  padding: 0 5px;
+  border-radius: 8px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+
+.proto-note-seg-items {
+  padding: 2px 8px 6px;
+}
+
+.proto-note-seg-item {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  border: none;
+  background: none;
+  border-radius: var(--radius-proto);
+  font-family: inherit;
+  transition: background 0.1s;
+}
+
+.proto-note-seg-item:hover {
+  background: var(--color-bg-hover);
+}
+
+.proto-note-seg-range {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--color-accent);
+  background: color-mix(in oklab, var(--color-accent) 8%, transparent);
+  padding: 1px 4px;
+  border-radius: 3px;
+  margin-right: 6px;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.proto-note-seg-topic {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.proto-note-seg-cred {
+  font-size: 10px;
+  color: var(--color-danger);
+  background: color-mix(in oklab, var(--color-danger) 8%, transparent);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+.proto-note-seg-summary {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.proto-note-seg-keywords {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+/* Tag edit controls in NoteSegments */
+.proto-note-seg-delete-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 3px;
+  border: none;
+  background: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  margin-right: 8px;
+  flex-shrink: 0;
+  transition: color 0.12s, background 0.12s;
+}
+
+.proto-note-seg-delete-btn:hover {
+  color: var(--color-danger);
+  background: color-mix(in oklab, var(--color-danger) 8%, transparent);
+}
+
+.proto-note-seg-color-picker {
+  display: flex;
+  gap: 4px;
+  padding: 4px 12px 6px 34px;
+}
+
+.proto-note-seg-add-row {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px;
+}
+
+.proto-note-seg-add-input {
+  padding: 4px 8px !important;
+  font-size: 12px !important;
+  flex: 1;
+  min-width: 0;
+}
+
+.proto-note-seg-add-btn {
+  padding: 4px 8px !important;
+  flex-shrink: 0;
+}
+
+/* ── Settings Panel ── */
+
+/* Theme segmented control */
+.proto-settings-theme-group {
+  display: flex;
+  gap: 6px;
+}
+
+.proto-settings-theme-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 14px;
+  border-radius: var(--radius-proto);
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  text-transform: capitalize;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.proto-settings-theme-btn:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
+.proto-settings-theme-btn-active {
+  background: color-mix(in oklab, var(--color-accent) 10%, transparent);
+  border-color: color-mix(in oklab, var(--color-accent) 30%, transparent);
+  color: var(--color-accent);
+}
+
+/* Hotkey display */
+.proto-settings-hotkey-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.proto-settings-kbd {
+  font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-text-primary);
+  background: var(--color-bg-elevated);
+  padding: 4px 10px;
+  border-radius: var(--radius-proto);
+  border: 1px solid var(--color-border);
+}
+
+/* Section-level hint (below title, above fields) */
+.proto-settings-section-hint {
+  margin-bottom: 12px;
+}
+
+/* Inline note on section title (e.g. "not used in mock mode") */
+.proto-settings-section-note {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-left: 8px;
+}
+
+/* Save row */
+.proto-settings-save-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.proto-settings-status {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.proto-settings-status-success {
+  color: var(--color-success);
+}
+
+.proto-settings-status-error {
+  color: var(--color-danger);
+}
+
+/* Loading skeleton */
+.proto-settings-loading {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  padding-top: 48px;
+}
+
+.proto-settings-loading-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.proto-settings-loading-label {
+  width: 80px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.proto-settings-loading-input {
+  width: 100%;
+  height: 36px;
+  border-radius: var(--radius-proto);
+}
+
+/* Source card loading skeleton */
+.proto-source-skeleton {
+  height: 96px;
+  border-radius: var(--radius-proto);
+  border: 1px solid var(--color-border);
 }

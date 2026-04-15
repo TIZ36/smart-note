@@ -1,10 +1,12 @@
 import { useState, useEffect } from "react";
-import { Save } from "lucide-react";
+import { Save, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { readSettings, writeSettings, getHotkey, setHotkey } from "@/lib/electron";
 import type { AppSettings } from "@/lib/types";
 import { cn } from "@/lib/cn";
 import { useTheme, type ThemeMode } from "@/hooks/useTheme";
+
+const EASE_OUT_QUART = [0.25, 1, 0.5, 1] as const;
 
 export function SettingsPanel() {
   const { mode: themeMode, setMode: setThemeMode } = useTheme();
@@ -26,8 +28,9 @@ export function SettingsPanel() {
     ingest_ai_enabled: false,
     ingest_ai_model: "",
   });
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState<{ text: string; type: "idle" | "success" | "error" }>({ text: "", type: "idle" });
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -38,32 +41,51 @@ export function SettingsPanel() {
     try {
       const s = await readSettings();
       setSettings(s);
-      setStatus("");
+      setStatus({ text: "", type: "idle" });
     } catch (err) {
-      setStatus(`Failed: ${String(err)}`);
+      setStatus({ text: `Failed to load: ${String(err)}`, type: "error" });
     } finally {
       setLoading(false);
     }
   }
 
   async function handleSave() {
+    if (saving) return;
+    setSaving(true);
     try {
       const r = await writeSettings(settings);
-      setStatus(r.output);
+      setStatus({ text: r.output || "Saved. Restart backend to apply.", type: "success" });
     } catch (err) {
-      setStatus(`Failed: ${String(err)}`);
+      setStatus({ text: `Failed: ${String(err)}`, type: "error" });
+    } finally {
+      setSaving(false);
     }
   }
 
   function update<K extends keyof AppSettings>(field: K, value: AppSettings[K]) {
     setSettings((p) => ({ ...p, [field]: value }));
+    // Clear status when user edits a field
+    if (status.type !== "idle") setStatus({ text: "", type: "idle" });
   }
 
   if (loading) {
-    return <div className="flex items-center justify-center h-full text-[var(--color-text-muted)] text-[13px]">Loading...</div>;
+    return (
+      <div className="flex flex-col h-full min-h-0">
+        <div className="flex-1 overflow-y-auto">
+          <div className="proto-page-content">
+            <div className="proto-settings-loading">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="proto-settings-loading-block">
+                  <div className="proto-settings-loading-label animate-shimmer" />
+                  <div className="proto-settings-loading-input animate-shimmer" />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   }
-
-  const inputCls = "proto-form-input";
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -74,17 +96,16 @@ export function SettingsPanel() {
           <section className="proto-form-section">
             <h2 className="proto-form-section-title">Appearance</h2>
             <Field label="Theme">
-              <div style={{ display: "flex", gap: 6 }}>
+              <div className="proto-settings-theme-group">
                 {(["system", "light", "dark"] as ThemeMode[]).map((m) => (
                   <button
                     key={m}
                     type="button"
                     onClick={() => setThemeMode(m)}
                     className={cn(
-                      "proto-btn",
-                      themeMode === m ? "proto-btn-primary" : "proto-btn-secondary"
+                      "proto-settings-theme-btn",
+                      themeMode === m && "proto-settings-theme-btn-active"
                     )}
-                    style={{ flex: 1, justifyContent: "center", textTransform: "capitalize" }}
                   >
                     {m}
                   </button>
@@ -98,7 +119,7 @@ export function SettingsPanel() {
           <section className="proto-form-section">
             <h2 className="proto-form-section-title">Global Hotkey</h2>
             <Field label="Quick paste to raw file">
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <div className="proto-settings-hotkey-row">
                 {hotkeyEditing ? (
                   <>
                     <input
@@ -106,8 +127,9 @@ export function SettingsPanel() {
                       value={hotkeyInput}
                       onChange={(e) => setHotkeyInput(e.target.value)}
                       placeholder="e.g. CommandOrControl+Shift+V"
-                      className={inputCls}
+                      className="proto-form-input"
                       style={{ flex: 1 }}
+                      autoFocus
                       onKeyDown={(e) => {
                         if (e.key === "Enter") {
                           setHotkey(hotkeyInput || hotkey).then((r) => {
@@ -127,9 +149,9 @@ export function SettingsPanel() {
                   </>
                 ) : (
                   <>
-                    <code style={{ fontSize: 13, color: "var(--color-text-primary)", background: "var(--color-bg-elevated)", padding: "4px 10px", borderRadius: "var(--radius-proto)" }}>
+                    <kbd className="proto-settings-kbd">
                       {hotkey.replace("CommandOrControl", "Cmd")}
-                    </code>
+                    </kbd>
                     <button type="button" onClick={() => { setHotkeyInput(hotkey); setHotkeyEditing(true); }} className="proto-btn proto-btn-secondary">Change</button>
                   </>
                 )}
@@ -145,7 +167,7 @@ export function SettingsPanel() {
           <section className="proto-form-section">
             <h2 className="proto-form-section-title">Embedding</h2>
             <Field label="Mode">
-              <select value={settings.embedding_mode} onChange={(e) => update("embedding_mode", e.target.value)} className={inputCls}>
+              <select value={settings.embedding_mode} onChange={(e) => update("embedding_mode", e.target.value)} className="proto-form-input">
                 <option value="mock">mock — hash-based, no network (dev only)</option>
                 <option value="local">local — Docker embedding service (:8009)</option>
                 <option value="api">api — OpenAI-compatible endpoint</option>
@@ -162,15 +184,15 @@ export function SettingsPanel() {
 
           <section className="proto-form-section">
             <h2 className="proto-form-section-title">Chat Provider</h2>
-            <p className="proto-form-hint" style={{ marginBottom: 12 }}>Used for AI answers, AI ingestion, and reranking.</p>
+            <p className="proto-form-hint proto-settings-section-hint">Used for AI answers, AI ingestion, and reranking.</p>
             <Field label="Base URL">
-              <input type="text" value={settings.provider_base_url} onChange={(e) => update("provider_base_url", e.target.value)} placeholder="https://api.deepseek.com/v1" className={inputCls} />
+              <input type="text" value={settings.provider_base_url} onChange={(e) => update("provider_base_url", e.target.value)} placeholder="https://api.deepseek.com/v1" className="proto-form-input" />
             </Field>
             <Field label="API Key">
-              <input type="password" value={settings.provider_api_key} onChange={(e) => update("provider_api_key", e.target.value)} placeholder="sk-..." className={inputCls} />
+              <input type="password" value={settings.provider_api_key} onChange={(e) => update("provider_api_key", e.target.value)} placeholder="sk-..." className="proto-form-input" />
             </Field>
             <Field label="Chat Model">
-              <input type="text" value={settings.provider_chat_model} onChange={(e) => update("provider_chat_model", e.target.value)} placeholder="deepseek-chat" className={inputCls} />
+              <input type="text" value={settings.provider_chat_model} onChange={(e) => update("provider_chat_model", e.target.value)} placeholder="deepseek-chat" className="proto-form-input" />
             </Field>
           </section>
 
@@ -180,13 +202,13 @@ export function SettingsPanel() {
             <h2 className="proto-form-section-title">
               Embedding Provider
               {settings.embedding_mode !== "api" && (
-                <span style={{ fontWeight: 400, fontSize: 11, color: "var(--color-text-muted)", marginLeft: 8 }}>
-                  (not used in {settings.embedding_mode} mode)
+                <span className="proto-settings-section-note">
+                  not used in {settings.embedding_mode} mode
                 </span>
               )}
             </h2>
-            <p className="proto-form-hint" style={{ marginBottom: 12 }}>
-              Used when embedding mode = api. Leave blank to use the Chat Provider above.
+            <p className="proto-form-hint proto-settings-section-hint">
+              Used when embedding mode is API. Leave blank to fall back to Chat Provider.
             </p>
             <Field label="Base URL (blank = same as Chat)">
               <input
@@ -195,7 +217,7 @@ export function SettingsPanel() {
                 onChange={(e) => update("embed_base_url", e.target.value)}
                 placeholder={settings.provider_base_url || "https://api.openai.com/v1"}
                 disabled={settings.embedding_mode !== "api"}
-                className={cn(inputCls, settings.embedding_mode !== "api" && "opacity-30 cursor-not-allowed")}
+                className="proto-form-input"
               />
             </Field>
             <Field label="API Key (blank = same as Chat)">
@@ -205,7 +227,7 @@ export function SettingsPanel() {
                 onChange={(e) => update("embed_api_key", e.target.value)}
                 placeholder={settings.embed_base_url ? "sk-..." : "(uses Chat API Key)"}
                 disabled={settings.embedding_mode !== "api"}
-                className={cn(inputCls, settings.embedding_mode !== "api" && "opacity-30 cursor-not-allowed")}
+                className="proto-form-input"
               />
             </Field>
             <Field label="Embed Model">
@@ -215,7 +237,7 @@ export function SettingsPanel() {
                 onChange={(e) => update("provider_embed_model", e.target.value)}
                 placeholder="text-embedding-3-small"
                 disabled={settings.embedding_mode !== "api"}
-                className={cn(inputCls, settings.embedding_mode !== "api" && "opacity-30 cursor-not-allowed")}
+                className="proto-form-input"
               />
             </Field>
           </section>
@@ -241,10 +263,16 @@ export function SettingsPanel() {
 
             <AnimatePresence>
               {settings.ingest_ai_enabled && (
-                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.2, ease: EASE_OUT_QUART }}
+                  className="overflow-hidden"
+                >
                   <div className="proto-form-field mt-4">
                     <label className="proto-form-label">Ingestion Model (blank = Chat Model)</label>
-                    <input type="text" value={settings.ingest_ai_model} onChange={(e) => update("ingest_ai_model", e.target.value)} placeholder={settings.provider_chat_model || "gpt-4o-mini"} className={inputCls} />
+                    <input type="text" value={settings.ingest_ai_model} onChange={(e) => update("ingest_ai_model", e.target.value)} placeholder={settings.provider_chat_model || "gpt-4o-mini"} className="proto-form-input" />
                   </div>
                 </motion.div>
               )}
@@ -253,11 +281,23 @@ export function SettingsPanel() {
 
           <div className="proto-form-divider" />
 
-          <div className="flex items-center gap-3 mt-2">
-            <button type="button" onClick={handleSave} className="proto-btn proto-btn-primary">
-              <Save size={14} /> Save
+          <div className="proto-settings-save-row">
+            <button type="button" onClick={handleSave} disabled={saving} className="proto-btn proto-btn-primary">
+              {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+              {saving ? "Saving..." : "Save"}
             </button>
-            <span className="text-[11px] text-[var(--color-text-muted)]">{status || "Restart backend after saving."}</span>
+            {status.text && (
+              <span className={cn(
+                "proto-settings-status",
+                status.type === "success" && "proto-settings-status-success",
+                status.type === "error" && "proto-settings-status-error"
+              )}>
+                {status.text}
+              </span>
+            )}
+            {!status.text && (
+              <span className="proto-settings-status">Restart backend after saving.</span>
+            )}
           </div>
         </div>
       </div>

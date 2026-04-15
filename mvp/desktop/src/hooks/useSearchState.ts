@@ -39,8 +39,12 @@ export type SearchState = {
   setAiEnabled: (v: boolean) => void;
   tagFilter: string | null;
   setTagFilter: (v: string | null) => void;
-  selectedSpkn: string[];
-  setSelectedSpkn: React.Dispatch<React.SetStateAction<string[]>>;
+  selectedWiki: string[];
+  setSelectedWiki: React.Dispatch<React.SetStateAction<string[]>>;
+  topK: number;
+  setTopK: (v: number) => void;
+  recallLimit: number;
+  setRecallLimit: (v: number) => void;
   searchHistory: HistoryEntry[];
   setSearchHistory: React.Dispatch<React.SetStateAction<HistoryEntry[]>>;
   lastEvidenceIds: React.MutableRefObject<number[]>;
@@ -58,7 +62,9 @@ export function useSearchState(): SearchState {
   const [isAdaptive, setIsAdaptive] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
-  const [selectedSpkn, setSelectedSpkn] = useState<string[]>([]);
+  const [selectedWiki, setSelectedWiki] = useState<string[]>([]);
+  const [topK, setTopK] = useState(10);
+  const [recallLimit, setRecallLimit] = useState(200);
   const [aiEnabled, setAiEnabled] = useState(true);
   const [searchHistory, setSearchHistory] = useState<HistoryEntry[]>([]);
   const lastEvidenceIds = useRef<number[]>([]);
@@ -89,7 +95,9 @@ export function useSearchState(): SearchState {
     hasSearched, setHasSearched,
     aiEnabled, setAiEnabled,
     tagFilter, setTagFilter,
-    selectedSpkn, setSelectedSpkn,
+    selectedWiki, setSelectedWiki,
+    topK, setTopK,
+    recallLimit, setRecallLimit,
     searchHistory, setSearchHistory,
     lastEvidenceIds,
     getChatHistory,

@@ -25,8 +25,7 @@ export function usePrefs() {
     localStorage.setItem(PREF_KEY, JSON.stringify(prefs));
     // Sync rawPath to Electron main process for global hotkey
     try {
-      const d = (window as any).desktop;
-      if (d && prefs.rawPath) d.invoke("save_raw_path_for_hotkey", { rawPath: prefs.rawPath });
+      if (window.desktop && prefs.rawPath) window.desktop.invoke("save_raw_path_for_hotkey", { rawPath: prefs.rawPath });
     } catch {}
   }, [prefs]);
 

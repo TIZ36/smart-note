@@ -10,12 +10,12 @@ type Props = {
   loading?: boolean;
   tagFilter?: string | null;
   // Special knowledge @mentions
-  selectedSpkn?: string[];
-  availableSpkn?: string[];
-  onSpknToggle?: (topic: string) => void;
+  selectedWiki?: string[];
+  availableWiki?: string[];
+  onWikiToggle?: (topic: string) => void;
 };
 
-export function SearchBar({ value, onChange, onSubmit, onTab, loading, tagFilter, selectedSpkn = [], availableSpkn = [], onSpknToggle }: Props) {
+export function SearchBar({ value, onChange, onSubmit, onTab, loading, tagFilter, selectedWiki = [], availableWiki = [], onWikiToggle }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [showDropdown, setShowDropdown] = useState(false);
   const [atQuery, setAtQuery] = useState("");
@@ -27,7 +27,7 @@ export function SearchBar({ value, onChange, onSubmit, onTab, loading, tagFilter
   function handleChange(raw: string) {
     // Detect @ at end of input
     const atMatch = raw.match(/@(\S*)$/);
-    if (atMatch && availableSpkn.length > 0) {
+    if (atMatch && availableWiki.length > 0) {
       setAtQuery(atMatch[1].toLowerCase());
       setShowDropdown(true);
     } else {
@@ -37,8 +37,8 @@ export function SearchBar({ value, onChange, onSubmit, onTab, loading, tagFilter
     onChange(raw);
   }
 
-  function handleSelectSpkn(topic: string) {
-    onSpknToggle?.(topic);
+  function handleSelectWiki(topic: string) {
+    onWikiToggle?.(topic);
     // Remove the @partial from the input
     const cleaned = value.replace(/@\S*$/, "").trim();
     onChange(cleaned);
@@ -46,12 +46,12 @@ export function SearchBar({ value, onChange, onSubmit, onTab, loading, tagFilter
     inputRef.current?.focus();
   }
 
-  function handleRemoveSpkn(topic: string) {
-    onSpknToggle?.(topic);
+  function handleRemoveWiki(topic: string) {
+    onWikiToggle?.(topic);
   }
 
-  const filteredSpkn = availableSpkn.filter(
-    (s) => !selectedSpkn.includes(s) && s.toLowerCase().includes(atQuery)
+  const filteredWiki = availableWiki.filter(
+    (s) => !selectedWiki.includes(s) && s.toLowerCase().includes(atQuery)
   );
 
   return (
@@ -65,11 +65,11 @@ export function SearchBar({ value, onChange, onSubmit, onTab, loading, tagFilter
         {tagFilter && (
           <span className="proto-search-tag-chip">{tagFilter}</span>
         )}
-        {/* Selected spkn chips */}
-        {selectedSpkn.map((s) => (
-          <span key={s} className="proto-spkn-chip">
+        {/* Selected wiki chips */}
+        {selectedWiki.map((s) => (
+          <span key={s} className="proto-wiki-chip">
             @{s}
-            <button type="button" onClick={() => handleRemoveSpkn(s)} className="proto-spkn-chip-remove">
+            <button type="button" onClick={() => handleRemoveWiki(s)} className="proto-wiki-chip-remove">
               <X size={10} />
             </button>
           </span>
@@ -85,7 +85,7 @@ export function SearchBar({ value, onChange, onSubmit, onTab, loading, tagFilter
             if (e.key === "Escape") setShowDropdown(false);
           }}
           onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
-          placeholder={tagFilter ? `Search in ${tagFilter}...` : selectedSpkn.length > 0 ? "Search with special knowledge..." : "Search your notes... (type @ for special knowledge)"}
+          placeholder={tagFilter ? `Search in ${tagFilter}...` : selectedWiki.length > 0 ? `Search in @${selectedWiki[0]}...` : "Search notes & knowledge... (@ to focus wiki)"}
           className="proto-search-input"
         />
         {value && !loading && (
@@ -94,11 +94,11 @@ export function SearchBar({ value, onChange, onSubmit, onTab, loading, tagFilter
       </div>
 
       {/* @ dropdown */}
-      {showDropdown && filteredSpkn.length > 0 && (
-        <div className="proto-spkn-dropdown">
-          <div className="proto-spkn-dropdown-label">Special Knowledge</div>
-          {filteredSpkn.map((s) => (
-            <button key={s} type="button" className="proto-spkn-dropdown-item" onMouseDown={(e) => { e.preventDefault(); handleSelectSpkn(s); }}>
+      {showDropdown && filteredWiki.length > 0 && (
+        <div className="proto-wiki-dropdown">
+          <div className="proto-wiki-dropdown-label">Wiki</div>
+          {filteredWiki.map((s) => (
+            <button key={s} type="button" className="proto-wiki-dropdown-item" onMouseDown={(e) => { e.preventDefault(); handleSelectWiki(s); }}>
               <span className={cn("proto-tag-dot", "proto-tag-dot-purple")} />
               @{s}
             </button>

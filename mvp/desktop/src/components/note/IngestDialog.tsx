@@ -21,6 +21,15 @@ export function IngestDialog({ rawPath, notePath, ingestBusy, ingestSteps, inges
 
   useEffect(() => { loadBuilds(); }, [ingestResult]);
 
+  // Close on Escape
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
   function loadBuilds() {
     api.fetchBuilds().then((d) => setBuilds(d.builds || [])).catch(() => {});
   }
@@ -55,11 +64,11 @@ export function IngestDialog({ rawPath, notePath, ingestBusy, ingestSteps, inges
         <div className="proto-dialog-body">
           {/* Actions */}
           <div className="proto-btn-group" style={{ marginBottom: 20 }}>
-            <button type="button" onClick={() => handleIngest(false)} disabled={ingestBusy || !rawPath} className="proto-btn proto-btn-primary disabled:opacity-30" style={{ flex: 1, justifyContent: "center" }}>
+            <button type="button" onClick={() => handleIngest(false)} disabled={ingestBusy || !rawPath} className="proto-btn proto-btn-primary" style={{ flex: 1, justifyContent: "center" }}>
               {ingestBusy ? <Loader2 size={14} className="animate-spin" /> : null}
               Ingest (incremental)
             </button>
-            <button type="button" onClick={() => handleIngest(true)} disabled={ingestBusy || !rawPath} className="proto-btn proto-btn-secondary disabled:opacity-30" style={{ flex: 1, justifyContent: "center" }}>
+            <button type="button" onClick={() => handleIngest(true)} disabled={ingestBusy || !rawPath} className="proto-btn proto-btn-secondary" style={{ flex: 1, justifyContent: "center" }}>
               Rebuild all
             </button>
           </div>
