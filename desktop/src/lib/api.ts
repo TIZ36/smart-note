@@ -406,7 +406,8 @@ export type WikiGraphNode = {
 export type WikiGraphEdge = {
   source: string;
   target: string;
-  shared_keywords: string[];
+  similarity?: number;
+  shared_keywords?: string[];
   weight: number;
 };
 

@@ -397,11 +397,11 @@ export function SearchPage({ searchState: s, tags }: Props) {
                 <RelatedQuestions questions={s.relatedQuestions} onSelect={(q) => handleSearch(q)} />
               )}
 
-              {/* Note Sources */}
+              {/* Note Sources — card grid */}
               {noteResults.length > 0 && (
                 <div className="proto-sources-section">
                   <p className="proto-sources-label">Sources ({noteResults.length})</p>
-                  <div className="proto-sources-grid">
+                  <div className="proto-sources-cards">
                     {noteResults.map((r, i) => (
                       <div key={r.id} id={`source-card-${i + 1}`}>
                         <SourceCard

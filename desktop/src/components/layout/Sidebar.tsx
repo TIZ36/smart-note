@@ -45,6 +45,7 @@ export function Sidebar({ activeChannel, onSelect, gatewayOnline, ingestBusy, em
     <div className="proto-sidebar">
       <div className="proto-sidebar-logo" style={{ WebkitAppRegion: "drag" } as React.CSSProperties}>
         <span className="proto-logo-s">S</span><span className="proto-logo-n">N</span>
+        <span className="proto-logo-particles" aria-hidden="true" />
       </div>
 
       <div className="proto-sidebar-nav">

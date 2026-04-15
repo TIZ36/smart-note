@@ -48,6 +48,574 @@
   opacity: 0.6;
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   NIHO THEME — Pixel-particle + game UI aesthetic
+   All rules scoped to :root[data-theme="niho"], zero impact on others.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Animated border property (Chromium/Electron) ── */
+@property --niho-sweep {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+/* ── Green mini cursor ── */
+:root[data-theme="niho"] {
+  /* Small green arrow cursor (classic pointer shape, compact) */
+  --niho-cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='20' fill='none'%3E%3Cpath d='M2 1L2 16L5.5 12.5L8.5 18L10.5 17L7.5 11L12 10.5Z' fill='%2334d399' stroke='%23064e3b' stroke-width='1' stroke-linejoin='round'/%3E%3C/svg%3E") 2 1, default;
+  /* Green pointer hand for clickable */
+  --niho-cursor-pointer: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='20' fill='none'%3E%3Cpath d='M6 7V3.5C6 2.7 6.7 2 7.5 2S9 2.7 9 3.5V7' stroke='%2334d399' stroke-width='1.2' fill='%2334d399' fill-opacity='0.3'/%3E%3Cpath d='M9 7V5.5C9 4.7 9.7 4 10.5 4S12 4.7 12 5.5V9' stroke='%2334d399' stroke-width='1.2' fill='%2334d399' fill-opacity='0.3'/%3E%3Cpath d='M6 8V12.5C6 14.5 7 16 9 16.5C11 16.5 12 15 12 13V9' stroke='%2334d399' stroke-width='1.2' fill='%2334d399' fill-opacity='0.15'/%3E%3C/svg%3E") 8 2, pointer;
+  /* Green I-beam for text */
+  --niho-cursor-text: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='16'%3E%3Cpath d='M2 1H8M5 1V15M2 15H8' stroke='%2334d399' stroke-width='1.2' stroke-linecap='round'/%3E%3C/svg%3E") 5 8, text;
+}
+
+:root[data-theme="niho"],
+:root[data-theme="niho"] * {
+  cursor: var(--niho-cursor);
+}
+
+:root[data-theme="niho"] button,
+:root[data-theme="niho"] a,
+:root[data-theme="niho"] [role="button"],
+:root[data-theme="niho"] .proto-nav-item,
+:root[data-theme="niho"] .proto-source-card,
+:root[data-theme="niho"] .proto-related-chip,
+:root[data-theme="niho"] .proto-wiki-dropdown-item,
+:root[data-theme="niho"] .proto-wiki-suggest-topic,
+:root[data-theme="niho"] .proto-toggle-switch {
+  cursor: var(--niho-cursor-pointer);
+}
+
+:root[data-theme="niho"] input[type="text"],
+:root[data-theme="niho"] input[type="search"],
+:root[data-theme="niho"] input:not([type]),
+:root[data-theme="niho"] textarea,
+:root[data-theme="niho"] .proto-search-input,
+:root[data-theme="niho"] .proto-form-input,
+:root[data-theme="niho"] .cm-content {
+  cursor: var(--niho-cursor-text);
+}
+
+/* ── Full-screen scanline overlay ── */
+:root[data-theme="niho"] .proto-app {
+  position: relative;
+}
+
+:root[data-theme="niho"] .proto-app::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0px,
+    transparent 3px,
+    oklch(0 0 0 / 0.03) 3px,
+    oklch(0 0 0 / 0.03) 4px
+  );
+}
+
+/* ── Logo area ── */
+.proto-logo-particles { display: none; }
+
+:root[data-theme="niho"] .proto-sidebar-logo { position: relative; }
+
+:root[data-theme="niho"] .proto-logo-s {
+  text-shadow: 0 0 8px oklch(0.75 0.2 150 / 0.4);
+}
+
+:root[data-theme="niho"] .proto-logo-particles {
+  display: block;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+:root[data-theme="niho"] .proto-logo-particles::before,
+:root[data-theme="niho"] .proto-logo-particles::after {
+  content: "";
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  background: var(--color-accent);
+  border-radius: 0;
+}
+
+:root[data-theme="niho"] .proto-logo-particles::before {
+  box-shadow:
+    38px 32px 0 0 var(--color-accent),
+    52px 14px 0 0 oklch(0.75 0.2 150 / 0.5),
+    70px 28px 0 0 oklch(0.75 0.2 150 / 0.3),
+    86px 10px 0 0 oklch(0.75 0.2 150 / 0.2),
+    20px 38px 0 0 oklch(0.75 0.2 150 / 0.15),
+    100px 22px 0 0 oklch(0.75 0.2 150 / 0.25);
+  animation: niho-drift-a 4s ease-in-out infinite;
+}
+
+:root[data-theme="niho"] .proto-logo-particles::after {
+  box-shadow:
+    44px 8px 0 0 oklch(0.75 0.2 150 / 0.4),
+    62px 36px 0 0 oklch(0.75 0.2 150 / 0.2),
+    78px 18px 0 0 oklch(0.75 0.2 150 / 0.35),
+    30px 6px 0 0 oklch(0.75 0.2 150 / 0.15),
+    110px 30px 0 0 oklch(0.75 0.2 150 / 0.2);
+  animation: niho-drift-b 5s ease-in-out infinite;
+}
+
+/* ── Sidebar ── */
+:root[data-theme="niho"] .proto-sidebar {
+  position: relative;
+}
+
+:root[data-theme="niho"] .proto-sidebar > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* Sidebar scanline (denser than fullscreen) */
+:root[data-theme="niho"] .proto-sidebar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0px,
+    transparent 3px,
+    oklch(0 0 0 / 0.06) 3px,
+    oklch(0 0 0 / 0.06) 4px
+  );
+}
+
+/* Nav item: accent left bar + sweep on active */
+:root[data-theme="niho"] .proto-nav-item {
+  position: relative;
+  transition: background 0.1s, color 0.1s, box-shadow 0.15s;
+}
+
+:root[data-theme="niho"] .proto-nav-item::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  background: var(--color-accent);
+  border-radius: 1px;
+  opacity: 0;
+  transform: translateX(-2px);
+  transition: opacity 0.12s, transform 0.12s;
+}
+
+:root[data-theme="niho"] .proto-nav-item:hover::before {
+  opacity: 0.5;
+  transform: translateX(0);
+}
+
+:root[data-theme="niho"] .proto-nav-item:hover {
+  box-shadow: 0 0 8px oklch(0.75 0.2 150 / 0.1);
+}
+
+/* Active nav: glow + particle emitter (canvas handles particles) */
+:root[data-theme="niho"] .proto-nav-item-active {
+  position: relative;
+  overflow: visible;
+  box-shadow:
+    0 0 8px oklch(0.75 0.2 150 / 0.12),
+    0 0 20px oklch(0.75 0.2 150 / 0.04);
+}
+
+:root[data-theme="niho"] .proto-nav-item-active::before {
+  opacity: 1;
+  transform: translateX(0);
+  box-shadow: 0 0 6px oklch(0.75 0.2 150 / 0.5);
+}
+
+/* Status dot pulse */
+:root[data-theme="niho"] .proto-status-dot:not(.proto-status-dot-offline) {
+  animation: niho-pulse-dot 2s ease-in-out infinite;
+  border-radius: 1px;
+}
+
+/* ══════════════════════════════════════════
+   SWEEPING BORDER RIBBON — active selections
+   Game-style animated border with light beam
+   ══════════════════════════════════════════ */
+
+/* ── Search bar: sweeping glow on focus ── */
+:root[data-theme="niho"] .proto-search-input-wrap {
+  transition: border-color 0.15s, box-shadow 0.2s;
+}
+
+:root[data-theme="niho"] .proto-search-input-wrap:focus-within {
+  --niho-sweep: 0deg;
+  border: 1px solid transparent;
+  background:
+    linear-gradient(var(--color-bg-input), var(--color-bg-input)) padding-box,
+    conic-gradient(
+      from var(--niho-sweep),
+      oklch(0.75 0.2 150 / 0.1) 0%,
+      oklch(0.75 0.2 150 / 0.7) 8%,
+      oklch(0.75 0.2 150 / 0.1) 16%,
+      transparent 30%,
+      oklch(0.75 0.2 150 / 0.05) 50%,
+      oklch(0.75 0.2 150 / 0.4) 58%,
+      oklch(0.75 0.2 150 / 0.05) 66%,
+      transparent 80%
+    ) border-box;
+  animation: niho-border-sweep 2.5s linear infinite;
+  box-shadow:
+    0 0 12px oklch(0.75 0.2 150 / 0.1),
+    0 0 30px oklch(0.75 0.2 150 / 0.03);
+}
+
+/* Tag chip appear animation */
+:root[data-theme="niho"] .proto-search-tag-chip {
+  animation: niho-chip-in 150ms ease-out;
+}
+
+/* Wiki dropdown slide */
+:root[data-theme="niho"] .proto-wiki-dropdown {
+  animation: niho-dropdown-in 150ms ease-out;
+}
+
+/* ── Pipeline status ── */
+:root[data-theme="niho"] .proto-pipeline-inline {
+  transition: color 0.3s;
+}
+
+:root[data-theme="niho"] .proto-pipeline-inline-done {
+  animation: niho-flash 300ms ease-out;
+}
+
+:root[data-theme="niho"] .proto-pipeline-step-active .proto-pipeline-step-icon {
+  text-shadow: 0 0 6px oklch(0.75 0.2 150 / 0.5);
+}
+
+/* ── Source cards: sweep border on active, diffusion glow ── */
+:root[data-theme="niho"] .proto-source-card {
+  position: relative;
+  transition: background 0.1s, box-shadow 0.2s;
+}
+
+:root[data-theme="niho"] .proto-source-card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--color-accent);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+:root[data-theme="niho"] .proto-source-card:hover::before {
+  opacity: 0.4;
+}
+
+:root[data-theme="niho"] .proto-source-card:hover {
+  box-shadow:
+    inset 2px 0 0 oklch(0.75 0.2 150 / 0.15),
+    0 0 8px oklch(0.75 0.2 150 / 0.05);
+}
+
+/* Active card: sweeping ribbon + diffusion + corner markers */
+:root[data-theme="niho"] .proto-source-card-active {
+  --niho-sweep: 0deg;
+  outline: 1px solid transparent;
+  outline-offset: -1px;
+  background:
+    linear-gradient(
+      color-mix(in oklab, var(--color-accent) 6%, var(--color-bg-primary)),
+      color-mix(in oklab, var(--color-accent) 6%, var(--color-bg-primary))
+    ) padding-box,
+    conic-gradient(
+      from var(--niho-sweep),
+      transparent 0%,
+      oklch(0.75 0.2 150 / 0.5) 8%,
+      transparent 16%,
+      transparent 50%,
+      oklch(0.75 0.2 150 / 0.25) 58%,
+      transparent 66%
+    ) border-box;
+  border: 1px solid transparent;
+  animation: niho-border-sweep 3s linear infinite,
+             niho-glow-pulse 2s ease-in-out infinite;
+  box-shadow:
+    0 0 12px oklch(0.75 0.2 150 / 0.08),
+    0 0 30px oklch(0.75 0.2 150 / 0.03),
+    inset 0 0 20px oklch(0.75 0.2 150 / 0.02);
+}
+
+:root[data-theme="niho"] .proto-source-card-active::before {
+  opacity: 1;
+  box-shadow: 0 0 8px oklch(0.75 0.2 150 / 0.4);
+}
+
+/* Active card: corner brackets (game UI frame) */
+:root[data-theme="niho"] .proto-source-card-active::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  /* Four corner L-brackets via gradient */
+  background:
+    /* top-left */
+    linear-gradient(oklch(0.75 0.2 150 / 0.4), oklch(0.75 0.2 150 / 0.4)) 0 0 / 8px 1px no-repeat,
+    linear-gradient(oklch(0.75 0.2 150 / 0.4), oklch(0.75 0.2 150 / 0.4)) 0 0 / 1px 8px no-repeat,
+    /* top-right */
+    linear-gradient(oklch(0.75 0.2 150 / 0.4), oklch(0.75 0.2 150 / 0.4)) 100% 0 / 8px 1px no-repeat,
+    linear-gradient(oklch(0.75 0.2 150 / 0.4), oklch(0.75 0.2 150 / 0.4)) 100% 0 / 1px 8px no-repeat,
+    /* bottom-left */
+    linear-gradient(oklch(0.75 0.2 150 / 0.4), oklch(0.75 0.2 150 / 0.4)) 0 100% / 8px 1px no-repeat,
+    linear-gradient(oklch(0.75 0.2 150 / 0.4), oklch(0.75 0.2 150 / 0.4)) 0 100% / 1px 8px no-repeat,
+    /* bottom-right */
+    linear-gradient(oklch(0.75 0.2 150 / 0.4), oklch(0.75 0.2 150 / 0.4)) 100% 100% / 8px 1px no-repeat,
+    linear-gradient(oklch(0.75 0.2 150 / 0.4), oklch(0.75 0.2 150 / 0.4)) 100% 100% / 1px 8px no-repeat;
+}
+
+/* Top-3 index glow */
+:root[data-theme="niho"] .proto-source-meta-starred {
+  text-shadow: 0 0 6px oklch(0.75 0.2 150 / 0.5);
+  animation: niho-glow-text 2s ease-in-out infinite;
+}
+
+/* ── Answer section: sweep border when AI is answering ── */
+:root[data-theme="niho"] .proto-answer-section {
+  position: relative;
+  transition: box-shadow 0.3s;
+}
+
+/* Assistant role badge glow ring */
+:root[data-theme="niho"] .proto-conversation-role {
+  position: relative;
+  box-shadow: 0 0 6px oklch(0.75 0.2 150 / 0.12);
+}
+
+/* Loading dots: square pixels */
+:root[data-theme="niho"] .proto-answer-body .animate-pulse {
+  border-radius: 0 !important;
+  width: 3px !important;
+  height: 3px !important;
+}
+
+/* Code blocks: accent left bar + diffusion */
+:root[data-theme="niho"] .markdown-content pre {
+  border-left: 2px solid oklch(0.75 0.2 150 / 0.3);
+  position: relative;
+  box-shadow: -4px 0 12px oklch(0.75 0.2 150 / 0.04);
+}
+
+/* Blockquote glow */
+:root[data-theme="niho"] .markdown-content blockquote {
+  box-shadow: -3px 0 8px oklch(0.75 0.2 150 / 0.08);
+}
+
+/* Citation link hover */
+:root[data-theme="niho"] .proto-citation-link:hover {
+  text-shadow: 0 0 4px oklch(0.75 0.2 150 / 0.3);
+}
+
+/* ── Buttons: glow + press ── */
+:root[data-theme="niho"] .proto-btn-primary {
+  transition: background 0.1s, color 0.1s, box-shadow 0.15s, transform 0.1s;
+}
+
+:root[data-theme="niho"] .proto-btn-primary:hover:not(:disabled) {
+  box-shadow:
+    0 0 10px oklch(0.75 0.2 150 / 0.2),
+    0 0 25px oklch(0.75 0.2 150 / 0.06);
+}
+
+:root[data-theme="niho"] .proto-btn-primary:active:not(:disabled) {
+  transform: scale(0.97);
+  box-shadow: 0 0 4px oklch(0.75 0.2 150 / 0.3);
+}
+
+:root[data-theme="niho"] .proto-btn-secondary:hover {
+  border-color: oklch(0.75 0.2 150 / 0.4);
+  box-shadow: 0 0 6px oklch(0.75 0.2 150 / 0.06);
+}
+
+/* ── Form inputs: focus sweep ── */
+:root[data-theme="niho"] .proto-form-input:focus {
+  --niho-sweep: 0deg;
+  border: 1px solid transparent;
+  background:
+    linear-gradient(var(--color-bg-input), var(--color-bg-input)) padding-box,
+    conic-gradient(
+      from var(--niho-sweep),
+      oklch(0.75 0.2 150 / 0.15) 0%,
+      oklch(0.75 0.2 150 / 0.5) 8%,
+      oklch(0.75 0.2 150 / 0.15) 16%,
+      transparent 40%,
+      transparent 80%
+    ) border-box;
+  animation: niho-border-sweep 3s linear infinite;
+  box-shadow: 0 0 8px oklch(0.75 0.2 150 / 0.08);
+}
+
+/* Toggle switch: glow when on (particles via canvas) */
+:root[data-theme="niho"] .proto-toggle-switch-on {
+  box-shadow: 0 0 10px oklch(0.75 0.2 150 / 0.25);
+  position: relative;
+  overflow: visible;
+}
+
+:root[data-theme="niho"] .proto-toggle-knob {
+  border-radius: 2px;
+}
+
+/* Checkbox / topk / theme btn: particles handled by canvas emitter */
+
+/* ── Source preview panel ── */
+:root[data-theme="niho"] .proto-preview-slide {
+  border-left-color: oklch(0.75 0.2 150 / 0.15);
+}
+
+:root[data-theme="niho"] .proto-preview-line-highlight {
+  box-shadow: inset 2px 0 0 oklch(0.75 0.2 150 / 0.3);
+  position: relative;
+}
+
+/* Preview highlight: corner markers */
+:root[data-theme="niho"] .proto-preview-line-highlight::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 4px;
+  height: 4px;
+  background: oklch(0.75 0.2 150 / 0.3);
+}
+
+/* ── Related question chips ── */
+:root[data-theme="niho"] .proto-related-chip:hover {
+  border-color: oklch(0.75 0.2 150 / 0.3);
+  box-shadow: 0 0 8px oklch(0.75 0.2 150 / 0.1);
+}
+
+/* ── AI toggle glow ── */
+:root[data-theme="niho"] .proto-ai-toggle-on {
+  box-shadow: 0 0 10px oklch(0.75 0.2 150 / 0.15);
+}
+
+/* ── Progress bar pixel + glow ── */
+:root[data-theme="niho"] .proto-progress-fill {
+  border-radius: 0;
+  box-shadow: 2px 0 8px oklch(0.75 0.2 150 / 0.4);
+  animation: niho-progress-glow 1.5s ease-in-out infinite;
+}
+
+:root[data-theme="niho"] .proto-progress-bar {
+  border-radius: 0;
+}
+
+/* ── Metrics / KG numbers glow ── */
+:root[data-theme="niho"] .proto-kg-metric-value {
+  text-shadow: 0 0 6px oklch(0.75 0.2 150 / 0.15);
+}
+
+:root[data-theme="niho"] .proto-sync-rate {
+  text-shadow: 0 0 10px oklch(0.75 0.2 150 / 0.2);
+}
+
+/* ── Timeline bars: pixel + top glow ── */
+:root[data-theme="niho"] .proto-timeline-bar {
+  border-radius: 0;
+  box-shadow: 0 -2px 6px oklch(0.75 0.2 150 / 0.2);
+}
+
+/* ── Search empty state ── */
+:root[data-theme="niho"] .proto-search-hint {
+  text-shadow: 0 0 12px oklch(0.75 0.2 150 / 0.06);
+}
+
+/* ── Pixel overrides ── */
+:root[data-theme="niho"] .proto-nav-badge {
+  border-radius: 2px;
+}
+
+:root[data-theme="niho"] .proto-sources-grid,
+:root[data-theme="niho"] .proto-pipeline,
+:root[data-theme="niho"] .proto-search-tag-chip,
+:root[data-theme="niho"] .proto-wiki-chip {
+  border-radius: 2px;
+}
+
+/* ── Pipeline widget: sweep border when running ── */
+:root[data-theme="niho"] .proto-pipeline-step-active {
+  --niho-sweep: 0deg;
+  border-left: 2px solid transparent;
+  border-image: linear-gradient(
+    to bottom,
+    transparent,
+    oklch(0.75 0.2 150 / 0.5),
+    transparent
+  ) 1;
+  animation: niho-glow-pulse 1.5s ease-in-out infinite;
+}
+
+/* ═══ Keyframes ═══ */
+
+@keyframes niho-border-sweep {
+  to { --niho-sweep: 360deg; }
+}
+
+@keyframes niho-glow-pulse {
+  0%, 100% { box-shadow: 0 0 12px oklch(0.75 0.2 150 / 0.08), 0 0 30px oklch(0.75 0.2 150 / 0.03); }
+  50% { box-shadow: 0 0 18px oklch(0.75 0.2 150 / 0.14), 0 0 40px oklch(0.75 0.2 150 / 0.05); }
+}
+
+@keyframes niho-glow-text {
+  0%, 100% { text-shadow: 0 0 6px oklch(0.75 0.2 150 / 0.5); }
+  50% { text-shadow: 0 0 10px oklch(0.75 0.2 150 / 0.7), 0 0 20px oklch(0.75 0.2 150 / 0.2); }
+}
+
+@keyframes niho-progress-glow {
+  0%, 100% { box-shadow: 2px 0 8px oklch(0.75 0.2 150 / 0.4); }
+  50% { box-shadow: 2px 0 14px oklch(0.75 0.2 150 / 0.6); }
+}
+
+@keyframes niho-drift-a {
+  0%, 100% { opacity: 0.6; transform: translateY(0); }
+  50% { opacity: 0.2; transform: translateY(-4px); }
+}
+
+@keyframes niho-drift-b {
+  0%, 100% { opacity: 0.3; transform: translateY(0); }
+  50% { opacity: 0.6; transform: translateY(-3px); }
+}
+
+@keyframes niho-pulse-dot {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.4); opacity: 0.6; }
+}
+
+@keyframes niho-chip-in {
+  from { transform: scale(0.8); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+@keyframes niho-dropdown-in {
+  from { transform: translateY(4px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes niho-flash {
+  0% { opacity: 1; }
+  30% { opacity: 0.3; }
+  100% { opacity: 1; }
+}
+
+
+/* ═══ END NIHO ═══ */
+
 .proto-sidebar-nav {
   flex: 1;
   padding: 0 12px;
@@ -789,6 +1357,7 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   gap: 6px;
 }
 
+/* ── Source list (wiki, default) ── */
 .proto-sources-grid {
   display: flex;
   flex-direction: column;
@@ -799,11 +1368,32 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   overflow: hidden;
 }
 
+/* ── Source card grid (note results) ── */
+.proto-sources-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.proto-sources-cards .proto-source-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-proto);
+  padding: 8px 10px;
+}
+
+.proto-sources-cards .proto-source-card:hover {
+  border-color: color-mix(in oklab, var(--color-accent) 25%, var(--color-border));
+}
+
+.proto-sources-cards .proto-source-card-active {
+  border-color: color-mix(in oklab, var(--color-accent) 40%, var(--color-border));
+}
+
 .proto-source-card {
   padding: 6px 12px;
   background: var(--color-bg-primary);
   cursor: pointer;
-  transition: background 0.1s;
+  transition: background 0.1s, border-color 0.1s;
   overflow: hidden;
   min-width: 0;
 }
@@ -1980,6 +2570,14 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 .proto-wiki-graph-edge {
   stroke: var(--color-border);
   stroke-opacity: 0.6;
+  transition: stroke-opacity 0.15s;
+}
+
+.proto-wiki-graph-sim-label {
+  font-size: 8px;
+  fill: var(--color-text-muted);
+  pointer-events: none;
+  opacity: 0.7;
 }
 
 .proto-wiki-graph-node circle {

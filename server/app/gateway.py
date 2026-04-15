@@ -503,21 +503,59 @@ def api_wiki_graph() -> dict:
             "is_note": True,
         }
 
-    # Build edges: shared keywords between all nodes (wiki + note)
-    edges = []
+    # Build edges: semantic similarity between topic embedding centroids
+    import numpy as np
     topic_list = list(topics.values())
+
+    # Compute average embedding vector per topic (centroid)
+    centroids: dict[str, np.ndarray] = {}
+    with connect() as conn_emb:
+        for t in topic_list:
+            tid = t["id"]
+            if tid == "__note__":
+                # For notes, sample up to 200 chunks to keep it fast
+                rows = conn_emb.execute(
+                    "SELECT embedding_json FROM chunks WHERE dimension NOT LIKE 'wiki:%' AND embedding_json IS NOT NULL LIMIT 200"
+                ).fetchall()
+            else:
+                rows = conn_emb.execute(
+                    "SELECT embedding_json FROM chunks WHERE dimension = ? AND embedding_json IS NOT NULL",
+                    (f"wiki:{tid}",),
+                ).fetchall()
+            vecs = []
+            for r in rows:
+                try:
+                    v = json.loads(r["embedding_json"])
+                    if v:
+                        vecs.append(v)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            if vecs:
+                centroids[tid] = np.mean(vecs, axis=0)
+
+    # Cosine similarity between centroids
+    def _cosine(a: np.ndarray, b: np.ndarray) -> float:
+        d = float(np.dot(a, b))
+        n = float(np.linalg.norm(a) * np.linalg.norm(b))
+        return d / n if n > 1e-9 else 0.0
+
+    edges = []
+    SIM_THRESHOLD = 0.55
     for i in range(len(topic_list)):
-        kws_i = set(topic_list[i]["keywords"])
+        id_i = topic_list[i]["id"]
+        if id_i not in centroids:
+            continue
         for j in range(i + 1, len(topic_list)):
-            kws_j = set(topic_list[j]["keywords"])
-            shared = kws_i & kws_j
-            shared = {w for w in shared if len(w) > 2}
-            if len(shared) >= 2:
+            id_j = topic_list[j]["id"]
+            if id_j not in centroids:
+                continue
+            sim = _cosine(centroids[id_i], centroids[id_j])
+            if sim >= SIM_THRESHOLD:
                 edges.append({
-                    "source": topic_list[i]["id"],
-                    "target": topic_list[j]["id"],
-                    "shared_keywords": sorted(shared)[:10],
-                    "weight": len(shared),
+                    "source": id_i,
+                    "target": id_j,
+                    "similarity": round(sim, 3),
+                    "weight": round(sim * 10, 1),
                 })
 
     # Clean up keywords from response

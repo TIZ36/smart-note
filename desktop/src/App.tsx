@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { AnimatePresence } from "framer-motion";
 import { Sidebar } from "./components/layout/Sidebar";
+import { NihoParticles } from "./components/layout/NihoParticles";
 import { SearchPage } from "./components/search/SearchPage";
 import { SettingsPanel } from "./components/settings/SettingsPanel";
 import { Toast } from "./components/layout/Toast";
@@ -11,6 +12,7 @@ import { usePrefs } from "./hooks/usePrefs";
 import { useHealth } from "./hooks/useHealth";
 import { useSearchState } from "./hooks/useSearchState";
 import { useTags } from "./hooks/useTags";
+import { useTheme } from "./hooks/useTheme";
 import { onIngestStatus, onWikiIngestStatus, getIngestStatus } from "./lib/electron";
 import type { IngestEvent } from "./lib/electron";
 import type { ChannelId } from "./lib/types";
@@ -89,6 +91,7 @@ export default function App() {
   const health = useHealth();
   const { tags, refreshTags } = useTags();
   const searchState = useSearchState();
+  const { mode: themeMode } = useTheme();
   const activeChannelRef = useRef(activeChannel);
   activeChannelRef.current = activeChannel;
 
@@ -215,6 +218,7 @@ export default function App() {
 
   return (
     <div className="proto-app h-screen">
+      {themeMode === "niho" && <NihoParticles />}
       <Sidebar
         activeChannel={activeChannel}
         onSelect={setActiveChannel}

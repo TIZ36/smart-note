@@ -1,18 +1,96 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#1e293b"/>
-      <stop offset="100%" stop-color="#0f172a"/>
-    </linearGradient>
-    <linearGradient id="accent" x1="100" y1="120" x2="420" y2="400" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#60a5fa"/>
-      <stop offset="100%" stop-color="#3b82f6"/>
+      <stop offset="0%" stop-color="#0d1a17"/>
+      <stop offset="100%" stop-color="#081210"/>
     </linearGradient>
   </defs>
-  <!-- Rounded square background -->
+  <!-- Background -->
   <rect width="512" height="512" rx="108" fill="url(#bg)"/>
-  <!-- S letter -->
-  <text x="108" y="370" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', sans-serif" font-size="320" font-weight="700" letter-spacing="-12" fill="url(#accent)">S</text>
-  <!-- N letter — slightly smaller, offset right -->
-  <text x="268" y="370" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', sans-serif" font-size="280" font-weight="600" letter-spacing="-8" fill="#94a3b8" opacity="0.7">N</text>
+
+  <!-- Pixel grid: S letter (ox=100, oy=160, cell=24) -->
+  <g fill="#5eead4">
+    <!-- Row 0: _XXXX_ -->
+    <rect x="124" y="160" width="22" height="22" rx="2"/>
+    <rect x="148" y="160" width="22" height="22" rx="2"/>
+    <rect x="172" y="160" width="22" height="22" rx="2"/>
+    <rect x="196" y="160" width="22" height="22" rx="2"/>
+    <!-- Row 1: X____X -->
+    <rect x="100" y="184" width="22" height="22" rx="2"/>
+    <rect x="220" y="184" width="22" height="22" rx="2"/>
+    <!-- Row 2: X_____ -->
+    <rect x="100" y="208" width="22" height="22" rx="2"/>
+    <!-- Row 3: _XXXX_ -->
+    <rect x="124" y="232" width="22" height="22" rx="2"/>
+    <rect x="148" y="232" width="22" height="22" rx="2"/>
+    <rect x="172" y="232" width="22" height="22" rx="2"/>
+    <rect x="196" y="232" width="22" height="22" rx="2"/>
+    <!-- Row 4: _____X -->
+    <rect x="220" y="256" width="22" height="22" rx="2"/>
+    <!-- Row 5: _____X -->
+    <rect x="220" y="280" width="22" height="22" rx="2"/>
+    <!-- Row 6: X____X -->
+    <rect x="100" y="304" width="22" height="22" rx="2"/>
+    <rect x="220" y="304" width="22" height="22" rx="2"/>
+    <!-- Row 7: _XXXX_ -->
+    <rect x="124" y="328" width="22" height="22" rx="2"/>
+    <rect x="148" y="328" width="22" height="22" rx="2"/>
+    <rect x="172" y="328" width="22" height="22" rx="2"/>
+    <rect x="196" y="328" width="22" height="22" rx="2"/>
+  </g>
+
+  <!-- Pixel grid: N letter (ox=268, oy=160, cell=24) -->
+  <g fill="#5eead4" opacity="0.55">
+    <!-- Row 0: X____X -->
+    <rect x="268" y="160" width="22" height="22" rx="2"/>
+    <rect x="388" y="160" width="22" height="22" rx="2"/>
+    <!-- Row 1: XX___X -->
+    <rect x="268" y="184" width="22" height="22" rx="2"/>
+    <rect x="292" y="184" width="22" height="22" rx="2"/>
+    <rect x="388" y="184" width="22" height="22" rx="2"/>
+    <!-- Row 2: XXX__X -->
+    <rect x="268" y="208" width="22" height="22" rx="2"/>
+    <rect x="292" y="208" width="22" height="22" rx="2"/>
+    <rect x="316" y="208" width="22" height="22" rx="2"/>
+    <rect x="388" y="208" width="22" height="22" rx="2"/>
+    <!-- Row 3: X_XX_X -->
+    <rect x="268" y="232" width="22" height="22" rx="2"/>
+    <rect x="316" y="232" width="22" height="22" rx="2"/>
+    <rect x="340" y="232" width="22" height="22" rx="2"/>
+    <rect x="388" y="232" width="22" height="22" rx="2"/>
+    <!-- Row 4: X__XXX -->
+    <rect x="268" y="256" width="22" height="22" rx="2"/>
+    <rect x="340" y="256" width="22" height="22" rx="2"/>
+    <rect x="364" y="256" width="22" height="22" rx="2"/>
+    <rect x="388" y="256" width="22" height="22" rx="2"/>
+    <!-- Row 5: X___XX -->
+    <rect x="268" y="280" width="22" height="22" rx="2"/>
+    <rect x="364" y="280" width="22" height="22" rx="2"/>
+    <rect x="388" y="280" width="22" height="22" rx="2"/>
+    <!-- Row 6: X____X -->
+    <rect x="268" y="304" width="22" height="22" rx="2"/>
+    <rect x="388" y="304" width="22" height="22" rx="2"/>
+    <!-- Row 7: X____X -->
+    <rect x="268" y="328" width="22" height="22" rx="2"/>
+    <rect x="388" y="328" width="22" height="22" rx="2"/>
+  </g>
+
+  <!-- Scattered particles — floating pixel debris -->
+  <g fill="#5eead4">
+    <rect x="72"  y="140" width="8" height="8" rx="1" opacity="0.3"/>
+    <rect x="430" y="152" width="10" height="10" rx="1" opacity="0.2"/>
+    <rect x="56"  y="260" width="6" height="6" rx="1" opacity="0.15"/>
+    <rect x="440" y="290" width="8" height="8" rx="1" opacity="0.25"/>
+    <rect x="88"  y="370" width="10" height="10" rx="1" opacity="0.18"/>
+    <rect x="420" y="120" width="6" height="6" rx="1" opacity="0.12"/>
+    <rect x="320" y="380" width="8" height="8" rx="1" opacity="0.2"/>
+    <rect x="140" y="120" width="6" height="6" rx="1" opacity="0.15"/>
+    <rect x="380" y="370" width="6" height="6" rx="1" opacity="0.1"/>
+    <rect x="250" y="130" width="8" height="8" rx="1" opacity="0.22"/>
+    <rect x="200" y="378" width="6" height="6" rx="1" opacity="0.13"/>
+    <rect x="60"  y="190" width="5" height="5" rx="1" opacity="0.1"/>
+    <rect x="450" y="230" width="7" height="7" rx="1" opacity="0.16"/>
+    <rect x="310" y="130" width="5" height="5" rx="1" opacity="0.12"/>
+    <rect x="108" y="390" width="7" height="7" rx="1" opacity="0.14"/>
+  </g>
 </svg>
