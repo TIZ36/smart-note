@@ -37,9 +37,21 @@ def cmd_rebuild_memory(_: argparse.Namespace) -> None:
 
 
 def cmd_special_ingest(args: argparse.Namespace) -> None:
-    from app.special_ingest import ingest_folder
     try:
-        result = ingest_folder(args.folder, topic_name=args.topic)
+        path = args.folder or args.file
+        if not path:
+            print(json.dumps({"inserted": 0, "files": 0, "message": "Provide --folder or --file"}, ensure_ascii=False))
+            import sys; sys.exit(1)
+
+        # Single PDF file
+        if args.file and args.file.lower().endswith(".pdf"):
+            from app.special_ingest import ingest_pdf
+            result = ingest_pdf(args.file, topic_name=args.topic)
+        # Folder
+        else:
+            from app.special_ingest import ingest_folder
+            result = ingest_folder(path, topic_name=args.topic)
+
         print(json.dumps(result, ensure_ascii=False, indent=2))
     except Exception as e:
         print(json.dumps({"inserted": 0, "files": 0, "message": f"Special ingest failed: {e}"}, ensure_ascii=False))
@@ -77,8 +89,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_rebuild_memory)
 
     s = sub.add_parser("special-ingest")
-    s.add_argument("--folder", required=True, help="Path to folder to ingest")
-    s.add_argument("--topic", default=None, help="Custom topic name (defaults to folder name)")
+    s.add_argument("--folder", default=None, help="Path to folder to ingest")
+    s.add_argument("--file", default=None, help="Path to single file (e.g. PDF) to ingest")
+    s.add_argument("--topic", default=None, help="Custom topic name (defaults to folder/file name)")
     s.set_defaults(func=cmd_special_ingest)
 
     s = sub.add_parser("serve")

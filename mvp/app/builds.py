@@ -92,15 +92,17 @@ def get_active_build_id() -> str | None:
     return row["id"] if row else None
 
 
-def list_builds() -> list[dict]:
+def list_builds(include_wiki: bool = False) -> list[dict]:
     with connect() as conn:
-        rows = conn.execute(
-            """
+        query = """
             SELECT id, source_file, chunk_count, segment_count, is_active,
                    token_usage_json, estimated_cost_cny, tags_json, created_at
-            FROM builds ORDER BY created_at DESC
-            """
-        ).fetchall()
+            FROM builds
+        """
+        if not include_wiki:
+            query += " WHERE source_file NOT LIKE 'wiki:%'"
+        query += " ORDER BY created_at DESC"
+        rows = conn.execute(query).fetchall()
     return [
         {
             "id": r["id"],
@@ -119,22 +121,27 @@ def list_builds() -> list[dict]:
 
 def delete_build(build_id: str) -> None:
     with connect() as conn:
-        was_active = conn.execute(
-            "SELECT is_active FROM builds WHERE id = ?", (build_id,)
+        row = conn.execute(
+            "SELECT is_active, source_file FROM builds WHERE id = ?", (build_id,)
         ).fetchone()
+        if not row:
+            return
+        # Prevent accidental deletion of wiki builds via general endpoint
+        if row["source_file"] and row["source_file"].startswith("wiki:"):
+            return
         conn.execute("DELETE FROM chunks WHERE build_id = ?", (build_id,))
         conn.execute("DELETE FROM tag_segments WHERE build_id = ?", (build_id,))
         conn.execute("DELETE FROM builds WHERE id = ?", (build_id,))
-        if was_active and was_active["is_active"]:
+        if row["is_active"]:
             latest = conn.execute(
-                "SELECT id FROM builds ORDER BY created_at DESC LIMIT 1"
+                "SELECT id FROM builds WHERE source_file NOT LIKE 'wiki:%' ORDER BY created_at DESC LIMIT 1"
             ).fetchone()
             if latest:
                 conn.execute("UPDATE builds SET is_active = 1 WHERE id = ?", (latest["id"],))
         conn.commit()
 
     # If deleted was active, restore the new active build's tag config
-    if was_active and was_active["is_active"]:
+    if row and row["is_active"]:
         new_active = get_active_build_id()
         if new_active:
             activate_build(new_active)

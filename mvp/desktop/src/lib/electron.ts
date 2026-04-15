@@ -76,6 +76,18 @@ export function onIngestStatus(
   );
 }
 
+export function onWikiIngestStatus(
+  handler: (event: IngestEvent) => void
+): Promise<() => void> {
+  return Promise.resolve(
+    getDesktop().onWikiIngestStatus((data) => handler(data as IngestEvent))
+  );
+}
+
+export async function getIngestStatus(): Promise<{ noteIngestRunning: boolean; wikiIngestRunning: boolean }> {
+  return getDesktop().invoke("get_ingest_status") as Promise<{ noteIngestRunning: boolean; wikiIngestRunning: boolean }>;
+}
+
 export async function readSettings(): Promise<AppSettings> {
   return getDesktop().invoke("read_settings") as Promise<AppSettings>;
 }
@@ -95,12 +107,20 @@ export async function readFileFull(path: string): Promise<CmdResult> {
 
 // ── Special Knowledge Ingest ──
 
-export async function specialIngestAsync(folderPath: string, topicName?: string): Promise<void> {
-  await getDesktop().invoke("special_ingest_async", { folderPath, topicName: topicName || undefined });
+export async function specialIngestAsync(opts: { folderPath?: string; filePath?: string; topicName?: string }): Promise<void> {
+  await getDesktop().invoke("special_ingest_async", {
+    folderPath: opts.folderPath,
+    filePath: opts.filePath,
+    topicName: opts.topicName || undefined,
+  });
 }
 
 export async function pickFolder(): Promise<string | null> {
   return getDesktop().invoke("dialog_open_folder") as Promise<string | null>;
+}
+
+export async function pickPdf(): Promise<string | null> {
+  return getDesktop().invoke("dialog_open_pdf") as Promise<string | null>;
 }
 
 // ── Global Hotkey ──
@@ -115,6 +135,10 @@ export async function setHotkey(hotkey: string): Promise<{ ok: boolean; hotkey: 
 
 export async function saveRawPathForHotkey(rawPath: string): Promise<void> {
   await getDesktop().invoke("save_raw_path_for_hotkey", { rawPath });
+}
+
+export async function writeFile(path: string, content: string): Promise<void> {
+  await getDesktop().invoke("write_file", { path, content });
 }
 
 export function onHotkeyPasted(

@@ -20,11 +20,11 @@ export async function search(
   query: string,
   topk = 20,
   tagFilter?: string | null,
-  includeSpkn?: string[]
+  includeWiki?: string[]
 ): Promise<SearchResponse> {
   const body: Record<string, unknown> = { query, topk };
   if (tagFilter) body.tag_filter = tagFilter;
-  if (includeSpkn && includeSpkn.length > 0) body.include_spkn = includeSpkn;
+  if (includeWiki && includeWiki.length > 0) body.include_wiki = includeWiki;
   const res = await fetch(`${BASE}/search`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -236,6 +236,13 @@ export async function reorderTags(order: string[]): Promise<{ tags: TagInfo[] }>
   return res.json();
 }
 
+export type NoteSegment = TagSegment & { tag: string };
+
+export async function fetchAllTagSegments(): Promise<{ segments: NoteSegment[] }> {
+  const res = await fetch(`${BASE}/tags/all-segments`);
+  return res.json();
+}
+
 export async function fetchTagSegments(tag: string): Promise<{ tag: string; segments: TagSegment[] }> {
   const res = await fetch(`${BASE}/tags/${encodeURIComponent(tag)}`);
   return res.json();
@@ -247,10 +254,38 @@ export async function fetchTagSource(tag: string, segmentId: number): Promise<{ 
 }
 
 // Special Knowledge
-export type SpecialKnowledgeTopic = { id: number; topic: string; summary: string; folder: string; created_at: string };
+export type WikiCategory = "research" | "codebase" | "docs" | "reference";
+export type SpecialKnowledgeTopic = { id: number; topic: string; summary: string; folder: string; category: WikiCategory; created_at: string };
 
 export async function fetchSpecialKnowledge(): Promise<{ topics: SpecialKnowledgeTopic[] }> {
   const res = await fetch(`${BASE}/special-knowledge`);
+  return res.json();
+}
+
+export async function deleteSpecialKnowledge(topic: string): Promise<{ deleted: string }> {
+  const res = await fetch(`${BASE}/special-knowledge/${encodeURIComponent(topic)}`, { method: "DELETE" });
+  return res.json();
+}
+
+export type WikiSource = { path: string; name: string; topic: string; category: WikiCategory };
+
+export async function fetchWikiSources(): Promise<{ sources: WikiSource[] }> {
+  const res = await fetch(`${BASE}/wiki-sources`);
+  return res.json();
+}
+
+// OCR
+export async function fetchOcrLangs(): Promise<{ installed: string[]; has_tesseract: boolean; active: string }> {
+  const res = await fetch(`${BASE}/ocr-langs`);
+  return res.json();
+}
+
+export async function saveOcrConfig(ocrLangs: string): Promise<{ ok: boolean; ocr_langs: string }> {
+  const res = await fetch(`${BASE}/ocr-langs/config`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ocr_langs: ocrLangs }),
+  });
   return res.json();
 }
 

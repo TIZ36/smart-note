@@ -15,7 +15,7 @@ from app.db import connect, migrate_db
 from app.embed import embed_texts
 from app.knowledge_graph import get_graph
 from app.memory import add_feedback, save_qa_memory
-from app.rerank import rerank, rerank_with_llm
+from app.rerank import rerank
 from app.builds import get_active_build_id, list_builds, activate_build, delete_build
 from app.tags import get_all_tags, get_tags_with_desc, add_tag, delete_tag, reorder_tags, set_tag_color, TAG_COLORS
 from app.retrieval import search
@@ -51,7 +51,7 @@ class SearchRequest(BaseModel):
     query: str
     topk: int = 20
     tag_filter: str | None = None
-    include_spkn: list[str] = []  # Special knowledge topics to include (@mentions)
+    include_wiki: list[str] = []  # Special knowledge topics to include (@mentions)
 
 
 class RerankRequest(BaseModel):
@@ -89,7 +89,7 @@ def health() -> dict:
 @app.post("/search")
 def api_search(req: SearchRequest) -> dict:
     """Stage 1: Wide recall with 5 retrieval paths + adaptive weights."""
-    result = search(req.query, req.topk, tag_filter=req.tag_filter, include_spkn=req.include_spkn or None)
+    result = search(req.query, req.topk, tag_filter=req.tag_filter, include_wiki=req.include_wiki or None)
 
     # Dual-search validation for active rewrite candidates (async, non-blocking)
     try:
@@ -124,45 +124,8 @@ def api_search(req: SearchRequest) -> dict:
 @app.post("/rerank")
 def api_rerank(req: RerankRequest) -> dict:
     """Stage 2: Rerank recall results using embedding similarity or LLM."""
-    start = time.time()
-
-    with connect() as conn:
-        placeholders = ",".join("?" for _ in req.result_ids)
-        rows = conn.execute(
-            f"""
-            SELECT id, text, source_ref, dimension, embedding_json, keywords_json, ai_summary
-            FROM chunks
-            WHERE id IN ({placeholders})
-            """,
-            req.result_ids,
-        ).fetchall()
-
-    results = [
-        {
-            "id": r["id"],
-            "text": r["text"],
-            "source_ref": r["source_ref"],
-            "dimension": r["dimension"],
-            "embedding_json": r["embedding_json"],
-        }
-        for r in rows
-    ]
-
-    if req.use_llm:
-        reranked = rerank_with_llm(req.query, results, req.topk)
-    else:
-        reranked = rerank(req.query, results, req.topk)
-
-    # Clean embedding from response
-    for item in reranked:
-        item.pop("embedding_json", None)
-        item.pop("_embedding", None)
-
-    latency = int((time.time() - start) * 1000)
-    return {
-        "results": reranked,
-        "latency_ms": latency,
-    }
+    result = rerank(req.query, req.result_ids, use_llm=req.use_llm, topk=req.topk)
+    return result
 
 
 # ── Stage 3: AI Answer ──
@@ -253,6 +216,7 @@ def api_chat(req: ChatRequest) -> dict:
         raise HTTPException(status_code=502, detail=str(exc))
 
     latency = int((time.time() - start) * 1000)
+    evidence_ids = [e.get("id") for e in evidence_to_send if e.get("id")]
     with connect() as conn:
         qid_row = conn.execute(
             "SELECT id FROM query_logs ORDER BY id DESC LIMIT 1"
@@ -263,14 +227,12 @@ def api_chat(req: ChatRequest) -> dict:
             (
                 qid,
                 answer,
-                json.dumps([e.get("source_ref") for e in evidence_to_send]),
+                json.dumps(evidence_ids),  # Store chunk IDs, not source_refs
                 settings.provider_chat_model,
                 latency,
             ),
         )
-        answer_id = conn.execute(
-            "SELECT id FROM answer_logs ORDER BY id DESC LIMIT 1"
-        ).fetchone()["id"]
+        answer_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         conn.commit()
 
     return {
@@ -312,10 +274,8 @@ def api_feedback(req: FeedbackRequest) -> dict:
 
                 evidence_ids = []
                 try:
-                    evidence_ids = json.loads(answer_row["evidence_refs"] or "[]")
-                    # evidence_refs are source_refs, not IDs — try to resolve
-                    if evidence_ids and isinstance(evidence_ids[0], str):
-                        evidence_ids = []  # Can't resolve refs to IDs easily
+                    raw_ids = json.loads(answer_row["evidence_refs"] or "[]")
+                    evidence_ids = [eid for eid in raw_ids if isinstance(eid, int)]
                 except (json.JSONDecodeError, TypeError):
                     pass
 
@@ -562,29 +522,119 @@ def api_special_knowledge() -> dict:
     """List all specialknowledge topics."""
     with connect() as conn:
         rows = conn.execute(
-            "SELECT id, topic_name, summary, source_file, created_at FROM tag_segments WHERE tag LIKE 'spkn:%' ORDER BY created_at DESC"
+            "SELECT id, topic_name, summary, source_file, entities_json, created_at FROM tag_segments WHERE tag LIKE 'wiki:%' ORDER BY created_at DESC"
         ).fetchall()
-        # Count chunks per topic source
-        chunk_counts = {}
-        for row in conn.execute(
-            "SELECT source_file, COUNT(1) c FROM chunks WHERE dimension LIKE 'spkn:%' GROUP BY source_file"
-        ).fetchall():
-            # Map to folder
-            chunk_counts[row["source_file"]] = chunk_counts.get(row["source_file"], 0) + row["c"]
     topics = []
     seen = set()
     for r in rows:
         if r["topic_name"] in seen:
             continue
         seen.add(r["topic_name"])
+        # Extract category from entities_json metadata
+        category = "reference"
+        try:
+            meta = json.loads(r["entities_json"]) if r["entities_json"] else {}
+            if isinstance(meta, dict):
+                category = meta.get("category", "reference")
+        except (json.JSONDecodeError, TypeError):
+            pass
         topics.append({
             "id": r["id"],
             "topic": r["topic_name"],
             "summary": r["summary"],
             "folder": r["source_file"],
+            "category": category,
             "created_at": r["created_at"],
         })
     return {"topics": topics}
+
+
+@app.delete("/special-knowledge/{topic_name}")
+def api_special_knowledge_delete(topic_name: str) -> dict:
+    """Delete a wiki topic and all its chunks."""
+    dimension = f"wiki:{topic_name}"
+    with connect() as conn:
+        # Find and delete the dedicated wiki build
+        build_rows = conn.execute(
+            "SELECT DISTINCT build_id FROM chunks WHERE dimension = ?", (dimension,)
+        ).fetchall()
+        chunk_del = conn.execute("DELETE FROM chunks WHERE dimension = ?", (dimension,)).rowcount
+        seg_del = conn.execute("DELETE FROM tag_segments WHERE tag = ?", (dimension,)).rowcount
+        # Clean up empty wiki builds (no remaining chunks)
+        for br in build_rows:
+            bid = br["build_id"]
+            remaining = conn.execute("SELECT COUNT(1) c FROM chunks WHERE build_id = ?", (bid,)).fetchone()["c"]
+            if remaining == 0:
+                conn.execute("DELETE FROM builds WHERE id = ?", (bid,))
+        conn.commit()
+    return {"deleted": topic_name, "chunks_removed": chunk_del, "segments_removed": seg_del}
+
+
+@app.get("/wiki-sources")
+def api_wiki_sources() -> dict:
+    """List all distinct source .md files from wiki chunks for the Sources panel."""
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT c.source_file, c.dimension,
+                   ts.topic_name, ts.entities_json
+            FROM chunks c
+            LEFT JOIN tag_segments ts ON ts.tag = c.dimension
+            WHERE c.dimension LIKE 'wiki:%'
+              AND c.source_file LIKE '%.md'
+            ORDER BY c.source_file
+            """
+        ).fetchall()
+    sources = []
+    seen = set()
+    for r in rows:
+        sf = r["source_file"]
+        if sf in seen:
+            continue
+        seen.add(sf)
+        category = "reference"
+        try:
+            meta = json.loads(r["entities_json"]) if r["entities_json"] else {}
+            if isinstance(meta, dict):
+                category = meta.get("category", "reference")
+        except (json.JSONDecodeError, TypeError):
+            pass
+        sources.append({
+            "path": sf,
+            "name": Path(sf).stem,
+            "topic": r["topic_name"] or "",
+            "category": category,
+        })
+    return {"sources": sources}
+
+
+@app.get("/ocr-langs")
+def api_ocr_langs() -> dict:
+    """List installed OCR language packs and active config."""
+    from app.pdf_convert import get_installed_ocr_langs
+    import shutil
+    has_tesseract = shutil.which("tesseract") is not None
+    langs = get_installed_ocr_langs()
+    active = settings.ocr_langs or ""
+    return {"installed": langs, "has_tesseract": has_tesseract, "active": active}
+
+
+class OcrConfigRequest(BaseModel):
+    ocr_langs: str  # e.g. "chi_sim+eng"
+
+
+@app.post("/ocr-langs/config")
+def api_ocr_config(req: OcrConfigRequest) -> dict:
+    """Save active OCR language config to .env."""
+    import dotenv
+    env_path = Path(".env")
+    if env_path.exists():
+        dotenv.set_key(str(env_path), "OCR_LANGS", req.ocr_langs)
+    else:
+        env_path.write_text(f"OCR_LANGS={req.ocr_langs}\n")
+    # Update runtime
+    settings.ocr_langs = req.ocr_langs
+    return {"ok": True, "ocr_langs": req.ocr_langs}
 
 
 class TagAddRequest(BaseModel):
@@ -712,6 +762,38 @@ def api_tag_stats() -> dict:
             for r in growth
         ],
     }
+
+
+@app.get("/tags/all-segments")
+def api_all_tag_segments() -> dict:
+    """Get all tag segments across all tags, sorted by line position.
+    Used by the note editor to show inline tag annotations."""
+    active = get_active_build_id()
+    with connect() as conn:
+        if active:
+            rows = conn.execute(
+                "SELECT id, source_file, tag, topic_name, line_start, line_end, summary, keywords_json, is_credential FROM tag_segments WHERE tag NOT LIKE 'wiki:%' AND build_id = ? ORDER BY line_start, line_end",
+                (active,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, source_file, tag, topic_name, line_start, line_end, summary, keywords_json, is_credential FROM tag_segments WHERE tag NOT LIKE 'wiki:%' ORDER BY line_start, line_end"
+            ).fetchall()
+    segments = [
+        {
+            "id": r["id"],
+            "source_file": r["source_file"],
+            "tag": r["tag"],
+            "topic_name": r["topic_name"] if "topic_name" in r.keys() else "",
+            "line_start": r["line_start"],
+            "line_end": r["line_end"],
+            "summary": r["summary"],
+            "keywords": json.loads(r["keywords_json"]) if r["keywords_json"] else [],
+            "is_credential": bool(r["is_credential"]),
+        }
+        for r in rows
+    ]
+    return {"segments": segments}
 
 
 @app.get("/tags/{tag_name}")

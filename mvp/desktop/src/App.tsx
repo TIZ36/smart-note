@@ -4,17 +4,17 @@ import { Sidebar } from "./components/layout/Sidebar";
 import { SearchPage } from "./components/search/SearchPage";
 import { SettingsPanel } from "./components/settings/SettingsPanel";
 import { Toast } from "./components/layout/Toast";
-import { SyncRatePanel } from "./components/sync/SyncRatePanel";
 import { NotePage } from "./components/note/NotePage";
 import { SpecialKnowledgePanel } from "./components/special/SpecialKnowledgePanel";
+import { WikiSourceViewer } from "./components/wiki/WikiSourceViewer";
 import { usePrefs } from "./hooks/usePrefs";
 import { useHealth } from "./hooks/useHealth";
 import { useSearchState } from "./hooks/useSearchState";
 import { useTags } from "./hooks/useTags";
-// TagView removed — tags now expand inline in the NoteSegments panel
-import { onIngestStatus, onWikiIngestStatus } from "./lib/electron";
+import { onIngestStatus, onWikiIngestStatus, getIngestStatus } from "./lib/electron";
 import type { IngestEvent } from "./lib/electron";
 import type { ChannelId } from "./lib/types";
+import type { WikiSource } from "./lib/api";
 
 export type IngestStep = {
   key: string;
@@ -40,9 +40,10 @@ const WIKI_STEP_LABELS: Record<string, string> = {
   parse: "Scanning files",
   embed: "Generating embeddings",
   segment: "Text segmentation",
+  ai_enrich: "AI enrichment",
   store: "Storing chunks",
 };
-const WIKI_STEP_ORDER = ["parse", "embed", "segment", "store"];
+const WIKI_STEP_ORDER = ["parse", "embed", "segment", "ai_enrich", "store"];
 
 function initialSteps(): IngestStep[] {
   return STEP_ORDER.map((key) => ({
@@ -80,6 +81,7 @@ export default function App() {
   const [wikiIngestSteps, setWikiIngestSteps] = useState<IngestStep[]>([]);
   const [wikiIngestResult, setWikiIngestResult] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [wikiTopicCount, setWikiTopicCount] = useState(0);
+  const [wikiSources, setWikiSources] = useState<WikiSource[]>([]);
 
   const prefs = usePrefs();
   const health = useHealth();
@@ -150,9 +152,37 @@ export default function App() {
     return () => { unlisten.then((fn) => fn()); };
   }, []);
 
+  // Recover ingest state after client reload
+  useEffect(() => {
+    getIngestStatus().then(({ noteIngestRunning: note, wikiIngestRunning: wiki }) => {
+      if (note) {
+        setIngestBusy(true);
+        setIngestSteps(initialSteps().map((s) => ({ ...s, status: "active", detail: "Recovering..." })));
+      }
+      if (wiki) {
+        setWikiIngestBusy(true);
+        setWikiIngestSteps(initialWikiSteps().map((s) => ({ ...s, status: "active", detail: "Recovering..." })));
+      }
+    }).catch(() => {});
+  }, []);
+
   const handleIngestComplete = useCallback(() => {
     refreshTags();
   }, [refreshTags]);
+
+  function refreshWikiSources() {
+    import("./lib/api").then((api) =>
+      api.fetchWikiSources().then((d) => setWikiSources(d.sources)).catch(() => {})
+    );
+  }
+
+  // Load wiki sources on mount
+  useEffect(() => { refreshWikiSources(); }, []);
+
+  function handleWikiTopicsChanged(count: number) {
+    setWikiTopicCount(count);
+    refreshWikiSources();
+  }
 
   function renderMainPanel() {
     if (activeChannel === "settings") return <SettingsPanel />;
@@ -173,8 +203,11 @@ export default function App() {
         />
       );
     }
-    if (activeChannel === "sync-rate") return <SyncRatePanel />;
-    if (activeChannel === "special-knowledge") return <SpecialKnowledgePanel ingestBusy={wikiIngestBusy} ingestSteps={wikiIngestSteps} ingestResult={wikiIngestResult} onTopicsChanged={setWikiTopicCount} />;
+    if (activeChannel === "special-knowledge") return <SpecialKnowledgePanel ingestBusy={wikiIngestBusy} ingestSteps={wikiIngestSteps} ingestResult={wikiIngestResult} onTopicsChanged={handleWikiTopicsChanged} />;
+    if (activeChannel.startsWith("source:")) {
+      const filePath = activeChannel.slice("source:".length);
+      return <WikiSourceViewer filePath={filePath} />;
+    }
     return <div className="flex items-center justify-center h-full text-text-muted text-[13px]">Select a page</div>;
   }
 
@@ -187,6 +220,7 @@ export default function App() {
         ingestBusy={ingestBusy}
         embeddingMode={health.embeddingMode}
         wikiTopicCount={wikiTopicCount}
+        wikiSources={wikiSources}
       />
       <main className="flex-1 min-w-0 overflow-hidden bg-[var(--color-bg-primary)]">
         {renderMainPanel()}

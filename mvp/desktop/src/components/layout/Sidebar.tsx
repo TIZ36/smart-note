@@ -1,6 +1,7 @@
-import { Search, Activity, Settings, Loader2, FileEdit, BookOpen } from "lucide-react";
+import { Search, Settings, Loader2, FileEdit, BookOpen, FileText } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { ChannelId } from "@/lib/types";
+import type { WikiSource } from "@/lib/api";
 
 type Props = {
   activeChannel: ChannelId;
@@ -9,6 +10,7 @@ type Props = {
   ingestBusy: boolean;
   embeddingMode: string;
   wikiTopicCount?: number;
+  wikiSources?: WikiSource[];
 };
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -38,7 +40,7 @@ function NavItem({
   );
 }
 
-export function Sidebar({ activeChannel, onSelect, gatewayOnline, ingestBusy, embeddingMode, wikiTopicCount = 0 }: Props) {
+export function Sidebar({ activeChannel, onSelect, gatewayOnline, ingestBusy, embeddingMode, wikiTopicCount = 0, wikiSources = [] }: Props) {
   return (
     <div className="proto-sidebar">
       <div className="h-12 shrink-0" style={{ WebkitAppRegion: "drag" } as React.CSSProperties} />
@@ -64,14 +66,21 @@ export function Sidebar({ activeChannel, onSelect, gatewayOnline, ingestBusy, em
           trailing={wikiTopicCount > 0 ? <span className="proto-nav-badge">{wikiTopicCount}</span> : undefined}
         />
 
-        <div className="proto-sidebar-divider" />
+        {wikiSources.length > 0 && (
+          <>
+            <SectionLabel>Sources</SectionLabel>
+            {wikiSources.map((s) => (
+              <NavItem
+                key={s.path}
+                label={s.name}
+                icon={<FileText size={15} strokeWidth={2} />}
+                active={activeChannel === `source:${s.path}`}
+                onClick={() => onSelect(`source:${s.path}`)}
+              />
+            ))}
+          </>
+        )}
 
-        <NavItem
-          label="Sync Rate"
-          icon={<Activity size={15} strokeWidth={2} />}
-          active={activeChannel === "sync-rate"}
-          onClick={() => onSelect("sync-rate")}
-        />
       </div>
 
       <div className="proto-sidebar-footer">

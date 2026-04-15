@@ -6,25 +6,42 @@ import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { readFileFull } from "@/lib/electron";
 
+type LineRange = { start: number; end: number };
+
 type Props = {
   filePath: string;
   onSave: (content: string) => void;
   onDirty?: (dirty: boolean) => void;
-  scrollToLine?: number | null;
+  scrollToRange?: LineRange | null;
 };
 
-/* Highlight effect for scroll-to-line */
-const setHighlightLine = StateEffect.define<number | null>();
-const highlightLineField = StateField.define<DecorationSet>({
+/* Highlight effect for scroll-to-range (multiple lines) */
+const setHighlightRange = StateEffect.define<LineRange | null>();
+const highlightRangeField = StateField.define<DecorationSet>({
   create() { return Decoration.none; },
   update(deco, tr) {
     for (const e of tr.effects) {
-      if (e.is(setHighlightLine)) {
+      if (e.is(setHighlightRange)) {
         if (e.value === null) return Decoration.none;
-        const line = tr.state.doc.line(Math.min(e.value, tr.state.doc.lines));
-        return Decoration.set([
-          Decoration.line({ class: "cm-highlight-target" }).range(line.from),
-        ]);
+        const { start, end } = e.value;
+        const maxLine = tr.state.doc.lines;
+        const from = Math.min(start, maxLine);
+        const to = Math.min(end, maxLine);
+        const decos = [];
+        // First line gets the top-border class
+        const firstLine = tr.state.doc.line(from);
+        decos.push(Decoration.line({ class: "cm-highlight-range cm-highlight-range-first" }).range(firstLine.from));
+        // Middle lines
+        for (let i = from + 1; i < to; i++) {
+          const line = tr.state.doc.line(i);
+          decos.push(Decoration.line({ class: "cm-highlight-range" }).range(line.from));
+        }
+        // Last line gets the bottom-border class
+        if (to > from) {
+          const lastLine = tr.state.doc.line(to);
+          decos.push(Decoration.line({ class: "cm-highlight-range cm-highlight-range-last" }).range(lastLine.from));
+        }
+        return Decoration.set(decos);
       }
     }
     return deco;
@@ -45,8 +62,6 @@ const editorTheme = EditorView.theme({
     padding: "24px 0 48px",
     caretColor: "var(--color-accent)",
     lineHeight: "1.7",
-    maxWidth: "720px",
-    margin: "0 auto",
   },
   ".cm-line": {
     padding: "0 32px",
@@ -82,12 +97,19 @@ const editorTheme = EditorView.theme({
   ".cm-scroller": {
     overflow: "auto",
   },
-  ".cm-highlight-target": {
-    backgroundColor: "color-mix(in oklab, var(--color-accent) 10%, transparent)",
+  ".cm-highlight-range": {
+    backgroundColor: "color-mix(in oklab, var(--color-accent) 6%, transparent)",
+    borderLeft: "2px solid var(--color-accent)",
+  },
+  ".cm-highlight-range-first": {
+    borderTop: "1px solid color-mix(in oklab, var(--color-accent) 25%, transparent)",
+  },
+  ".cm-highlight-range-last": {
+    borderBottom: "1px solid color-mix(in oklab, var(--color-accent) 25%, transparent)",
   },
 });
 
-export function NoteEditor({ filePath, onSave, onDirty, scrollToLine }: Props) {
+export function NoteEditor({ filePath, onSave, onDirty, scrollToRange }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [loading, setLoading] = useState(true);
@@ -158,7 +180,7 @@ export function NoteEditor({ filePath, onSave, onDirty, scrollToLine }: Props) {
           saveKeymap,
           updateListener,
           editorTheme,
-          highlightLineField,
+          highlightRangeField,
           EditorView.lineWrapping,
         ],
       });
@@ -224,23 +246,26 @@ export function NoteEditor({ filePath, onSave, onDirty, scrollToLine }: Props) {
     return () => clearInterval(id);
   }, [filePath]);
 
-  // Scroll to a specific line when requested
+  // Scroll to a line range when requested
   useEffect(() => {
-    if (!scrollToLine || !viewRef.current) return;
+    if (!scrollToRange || !viewRef.current) return;
     const view = viewRef.current;
-    const lineNum = Math.min(scrollToLine, view.state.doc.lines);
-    const line = view.state.doc.line(lineNum);
+    const startLine = Math.min(scrollToRange.start, view.state.doc.lines);
+    const line = view.state.doc.line(startLine);
     view.dispatch({
-      effects: [setHighlightLine.of(lineNum), EditorView.scrollIntoView(line.from, { y: "center" })],
+      effects: [
+        setHighlightRange.of(scrollToRange),
+        EditorView.scrollIntoView(line.from, { y: "center" }),
+      ],
     });
-    // Clear highlight after 3s
+    // Clear highlight after 4s
     const timer = setTimeout(() => {
       if (viewRef.current) {
-        viewRef.current.dispatch({ effects: setHighlightLine.of(null) });
+        viewRef.current.dispatch({ effects: setHighlightRange.of(null) });
       }
-    }, 3000);
+    }, 4000);
     return () => clearTimeout(timer);
-  }, [scrollToLine]);
+  }, [scrollToRange]);
 
   return (
     <div className="proto-editor-container">

@@ -5,7 +5,7 @@ import { NoteEditor } from "../editor/NoteEditor";
 import { NoteSegments } from "./NoteSegments";
 import { IngestDialog } from "./IngestDialog";
 import { cn } from "@/lib/cn";
-import { pickRawFile, saveRawPathForHotkey } from "@/lib/electron";
+import { pickRawFile, saveRawPathForHotkey, writeFile } from "@/lib/electron";
 import * as api from "@/lib/api";
 import type { IngestStep } from "@/App";
 
@@ -26,7 +26,7 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
   const [showIngest, setShowIngest] = useState(false);
   const [activeBuild, setActiveBuild] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
-  const [scrollTarget, setScrollTarget] = useState<number | null>(null);
+  const [scrollTarget, setScrollTarget] = useState<{ start: number; end: number } | null>(null);
   const [showTags, setShowTags] = useState(() => localStorage.getItem("intellinote-show-tags") !== "false");
 
   useEffect(() => {
@@ -48,9 +48,7 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
 
   const handleSave = useCallback(async (content: string) => {
     try {
-      if (window.desktop) {
-        await window.desktop.invoke("write_file", { path: rawPath, content });
-      }
+      await writeFile(rawPath, content);
     } catch {}
   }, [rawPath]);
 
@@ -109,24 +107,25 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
         </div>
       </div>
 
-      {/* Editor + Tags panel */}
+      {/* Tags strip + Editor */}
       <div className="proto-note-body">
-        <div className="proto-note-editor-area">
-          <NoteEditor filePath={rawPath} onSave={handleSave} onDirty={setDirty} scrollToLine={scrollTarget} />
-        </div>
         <AnimatePresence initial={false}>
           {showTags && (
             <motion.div
-              className="proto-note-segments-wrap"
-              initial={{ width: 0, opacity: 0 }}
-              animate={{ width: 300, opacity: 1 }}
-              exit={{ width: 0, opacity: 0 }}
+              className="proto-note-tags-strip"
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1, overflow: "visible" }}
+              exit={{ height: 0, opacity: 0, overflow: "hidden" }}
               transition={{ duration: 0.15, ease: [0.25, 1, 0.5, 1] }}
+              style={{ overflow: "hidden" }}
             >
-              <NoteSegments refreshKey={ingestResult?.message} tags={tags} onScrollToLine={(line) => setScrollTarget(line)} onTagsChanged={onTagsChanged} />
+              <NoteSegments refreshKey={ingestResult?.message} tags={tags} onScrollToLine={(start, end) => setScrollTarget({ start, end })} onTagsChanged={onTagsChanged} />
             </motion.div>
           )}
         </AnimatePresence>
+        <div className="proto-note-editor-area">
+          <NoteEditor filePath={rawPath} onSave={handleSave} onDirty={setDirty} scrollToRange={scrollTarget} />
+        </div>
       </div>
 
       {showIngest && (

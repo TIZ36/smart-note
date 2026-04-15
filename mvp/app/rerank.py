@@ -12,6 +12,7 @@ import math
 import requests
 
 from app.config import settings
+from app.db import connect
 from app.embed import embed_texts
 
 logger = logging.getLogger(__name__)
@@ -28,49 +29,69 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb)
 
 
-def rerank(query: str, results: list[dict], topk: int = 5) -> list[dict]:
-    """Rerank results using embedding similarity.
+def rerank(query: str, chunk_ids: list[int], use_llm: bool = False, topk: int = 5) -> dict:
+    """Rerank chunks by embedding similarity. Loads embeddings from DB by ID.
 
-    Computes fresh query-vs-chunk embedding similarity for precise ranking,
-    rather than relying on the broad recall-stage scoring.
+    This avoids re-embedding the query — we embed once and reuse.
     """
-    if not results:
-        return []
+    import time
+    start = time.time()
 
-    # Get query embedding
+    if not chunk_ids:
+        return {"results": [], "latency_ms": 0}
+
+    # Embed query once
     qv = embed_texts([query])[0]
 
-    # Re-score each result
-    for item in results:
-        # Embedding similarity (direct, more precise than recall-stage)
+    # Load chunk embeddings from DB
+    with connect() as conn:
+        placeholders = ",".join("?" for _ in chunk_ids)
+        rows = conn.execute(
+            f"""SELECT id, text, source_ref, dimension, embedding_json,
+                       keywords_json, ai_summary
+                FROM chunks WHERE id IN ({placeholders})""",
+            chunk_ids,
+        ).fetchall()
+
+    # Score each chunk
+    results = []
+    for row in rows:
         emb = None
-        if "embedding_json" in item and item["embedding_json"]:
-            emb = json.loads(item["embedding_json"])
-        elif "_embedding" in item:
-            emb = item["_embedding"]
+        if row["embedding_json"]:
+            try:
+                emb = json.loads(row["embedding_json"])
+            except (json.JSONDecodeError, TypeError):
+                pass
 
-        vec_score = _cosine(qv, emb) if emb else item.get("vec", 0.0)
+        vec_score = _cosine(qv, emb) if emb else 0.0
 
-        # Combine: embedding similarity is primary, recall score is secondary
-        recall_score = item.get("score", 0.0)
-        item["rerank_score"] = 0.6 * vec_score + 0.4 * recall_score
+        results.append({
+            "id": row["id"],
+            "text": row["text"],
+            "source_ref": row["source_ref"],
+            "dimension": row["dimension"],
+            "score": vec_score,  # recall score
+            "rerank_score": vec_score,  # will be overridden by LLM if used
+            "is_wiki": row["dimension"].startswith("wiki:") if row["dimension"] else False,
+        })
 
-    results.sort(key=lambda x: x.get("rerank_score", 0), reverse=True)
-    return results[:topk]
+    # Optionally use LLM for higher-quality scoring
+    if use_llm and settings.provider_api_key and len(results) > 1:
+        llm_results = _llm_rerank(query, results, topk)
+        if llm_results:
+            latency = int((time.time() - start) * 1000)
+            return {"results": llm_results, "latency_ms": latency}
+
+    results.sort(key=lambda x: x["rerank_score"], reverse=True)
+    latency = int((time.time() - start) * 1000)
+    return {"results": results[:topk], "latency_ms": latency}
 
 
-def rerank_with_llm(query: str, results: list[dict], topk: int = 5) -> list[dict]:
-    """Rerank using LLM to score relevance (higher quality, slower).
-
-    Only used when provider is configured. Falls back to embedding rerank.
-    """
-    if not settings.provider_api_key or not results:
-        return rerank(query, results, topk)
-
-    # Build prompt for LLM scoring
+def _llm_rerank(query: str, results: list[dict], topk: int) -> list[dict] | None:
+    """Use LLM to score relevance. Returns None on failure."""
     entries = []
-    for i, r in enumerate(results[:20]):  # Cap at 20 to save tokens
-        entries.append(f"[{i+1}] {r['text'][:200]}")
+    for i, r in enumerate(results[:20]):
+        entries.append(f"[{i + 1}] {r['text'][:200]}")
 
     prompt = f"""Given the query: "{query}"
 
@@ -103,7 +124,6 @@ Snippets:
         resp.raise_for_status()
         raw = resp.json()["choices"][0]["message"]["content"].strip()
 
-        # Parse scores
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
         scores = json.loads(raw)
@@ -111,10 +131,12 @@ Snippets:
         if isinstance(scores, list):
             for i, score in enumerate(scores):
                 if i < len(results):
-                    results[i]["rerank_score"] = float(score) / 10.0
+                    # Clamp to [0, 10] and normalize to [0, 1]
+                    clamped = max(0.0, min(10.0, float(score)))
+                    results[i]["rerank_score"] = clamped / 10.0
             results.sort(key=lambda x: x.get("rerank_score", 0), reverse=True)
             return results[:topk]
     except Exception as e:
-        logger.warning("LLM rerank failed, falling back to embedding: %s", e)
+        logger.warning("LLM rerank failed: %s", e)
 
-    return rerank(query, results, topk)
+    return None

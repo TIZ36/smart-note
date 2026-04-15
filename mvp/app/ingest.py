@@ -300,8 +300,9 @@ def ingest_raw(raw_path: str, note_path: str, reset: bool = False) -> dict:
     with connect() as conn:
         if reset:
             conn.execute("DELETE FROM tag_segments WHERE source_file = ?", (str(raw_file),))
-            conn.execute("DELETE FROM entities")
-            conn.execute("DELETE FROM entity_links")
+            # Note: entities/entity_links are NOT deleted on reset — they're
+            # append-only counters. Global deletion would corrupt other files'
+            # entity data. Stale entities are harmless; missing ones are not.
         for seg in tag_segments:
             all_tags = [seg["tag"]] + seg.get("secondary_tags", [])
             conn.execute(

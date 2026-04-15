@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Save, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { readSettings, writeSettings, getHotkey, setHotkey } from "@/lib/electron";
+import * as api from "@/lib/api";
 import type { AppSettings } from "@/lib/types";
 import { cn } from "@/lib/cn";
 import { useTheme, type ThemeMode } from "@/hooks/useTheme";
@@ -281,6 +282,10 @@ export function SettingsPanel() {
 
           <div className="proto-form-divider" />
 
+          <OcrSection />
+
+          <div className="proto-form-divider" />
+
           <div className="proto-settings-save-row">
             <button type="button" onClick={handleSave} disabled={saving} className="proto-btn proto-btn-primary">
               {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
@@ -311,5 +316,101 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <label className="proto-form-label">{label}</label>
       {children}
     </div>
+  );
+}
+
+// Common OCR languages users would want to select
+const OCR_LANG_OPTIONS: { code: string; label: string }[] = [
+  { code: "eng", label: "English" },
+  { code: "chi_sim", label: "Chinese (Simplified)" },
+  { code: "chi_tra", label: "Chinese (Traditional)" },
+  { code: "jpn", label: "Japanese" },
+  { code: "kor", label: "Korean" },
+  { code: "fra", label: "French" },
+  { code: "deu", label: "German" },
+  { code: "spa", label: "Spanish" },
+  { code: "rus", label: "Russian" },
+  { code: "ara", label: "Arabic" },
+];
+
+function OcrSection() {
+  const [installed, setInstalled] = useState<string[]>([]);
+  const [hasTesseract, setHasTesseract] = useState(false);
+  const [active, setActive] = useState<Set<string>>(new Set());
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api.fetchOcrLangs().then((d) => {
+      setInstalled(d.installed);
+      setHasTesseract(d.has_tesseract);
+      // Parse active config: "chi_sim+eng" → Set(["chi_sim", "eng"])
+      if (d.active) {
+        setActive(new Set(d.active.split("+").filter(Boolean)));
+      }
+    }).catch(() => {});
+  }, []);
+
+  function toggleLang(code: string) {
+    setActive((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
+      // Auto-save
+      const langStr = [...next].join("+");
+      setSaving(true);
+      api.saveOcrConfig(langStr).finally(() => setSaving(false));
+      return next;
+    });
+  }
+
+  // Filter to only show installed languages
+  const available = OCR_LANG_OPTIONS.filter((o) => installed.includes(o.code));
+
+  return (
+    <section className="proto-form-section">
+      <h2 className="proto-form-section-title">OCR (PDF Scanning)</h2>
+      <p className="proto-form-hint proto-settings-section-hint">
+        Select languages for scanned/image-only PDF import. Uses tesseract.
+      </p>
+
+      <div className="proto-form-field">
+        <label className="proto-form-label">Tesseract</label>
+        <span className={cn("proto-form-hint", hasTesseract ? "text-[var(--color-success)]" : "text-[var(--color-danger)]")}>
+          {hasTesseract ? `Installed · ${installed.length} language packs` : "Not found — install via: brew install tesseract tesseract-lang"}
+        </span>
+      </div>
+
+      {hasTesseract && available.length > 0 && (
+        <div className="proto-form-field">
+          <label className="proto-form-label">
+            Active languages
+            {saving && <Loader2 size={10} className="animate-spin" style={{ display: "inline", marginLeft: 6 }} />}
+          </label>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {available.map((o) => (
+              <button
+                key={o.code}
+                type="button"
+                onClick={() => toggleLang(o.code)}
+                className={cn("proto-ocr-lang-chip", active.has(o.code) && "proto-ocr-lang-chip-active")}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+          {active.size === 0 && (
+            <p className="proto-form-hint" style={{ marginTop: 6 }}>
+              No languages selected — OCR will auto-detect based on filename.
+            </p>
+          )}
+        </div>
+      )}
+
+      {hasTesseract && available.length === 0 && installed.length === 0 && (
+        <p className="proto-form-hint">
+          No language packs found. Run: <code style={{ fontSize: 11, padding: "1px 4px", background: "var(--color-bg-elevated)", borderRadius: 3 }}>brew install tesseract-lang</code>
+        </p>
+      )}
+    </section>
   );
 }

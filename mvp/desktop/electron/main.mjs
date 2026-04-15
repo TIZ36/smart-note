@@ -96,11 +96,16 @@ function runIngestCmd(rawPath, notePath, doReset) {
   });
 }
 
+// Track running ingest state so renderer can recover after reload
+let noteIngestRunning = false;
+let wikiIngestRunning = false;
+
 function emitIngest(win, payload) {
   if (win && !win.isDestroyed()) win.webContents.send("ingest:status", payload);
 }
 
 function ingestRawAsync(win, rawPath, notePath, doReset) {
+  noteIngestRunning = true;
   emitIngest(win, {
     status: "started",
     step: "parse",
@@ -160,6 +165,7 @@ function ingestRawAsync(win, rawPath, notePath, doReset) {
   });
 
   proc.on("close", (code) => {
+    noteIngestRunning = false;
     const ok = code === 0;
     let message = "Ingest completed.";
     try {
@@ -231,16 +237,28 @@ ipcMain.handle("ingest_raw", async (_, { rawPath, notePath, reset }) => {
   return runIngestCmd(rawPath, notePath, doReset);
 });
 
-ipcMain.handle("special_ingest_async", async (event, { folderPath, topicName }) => {
-  const win = BrowserWindow.fromWebContents(event.sender);
-  emitIngest(win, { status: "started", step: "parse", current: 0, total: 0, elapsed_ms: 0, message: `Ingesting folder: ${topicName || path.basename(folderPath)}` });
+function emitWikiIngest(win, payload) {
+  if (win && !win.isDestroyed()) win.webContents.send("wiki-ingest:status", payload);
+}
 
-  const args = ["-m", "app.cli", "special-ingest", "--folder", folderPath];
+ipcMain.handle("special_ingest_async", async (event, { folderPath, filePath, topicName }) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  wikiIngestRunning = true;
+  const inputPath = filePath || folderPath;
+  const label = topicName || path.basename(inputPath);
+  emitWikiIngest(win, { status: "started", step: "parse", current: 0, total: 0, elapsed_ms: 0, message: `Ingesting: ${label}` });
+
+  const args = ["-m", "app.cli", "special-ingest"];
+  if (filePath) {
+    args.push("--file", filePath);
+  } else {
+    args.push("--folder", folderPath);
+  }
   if (topicName) args.push("--topic", topicName);
   const proc = spawn(pythonBin(), args, { cwd: appRoot(), stdio: ["ignore", "pipe", "pipe"] });
 
   proc.on("error", (e) => {
-    emitIngest(win, { status: "error", step: "", current: 0, total: 0, elapsed_ms: 0, message: `Failed: ${e.message}` });
+    emitWikiIngest(win, { status: "error", step: "", current: 0, total: 0, elapsed_ms: 0, message: `Failed: ${e.message}` });
   });
 
   if (proc.stderr) {
@@ -250,7 +268,7 @@ ipcMain.handle("special_ingest_async", async (event, { folderPath, topicName }) 
       if (!trimmed) return;
       try {
         const parsed = JSON.parse(trimmed);
-        emitIngest(win, {
+        emitWikiIngest(win, {
           status: parsed.step === "done" ? "completed" : "progress",
           step: parsed.step ?? "",
           current: Number(parsed.current ?? 0),
@@ -265,15 +283,25 @@ ipcMain.handle("special_ingest_async", async (event, { folderPath, topicName }) 
   let stdoutBuf = "";
   proc.stdout?.on("data", (c) => { stdoutBuf += c.toString(); });
   proc.on("close", (code) => {
-    let message = "Special ingest completed.";
+    wikiIngestRunning = false;
+    let message = "Wiki ingest completed.";
     try { message = JSON.parse(stdoutBuf.trim())?.message ?? message; } catch {}
-    emitIngest(win, { status: code === 0 ? "completed" : "error", step: "done", current: 0, total: 0, elapsed_ms: 0, message });
+    emitWikiIngest(win, { status: code === 0 ? "completed" : "error", step: "done", current: 0, total: 0, elapsed_ms: 0, message });
   });
 });
 
 ipcMain.handle("dialog_open_folder", async () => {
   const r = await dialog.showOpenDialog(mainWindow ?? undefined, {
     properties: ["openDirectory"],
+  });
+  if (r.canceled || !r.filePaths[0]) return null;
+  return r.filePaths[0];
+});
+
+ipcMain.handle("dialog_open_pdf", async () => {
+  const r = await dialog.showOpenDialog(mainWindow ?? undefined, {
+    properties: ["openFile"],
+    filters: [{ name: "PDF", extensions: ["pdf"] }],
   });
   if (r.canceled || !r.filePaths[0]) return null;
   return r.filePaths[0];
@@ -288,10 +316,11 @@ ipcMain.handle("append_text_to_raw", async (_, { rawPath, text }) => {
   const p = path.resolve(rawPath);
   const parent = path.dirname(p);
   fs.mkdirSync(parent, { recursive: true });
-  // Prepend to top — newest content first
+  // Append to bottom — preserves line numbers for segment jumps
   const existing = fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
-  fs.writeFileSync(p, `${text.trim()}\n\n${existing}`, "utf8");
-  return { ok: true, output: "prepended" };
+  const sep = existing.length > 0 && !existing.endsWith("\n\n") ? (existing.endsWith("\n") ? "\n" : "\n\n") : "";
+  fs.writeFileSync(p, `${existing}${sep}${text.trim()}\n`, "utf8");
+  return { ok: true, output: "appended" };
 });
 
 ipcMain.handle("list_views", async (_, { notePath }) => {
@@ -401,6 +430,11 @@ ipcMain.handle("dialog_save_note", async () => {
 
 ipcMain.handle("clipboard_read_text", async () => clipboard.readText() || null);
 
+ipcMain.handle("get_ingest_status", async () => ({
+  noteIngestRunning,
+  wikiIngestRunning,
+}));
+
 ipcMain.handle("write_file", async (_, { path: filePath, content }) => {
   fs.writeFileSync(filePath, content, "utf8");
   return { ok: true };
@@ -468,9 +502,10 @@ function pasteClipboardToRaw() {
   try {
     const dir = path.dirname(rawPath);
     fs.mkdirSync(dir, { recursive: true });
-    // Prepend to top — newest content first
+    // Append to bottom — preserves line numbers for segment jumps
     const existing = fs.existsSync(rawPath) ? fs.readFileSync(rawPath, "utf8") : "";
-    fs.writeFileSync(rawPath, `${text.trim()}\n\n${existing}`, "utf8");
+    const sep = existing.length > 0 && !existing.endsWith("\n\n") ? (existing.endsWith("\n") ? "\n" : "\n\n") : "";
+    fs.writeFileSync(rawPath, `${existing}${sep}${text.trim()}\n`, "utf8");
 
     new Notification({ title: "IntelliNote", body: `Pasted ${text.trim().split("\n").length} lines to raw file.` }).show();
 

@@ -1,9 +1,17 @@
 import { useState, useEffect } from "react";
-import { BookOpen, FolderOpen, File, Loader2, Plus, X } from "lucide-react";
+import { BookOpen, FolderOpen, FileText, Loader2, Plus, X, Trash2, Code, FileSearch, Archive } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { specialIngestAsync, pickFolder, pickRawFile } from "@/lib/electron";
+import { specialIngestAsync, pickFolder, pickPdf } from "@/lib/electron";
 import * as api from "@/lib/api";
+import type { WikiCategory } from "@/lib/api";
 import type { IngestStep } from "@/App";
+
+const CATEGORY_META: Record<WikiCategory, { label: string; icon: typeof BookOpen }> = {
+  research: { label: "Research", icon: FileSearch },
+  codebase: { label: "Codebase", icon: Code },
+  docs: { label: "Docs", icon: BookOpen },
+  reference: { label: "Reference", icon: Archive },
+};
 
 type Props = {
   ingestBusy: boolean;
@@ -23,6 +31,13 @@ export function SpecialKnowledgePanel({ ingestBusy, ingestSteps, ingestResult, o
       setTopics(d.topics);
       onTopicsChanged?.(d.topics.length);
     }).catch(() => {});
+  }
+
+  async function handleDelete(topic: string) {
+    try {
+      await api.deleteSpecialKnowledge(topic);
+      loadTopics();
+    } catch {}
   }
 
   return (
@@ -60,24 +75,45 @@ export function SpecialKnowledgePanel({ ingestBusy, ingestSteps, ingestResult, o
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {/* Topic list */}
+        {/* Topic list grouped by category */}
         {topics.length > 0 ? (
           <div className="proto-wiki-topic-list">
-            {topics.map((t) => (
-              <div key={t.id} className="proto-wiki-topic-item">
-                <div className="proto-wiki-topic-icon">
-                  <BookOpen size={14} />
-                </div>
-                <div className="proto-wiki-topic-body">
-                  <div className="proto-wiki-topic-name">{t.topic}</div>
-                  {t.summary && <div className="proto-wiki-topic-summary">{t.summary}</div>}
-                  <div className="proto-wiki-topic-meta">
-                    <span>{t.folder}</span>
-                    <span>{new Date(t.created_at).toLocaleDateString()}</span>
+            {(["research", "codebase", "docs", "reference"] as WikiCategory[])
+              .filter((cat) => topics.some((t) => (t.category || "reference") === cat))
+              .map((cat) => {
+                const meta = CATEGORY_META[cat];
+                const Icon = meta.icon;
+                const catTopics = topics.filter((t) => (t.category || "reference") === cat);
+                return (
+                  <div key={cat}>
+                    <div className="proto-wiki-category-header">
+                      <Icon size={13} />
+                      <span>{meta.label}</span>
+                      <span className="proto-wiki-category-count">{catTopics.length}</span>
+                    </div>
+                    {catTopics.map((t) => (
+                      <div key={t.id} className="proto-wiki-topic-item">
+                        <div className="proto-wiki-topic-body">
+                          <div className="proto-wiki-topic-name">{t.topic}</div>
+                          {t.summary && <div className="proto-wiki-topic-summary">{t.summary}</div>}
+                          <div className="proto-wiki-topic-meta">
+                            <span>{t.folder}</span>
+                            <span>{new Date(t.created_at).toLocaleDateString()}</span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(t.topic)}
+                          className="proto-wiki-topic-delete"
+                          title={`Delete ${t.topic}`}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    ))}
                   </div>
-                </div>
-              </div>
-            ))}
+                );
+              })}
           </div>
         ) : (
           <div className="proto-wiki-empty">
@@ -131,14 +167,20 @@ function WikiImportDialog({ ingestBusy, ingestSteps, ingestResult, onClose }: {
     if (p) { setPath(p); if (!topicName) setTopicName(p.split("/").pop() || ""); }
   }
 
-  async function handlePickFile() {
-    const p = await pickRawFile();
-    if (p) { setPath(p); if (!topicName) setTopicName(p.split("/").pop()?.replace(/\.\w+$/, "") || ""); }
+  async function handlePickPdf() {
+    const p = await pickPdf();
+    if (p) { setPath(p); if (!topicName) setTopicName(p.split("/").pop()?.replace(/\.pdf$/i, "") || ""); }
   }
+
+  const isPdf = path.toLowerCase().endsWith(".pdf");
 
   async function handleIngest() {
     if (!path || ingestBusy) return;
-    await specialIngestAsync(path, topicName || undefined);
+    if (isPdf) {
+      await specialIngestAsync({ filePath: path, topicName: topicName || undefined });
+    } else {
+      await specialIngestAsync({ folderPath: path, topicName: topicName || undefined });
+    }
     setPath("");
     setTopicName("");
   }
@@ -162,8 +204,8 @@ function WikiImportDialog({ ingestBusy, ingestSteps, ingestResult, onClose }: {
               <button type="button" onClick={handlePickFolder} className="proto-btn proto-btn-secondary" style={{ flexShrink: 0 }}>
                 <FolderOpen size={13} /> Folder
               </button>
-              <button type="button" onClick={handlePickFile} className="proto-btn proto-btn-secondary" style={{ flexShrink: 0 }}>
-                <File size={13} /> File
+              <button type="button" onClick={handlePickPdf} className="proto-btn proto-btn-secondary" style={{ flexShrink: 0 }}>
+                <FileText size={13} /> PDF
               </button>
             </div>
           </div>

@@ -19,10 +19,9 @@ DEFAULT_WEIGHTS = {
     "fts": 0.15,
     "sub": 0.13,
     "ngram": 0.05,
-    "vec": 0.18,
-    "kw": 0.10,
+    "vec": 0.20,     # was 0.18 — absorbed 0.02 from removed "mem"
+    "kw": 0.12,      # was 0.10 — absorbed 0.02 from removed "mem"
     "tag_meta": 0.30,
-    "mem": 0.04,
     "feedback_bias": 0.05,
 }
 

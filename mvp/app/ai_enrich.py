@@ -75,18 +75,22 @@ RULES:
 - Reply with ONLY the JSON array, no markdown fences, no explanation"""
 
 
-# Global token counter for the current ingest run
+# Global token counter for the current ingest run (thread-safe)
+import threading
+_token_lock = threading.Lock()
 _token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
 
 def reset_token_usage():
-    _token_usage["prompt_tokens"] = 0
-    _token_usage["completion_tokens"] = 0
-    _token_usage["total_tokens"] = 0
+    with _token_lock:
+        _token_usage["prompt_tokens"] = 0
+        _token_usage["completion_tokens"] = 0
+        _token_usage["total_tokens"] = 0
 
 
 def get_token_usage() -> dict:
-    return dict(_token_usage)
+    with _token_lock:
+        return dict(_token_usage)
 
 
 def _call_llm(system: str, user: str) -> str | None:
@@ -115,11 +119,12 @@ def _call_llm(system: str, user: str) -> str | None:
         )
         resp.raise_for_status()
         data = resp.json()
-        # Track token usage
+        # Track token usage (thread-safe)
         usage = data.get("usage", {})
-        _token_usage["prompt_tokens"] += usage.get("prompt_tokens", 0)
-        _token_usage["completion_tokens"] += usage.get("completion_tokens", 0)
-        _token_usage["total_tokens"] += usage.get("total_tokens", 0)
+        with _token_lock:
+            _token_usage["prompt_tokens"] += usage.get("prompt_tokens", 0)
+            _token_usage["completion_tokens"] += usage.get("completion_tokens", 0)
+            _token_usage["total_tokens"] += usage.get("total_tokens", 0)
         return data["choices"][0]["message"]["content"]
     except Exception as e:
         logger.warning("AI classify call failed: %s", e)

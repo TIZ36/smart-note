@@ -10,7 +10,7 @@ const TAG_COLORS = ["red", "orange", "yellow", "green", "blue", "purple", "gray"
 type Props = {
   refreshKey?: string | number | null;
   tags: { name: string; color?: string; desc?: string; segments: number }[];
-  onScrollToLine?: (line: number) => void;
+  onScrollToLine?: (lineStart: number, lineEnd: number) => void;
   onTagsChanged?: () => void;
 };
 
@@ -105,12 +105,121 @@ export function NoteSegments({ refreshKey, tags, onScrollToLine, onTagsChanged }
     );
   }
 
+  const expandedSegs = expandedTag ? (grouped[expandedTag] || []) : [];
+
   return (
     <div className="proto-note-segments">
-      {/* Panel header with edit toggle */}
-      <div className="proto-note-segments-header">
-        <span className="proto-note-segments-title">Tags</span>
-        <span className="proto-note-segments-count">{tags.length}</span>
+      {/* Horizontal tag row */}
+      <div className="proto-note-tags-row">
+        <div className="proto-note-tags-chips">
+          {tagOrder.map((tagName, i) => {
+            const segs = grouped[tagName] || [];
+            const color = tagColorMap[tagName] || "gray";
+            const isActive = expandedTag === tagName;
+
+            return (
+              <div
+                key={tagName}
+                className={cn(
+                  "proto-note-tag-chip",
+                  `proto-tag-color-${color}`,
+                  isActive && "proto-note-tag-chip-active",
+                  editMode && dragIdx === i && "proto-note-seg-dragging",
+                  editMode && dropIdx === i && dragIdx !== i && "proto-note-seg-drop-target"
+                )}
+                draggable={editMode}
+                onDragStart={() => setDragIdx(i)}
+                onDragOver={(e) => { e.preventDefault(); setDropIdx(i); }}
+                onDragLeave={() => setDropIdx(null)}
+                onDrop={(e) => { e.preventDefault(); handleDrop(i); }}
+                onDragEnd={() => { setDragIdx(null); setDropIdx(null); }}
+              >
+                {editMode && <GripVertical size={10} className="proto-note-tag-grip" />}
+                <button
+                  type="button"
+                  className="proto-note-tag-chip-btn"
+                  onClick={() => !editMode && setExpandedTag(isActive ? null : tagName)}
+                >
+                  <Tag size={11} strokeWidth={2} />
+                  <span>{tagName}</span>
+                  {!editMode && segs.length > 0 && (
+                    <span className="proto-note-tag-chip-count">{segs.length}</span>
+                  )}
+                </button>
+                {editMode && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setColorPickerTag(colorPickerTag === tagName ? null : tagName)}
+                      className="proto-note-tag-chip-color-btn"
+                      title="Change color"
+                    >
+                      <span className={cn("proto-tag-dot-sm", `proto-tag-dot-${color}`)} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteTag(tagName)}
+                      disabled={busy}
+                      className="proto-note-tag-chip-x"
+                    >
+                      <X size={10} />
+                    </button>
+                  </>
+                )}
+
+                {/* Color picker popover */}
+                <AnimatePresence initial={false}>
+                  {editMode && colorPickerTag === tagName && (
+                    <motion.div
+                      className="proto-note-tag-color-popover"
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.95 }}
+                      transition={{ duration: 0.1 }}
+                    >
+                      {TAG_COLORS.map((c) => (
+                        <button
+                          key={c}
+                          type="button"
+                          onClick={() => handleSetColor(tagName, c)}
+                          className={cn("proto-tag-color-swatch", `proto-tag-dot-${c}`, color === c && "proto-tag-color-swatch-active")}
+                        />
+                      ))}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            );
+          })}
+
+          {/* Empty state */}
+          {tagOrder.length === 0 && !editMode && (
+            <span className="proto-note-tags-empty">No tags yet</span>
+          )}
+
+          {/* Add tag inline (edit mode) */}
+          {editMode && (
+            <div className="proto-note-tag-add">
+              <input
+                type="text"
+                value={newTag}
+                onChange={(e) => setNewTag(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleAddTag()}
+                placeholder="name:desc"
+                className="proto-note-tag-add-input"
+              />
+              <button
+                type="button"
+                onClick={handleAddTag}
+                disabled={!newTag.trim() || busy}
+                className="proto-note-tag-add-btn"
+              >
+                <Plus size={11} />
+              </button>
+            </div>
+          )}
+        </div>
+
         <button
           type="button"
           onClick={() => setEditMode(!editMode)}
@@ -120,178 +229,50 @@ export function NoteSegments({ refreshKey, tags, onScrollToLine, onTagsChanged }
         </button>
       </div>
 
-      {/* Tag groups */}
-      {tagOrder.map((tagName, i) => {
-        const segs = grouped[tagName] || [];
-        const color = tagColorMap[tagName] || "gray";
-        const isExpanded = expandedTag === tagName;
-
-        return (
-          <div
-            key={tagName}
-            className={cn(
-              "proto-note-seg-group",
-              editMode && dragIdx === i && "proto-note-seg-dragging",
-              editMode && dropIdx === i && dragIdx !== i && "proto-note-seg-drop-target"
-            )}
-            draggable={editMode}
-            onDragStart={() => setDragIdx(i)}
-            onDragOver={(e) => { e.preventDefault(); setDropIdx(i); }}
-            onDragLeave={() => setDropIdx(null)}
-            onDrop={(e) => { e.preventDefault(); handleDrop(i); }}
-            onDragEnd={() => { setDragIdx(null); setDropIdx(null); }}
-          >
-            <div className="proto-note-seg-group-row">
-              {editMode && (
-                <span className="proto-note-seg-grip">
-                  <GripVertical size={11} />
-                </span>
-              )}
-              <button
-                type="button"
-                className={cn("proto-note-seg-group-header", `proto-tag-color-${color}`)}
-                onClick={() => !editMode && setExpandedTag(isExpanded ? null : tagName)}
-              >
-                {!editMode && (
-                  <ChevronRight
-                    size={12}
-                    className={cn("proto-note-seg-chevron", isExpanded && "proto-note-seg-chevron-open")}
-                  />
-                )}
-                {editMode ? (
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); setColorPickerTag(colorPickerTag === tagName ? null : tagName); }}
-                    style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", color: "inherit" }}
-                  >
-                    <Tag size={12} strokeWidth={2} />
-                  </button>
-                ) : (
-                  <Tag size={12} strokeWidth={2} />
-                )}
-                <span className="proto-note-seg-tag-name">{tagName}</span>
-                {!editMode && segs.length > 0 && (
-                  <span className="proto-note-seg-count">{segs.length}</span>
-                )}
-              </button>
-              {editMode && (
-                <button
-                  type="button"
-                  onClick={() => handleDeleteTag(tagName)}
-                  disabled={busy}
-                  className="proto-note-seg-delete-btn"
-                >
-                  <X size={11} />
-                </button>
-              )}
-            </div>
-
-            {/* Color picker */}
-            <AnimatePresence initial={false}>
-              {editMode && colorPickerTag === tagName && (
-                <motion.div
-                  className="proto-note-seg-color-picker"
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  exit={{ opacity: 0, height: 0 }}
-                  transition={{ duration: 0.15, ease: EASE_OUT_QUART }}
-                  style={{ overflow: "hidden" }}
-                >
-                  {TAG_COLORS.map((c) => (
-                    <button
-                      key={c}
-                      type="button"
-                      onClick={() => handleSetColor(tagName, c)}
-                      className={cn("proto-tag-color-swatch", `proto-tag-dot-${c}`, color === c && "proto-tag-color-swatch-active")}
-                    />
-                  ))}
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            {/* Segments */}
-            <AnimatePresence initial={false}>
-              {isExpanded && !editMode && segs.length > 0 && (
-                <motion.div
-                  className="proto-note-seg-items"
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  exit={{ opacity: 0, height: 0 }}
-                  transition={{ duration: 0.2, ease: EASE_OUT_QUART }}
-                  style={{ overflow: "hidden" }}
-                >
-                  {segs.map((seg) => (
-                    <button
-                      key={seg.id}
-                      type="button"
-                      className="proto-note-seg-item"
-                      onClick={() => onScrollToLine?.(seg.line_start)}
-                    >
-                      <span className="proto-note-seg-range">
-                        L{seg.line_start}–{seg.line_end}
-                      </span>
-                      {seg.topic_name && (
-                        <span className="proto-note-seg-topic">{seg.topic_name}</span>
-                      )}
-                      {seg.is_credential && (
-                        <span className="proto-note-seg-cred">cred</span>
-                      )}
-                      {seg.summary && (
-                        <p className="proto-note-seg-summary">{seg.summary}</p>
-                      )}
-                      {seg.keywords.length > 0 && (
-                        <div className="proto-note-seg-keywords">
-                          {seg.keywords.slice(0, 6).map((kw, i) => (
-                            <span key={i} className="proto-tag-keyword">{kw}</span>
-                          ))}
-                          {seg.keywords.length > 6 && (
-                            <span className="proto-tag-keyword" style={{ opacity: 0.5 }}>+{seg.keywords.length - 6}</span>
-                          )}
-                        </div>
-                      )}
-                    </button>
-                  ))}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-        );
-      })}
-
-      {/* Empty state */}
-      {tagOrder.length === 0 && !editMode && (
-        <div className="proto-note-segments-empty">
-          Ingest to see tag segments here.
-        </div>
-      )}
-
-      {/* Add tag row (edit mode) */}
+      {/* Expanded segments detail */}
       <AnimatePresence initial={false}>
-        {editMode && (
+        {expandedTag && !editMode && expandedSegs.length > 0 && (
           <motion.div
-            className="proto-note-seg-add-row"
+            className="proto-note-seg-expanded"
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.15, ease: EASE_OUT_QUART }}
+            transition={{ duration: 0.2, ease: EASE_OUT_QUART }}
             style={{ overflow: "hidden" }}
           >
-            <input
-              type="text"
-              value={newTag}
-              onChange={(e) => setNewTag(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleAddTag()}
-              placeholder="name:description"
-              className="proto-form-input proto-note-seg-add-input"
-            />
-            <button
-              type="button"
-              onClick={handleAddTag}
-              disabled={!newTag.trim() || busy}
-              className="proto-btn proto-btn-primary proto-note-seg-add-btn"
-            >
-              <Plus size={11} />
-            </button>
+            <div className="proto-note-seg-expanded-inner">
+              {expandedSegs.map((seg) => (
+                <button
+                  key={seg.id}
+                  type="button"
+                  className="proto-note-seg-item"
+                  onClick={() => onScrollToLine?.(seg.line_start, seg.line_end)}
+                >
+                  <span className="proto-note-seg-range">
+                    L{seg.line_start}–{seg.line_end}
+                  </span>
+                  {seg.topic_name && (
+                    <span className="proto-note-seg-topic">{seg.topic_name}</span>
+                  )}
+                  {seg.is_credential && (
+                    <span className="proto-note-seg-cred">cred</span>
+                  )}
+                  {seg.summary && (
+                    <p className="proto-note-seg-summary">{seg.summary}</p>
+                  )}
+                  {seg.keywords.length > 0 && (
+                    <div className="proto-note-seg-keywords">
+                      {seg.keywords.slice(0, 6).map((kw, ki) => (
+                        <span key={ki} className="proto-tag-keyword">{kw}</span>
+                      ))}
+                      {seg.keywords.length > 6 && (
+                        <span className="proto-tag-keyword" style={{ opacity: 0.5 }}>+{seg.keywords.length - 6}</span>
+                      )}
+                    </div>
+                  )}
+                </button>
+              ))}
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

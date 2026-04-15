@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { X, FileText, Loader2 } from "lucide-react";
 import { cn } from "../../lib/cn";
 import * as api from "../../lib/api";
@@ -13,6 +13,7 @@ export function SourcePreview({ sourceRef, onClose }: Props) {
   const [data, setData] = useState<SourcePreviewData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const highlightRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -29,39 +30,47 @@ export function SourcePreview({ sourceRef, onClose }: Props) {
       .finally(() => setLoading(false));
   }, [sourceRef]);
 
+  // Scroll to highlighted line after data loads
+  useEffect(() => {
+    if (data && highlightRef.current) {
+      highlightRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [data]);
+
   const fileName = data?.file?.split("/").pop() || sourceRef;
 
   return (
-    <div className="flex flex-col h-full bg-bg-sidebar border-l border-border">
-      <div className="h-10 flex items-center px-3 gap-2 border-b border-border shrink-0">
-        <FileText size={13} className="text-text-muted" />
-        <span className="text-[11px] text-text-secondary font-mono truncate flex-1">
-          {fileName}:{data?.target_line}
-        </span>
-        <button onClick={onClose} className="p-1 rounded hover:bg-bg-hover transition-colors">
-          <X size={13} className="text-text-muted" />
+    <div className="proto-preview-panel">
+      <div className="proto-preview-header">
+        <FileText size={13} className="proto-preview-header-icon" />
+        <span className="proto-preview-header-file">{fileName}</span>
+        {data?.target_line && (
+          <span className="proto-preview-header-line">:{data.target_line}</span>
+        )}
+        <button type="button" onClick={onClose} className="proto-preview-close" aria-label="Close preview">
+          <X size={13} />
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto font-mono text-[12px] leading-relaxed">
+      <div className="proto-preview-body">
         {loading && (
-          <div className="flex items-center gap-2 p-4 text-text-muted">
-            <Loader2 size={13} className="animate-spin" /> Loading...
+          <div className="proto-preview-loading">
+            <Loader2 size={14} className="animate-spin" />
+            <span>Loading source...</span>
           </div>
         )}
-        {error && <div className="p-4 text-danger text-[12px]">{error}</div>}
+        {error && <div className="proto-preview-error">{error}</div>}
         {data && data.lines.map((line) => (
           <div
             key={line.line}
+            ref={line.highlight ? highlightRef : undefined}
             className={cn(
-              "flex px-3 py-px",
-              line.highlight ? "bg-warning/8" : "hover:bg-bg-hover"
+              "proto-preview-line",
+              line.highlight && "proto-preview-line-highlight"
             )}
           >
-            <span className="w-8 text-right text-text-muted/40 select-none shrink-0 mr-3 tabular-nums">
-              {line.line}
-            </span>
-            <span className={cn("flex-1 whitespace-pre-wrap", line.highlight ? "text-text-primary" : "text-text-secondary")}>
+            <span className="proto-preview-line-num">{line.line}</span>
+            <span className={cn("proto-preview-line-text", line.highlight && "proto-preview-line-text-active")}>
               {line.text}
             </span>
           </div>

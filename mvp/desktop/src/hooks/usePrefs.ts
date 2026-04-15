@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
+import { saveRawPathForHotkey } from "@/lib/electron";
 
 const PREF_KEY = "intellinote-prefs";
 
@@ -25,7 +26,7 @@ export function usePrefs() {
     localStorage.setItem(PREF_KEY, JSON.stringify(prefs));
     // Sync rawPath to Electron main process for global hotkey
     try {
-      if (window.desktop && prefs.rawPath) window.desktop.invoke("save_raw_path_for_hotkey", { rawPath: prefs.rawPath });
+      if (prefs.rawPath) saveRawPathForHotkey(prefs.rawPath).catch(() => {});
     } catch {}
   }, [prefs]);
 

@@ -36,6 +36,9 @@ class Settings:
     )
     ingest_ai_model: str = os.getenv("INGEST_AI_MODEL", "")
 
+    # OCR languages for scanned PDF import (e.g. "chi_sim+eng")
+    ocr_langs: str = os.getenv("OCR_LANGS", "")
+
     @property
     def effective_embed_base_url(self) -> str:
         return self.embed_base_url or self.provider_base_url
