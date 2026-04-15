@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 
-export type ThemeMode = "system" | "light" | "dark";
+export type ThemeMode = "system" | "light" | "dark" | "niho";
 
 const THEME_KEY = "intellinote-theme";
 

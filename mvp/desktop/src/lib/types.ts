@@ -73,12 +73,7 @@ export type ChatResponse = {
   answer: string;
   evidence: SearchResult[];
   latency_ms: number;
-};
-
-export type DeepChatResponse = ChatResponse & {
-  triage: string;
-  triage_ms: number;
-  expanded_source: { files: string[]; total_chars: number } | null;
+  source_files?: string[];
 };
 
 export type FeedbackResponse = {

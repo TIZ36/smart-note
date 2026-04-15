@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Sparkles, Zap, Send, BookOpen, MessageSquare, Layers } from "lucide-react";
+import { Sparkles, Zap, Send, BookOpen, MessageSquare } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { SearchBar } from "./SearchBar";
 import { AnswerPanel } from "./AnswerPanel";
@@ -44,7 +44,7 @@ export function SearchPage({ searchState: s, tags }: Props) {
   const [followUp, setFollowUp] = useState("");
   const [highlightIdx, setHighlightIdx] = useState<number | null>(null);
   const [wikiTopicsFound, setWikiTopicsFound] = useState<Record<string, number>>({});
-  const [selectedWikiIds, setSelectedWikiIds] = useState<Set<number | string>>(new Set());
+  const cachedSourceFiles = useRef<string[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   function handleWikiToggle(topic: string) {
@@ -76,7 +76,7 @@ export function SearchPage({ searchState: s, tags }: Props) {
       s.setIsAdaptive(false);
       setFollowUp("");
       setWikiTopicsFound({});
-      setSelectedWikiIds(new Set());
+      cachedSourceFiles.current = [];
 
       // Stage 1: Recall
       // When @topic is selected, use it as tag_filter for focused wiki lookup
@@ -129,86 +129,40 @@ export function SearchPage({ searchState: s, tags }: Props) {
     [s]
   );
 
-  /** Manually trigger AI Q&A with note evidence + selected wiki as context */
+  /** Ask AI — auto-includes all wiki results, caches source_files for follow-ups */
   async function handleAskAI() {
     if (stages.answer.status === "running") return;
     const searchQuery = s.activeQuery;
     if (!searchQuery) return;
 
-    // Merge note evidence IDs + selected wiki chunk IDs
-    const wikiIds = [...selectedWikiIds].filter((id): id is number => typeof id === "number");
-    const allEvidenceIds = [...s.lastEvidenceIds.current, ...wikiIds];
+    // Auto-include all wiki chunk IDs + note evidence
+    const allWikiIds = s.recallResults
+      .filter((r) => (r.is_wiki || r.dimension?.startsWith("wiki:")) && typeof r.id === "number")
+      .map((r) => r.id as number);
+    const allEvidenceIds = [...new Set([...s.lastEvidenceIds.current, ...allWikiIds])];
 
     s.setConversation([]);
     s.setRelatedQuestions([]);
+    cachedSourceFiles.current = [];
     setStages((st) => ({ ...st, answer: { status: "running" } }));
     try {
       const chatData = await api.chat(searchQuery, allEvidenceIds, []);
+      // Cache source_files for deep follow-ups
+      cachedSourceFiles.current = chatData.source_files || [];
+
       const userTurn: ConversationTurn = { role: "user", content: searchQuery, timestamp: Date.now() };
       const aiTurn: ConversationTurn = { role: "assistant", content: chatData.answer, answerId: chatData.answer_id, timestamp: Date.now() };
       s.setConversation([userTurn, aiTurn]);
       setStages((st) => ({ ...st, answer: { status: "done", ms: chatData.latency_ms } }));
 
-      const dims = new Set((chatData.evidence || []).map((e: any) => e.dimension).filter(Boolean));
-      const suggestions = [...dims].slice(0, 3).map((dim) => `${dim}相关的其他内容?`);
-      if (suggestions.length === 0) suggestions.push(`关于 ${searchQuery} 的更多信息?`);
-      s.setRelatedQuestions(suggestions);
-    } catch {
-      setStages((st) => ({ ...st, answer: { status: "error" } }));
-    }
-  }
-
-  /** Deep AI: two-round — triage sources then expand best for deep answer */
-  async function handleDeepAsk() {
-    if (stages.answer.status === "running") return;
-    const searchQuery = s.activeQuery;
-    if (!searchQuery) return;
-
-    const wikiIds = [...selectedWikiIds].filter((id): id is number => typeof id === "number");
-    const allEvidenceIds = [...s.lastEvidenceIds.current, ...wikiIds];
-
-    s.setConversation([]);
-    s.setRelatedQuestions([]);
-    setStages((st) => ({ ...st, answer: { status: "running" } }));
-    try {
-      const data = await api.deepChat(searchQuery, allEvidenceIds);
-
-      const turns: ConversationTurn[] = [
-        { role: "user", content: searchQuery, timestamp: Date.now() },
-      ];
-
-      // Show triage as first assistant turn if we also got a deep answer
-      if (data.triage && data.expanded_source) {
-        const sourceInfo = data.expanded_source.files.map((f: string) => f.split("/").pop()).join(", ");
-        turns.push({
-          role: "assistant",
-          content: `**Source triage** (${data.triage_ms}ms)\n\n${data.triage}\n\n> Expanding full content from: ${sourceInfo}`,
-          timestamp: Date.now(),
-        });
+      // Show source hint if we have cached files for deeper follow-up
+      if (cachedSourceFiles.current.length > 0) {
+        const fileNames = cachedSourceFiles.current.map((f) => f.split("/").pop()).join(", ");
+        s.setRelatedQuestions([`Tell me more details from ${fileNames}`]);
       }
-
-      // Final deep answer
-      turns.push({
-        role: "assistant",
-        content: data.answer,
-        answerId: data.answer_id,
-        timestamp: Date.now(),
-      });
-
-      s.setConversation(turns);
-      setStages((st) => ({ ...st, answer: { status: "done", ms: data.latency_ms } }));
     } catch {
       setStages((st) => ({ ...st, answer: { status: "error" } }));
     }
-  }
-
-  function handleWikiSelect(id: number | string) {
-    setSelectedWikiIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
   }
 
   async function handleFollowUp() {
@@ -220,19 +174,25 @@ export function SearchPage({ searchState: s, tags }: Props) {
     s.setConversation((prev) => [...prev, userTurn]);
 
     setStages((st) => ({ ...st, answer: { status: "running" } }));
+    // Scroll to show loading dots
+    setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }), 50);
     try {
       const history = s.getChatHistory();
-      const chatData = await api.chat(q, s.lastEvidenceIds.current, history);
+      // Follow-up uses cached source_files — backend reads full docs for deep context
+      const chatData = await api.chat(q, s.lastEvidenceIds.current, history, cachedSourceFiles.current);
       const aiTurn: ConversationTurn = { role: "assistant", content: chatData.answer, answerId: chatData.answer_id, timestamp: Date.now() };
       s.setConversation((prev) => [...prev, aiTurn]);
       setStages((st) => ({ ...st, answer: { status: "done", ms: chatData.latency_ms } }));
+      // Update source cache if new sources found
+      if (chatData.source_files && chatData.source_files.length > 0) {
+        cachedSourceFiles.current = chatData.source_files;
+      }
     } catch {
       const errTurn: ConversationTurn = { role: "assistant", content: "Request failed.", timestamp: Date.now() };
       s.setConversation((prev) => [...prev, errTurn]);
       setStages((st) => ({ ...st, answer: { status: "error" } }));
     }
 
-    // Scroll to bottom of conversation
     setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }), 100);
   }
 
@@ -391,7 +351,7 @@ export function SearchPage({ searchState: s, tags }: Props) {
                       </div>
                     ))}
 
-                    {/* Loading indicator for pending AI response */}
+                    {/* Loading dots — shown whenever AI is generating a response */}
                     {stages.answer.status === "running" && (
                       <div className="proto-conversation-turn proto-conversation-assistant">
                         <span className="proto-conversation-role">A</span>
@@ -426,16 +386,9 @@ export function SearchPage({ searchState: s, tags }: Props) {
               {/* Manual "Ask AI" button — shown when AI is on, results exist, no conversation yet */}
               {s.aiEnabled && s.conversation.length === 0 && stages.answer.status !== "running" && stages.rerank.status === "done" && (
                 <div className="proto-ask-ai-row">
-                  <button type="button" onClick={handleAskAI} className="proto-btn proto-btn-secondary proto-ask-ai-btn">
+                  <button type="button" onClick={handleAskAI} className="proto-btn proto-btn-primary proto-ask-ai-btn">
                     <MessageSquare size={14} />
-                    Quick
-                    {selectedWikiIds.size > 0 && (
-                      <span className="proto-ask-ai-wiki-count">+{selectedWikiIds.size} wiki</span>
-                    )}
-                  </button>
-                  <button type="button" onClick={handleDeepAsk} className="proto-btn proto-btn-primary proto-ask-ai-btn">
-                    <Layers size={14} />
-                    Deep
+                    Ask AI
                   </button>
                 </div>
               )}
@@ -483,21 +436,13 @@ export function SearchPage({ searchState: s, tags }: Props) {
                   <p className="proto-sources-label proto-sources-label-icon">
                     <BookOpen size={14} className="proto-wiki-badge-icon" />
                     Wiki ({wikiResults.length})
-                    {s.aiEnabled && s.conversation.length === 0 && (
-                      <span className="proto-wiki-select-hint">click to select as AI context</span>
-                    )}
+                    {s.aiEnabled && <span className="proto-wiki-auto-hint">auto-included in AI</span>}
                   </p>
                   <div className="proto-sources-grid">
                     {wikiResults.map((r, i) => {
                       const globalIdx = noteResults.length + i + 1;
-                      const isSelected = selectedWikiIds.has(r.id);
                       return (
-                        <div key={r.id} id={`source-card-${globalIdx}`} className={cn(s.aiEnabled && s.conversation.length === 0 && "proto-wiki-selectable", isSelected && "proto-wiki-selected")}>
-                          {s.aiEnabled && s.conversation.length === 0 && (
-                            <label className="proto-wiki-checkbox" onClick={(e) => e.stopPropagation()}>
-                              <input type="checkbox" checked={isSelected} onChange={() => handleWikiSelect(r.id)} />
-                            </label>
-                          )}
+                        <div key={r.id} id={`source-card-${globalIdx}`}>
                           <SourceCard
                             index={globalIdx}
                             result={r}

@@ -90,6 +90,33 @@
   --radius-proto: 5px;
 }
 
+/* ── Niho theme — terminal/hacker aesthetic inspired by gmgn.ai ── */
+:root[data-theme="niho"] {
+  --color-bg-primary: oklch(0.08 0.005 160);
+  --color-bg-sidebar: oklch(0.06 0.006 160);
+  --color-bg-elevated: oklch(0.11 0.008 160);
+  --color-bg-surface: oklch(0.10 0.006 160);
+  --color-bg-hover: oklch(0.14 0.01 160);
+  --color-bg-active: oklch(0.18 0.012 160);
+  --color-bg-input: oklch(0.06 0.005 160);
+  --color-bg-pipeline-active: oklch(0.12 0.015 155);
+
+  --color-text-primary: oklch(0.92 0.02 155);
+  --color-text-secondary: oklch(0.62 0.02 160);
+  --color-text-muted: oklch(0.40 0.015 160);
+
+  --color-accent: oklch(0.75 0.2 150);
+  --color-accent-hover: oklch(0.68 0.22 150);
+  --color-success: oklch(0.75 0.2 150);
+  --color-danger: oklch(0.62 0.2 25);
+  --color-warning: oklch(0.72 0.16 85);
+  --color-wiki: oklch(0.65 0.15 200);
+
+  --color-border: oklch(0.16 0.01 160);
+  --color-ring: oklch(0.25 0.02 155);
+  --radius-proto: 4px;
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 html, body, #app {
@@ -104,10 +131,20 @@ html, body, #app {
   -webkit-font-smoothing: antialiased;
 }
 
-::-webkit-scrollbar { width: 6px; height: 6px; }
+/* Thin overlay scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--color-ring); }
+::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--color-text-muted) 15%, transparent);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--color-text-muted) 30%, transparent);
+}
+::-webkit-scrollbar-thumb:active {
+  background: color-mix(in oklab, var(--color-text-muted) 45%, transparent);
+}
+::-webkit-scrollbar-corner { background: transparent; }
 
 /* Markdown */
 .markdown-content h1, .markdown-content h2, .markdown-content h3 {

@@ -70,12 +70,8 @@ class ChatRequest(BaseModel):
     query: str
     evidence_ids: list[int] = []
     history: list[ChatHistoryItem] = []  # Previous Q&A for follow-ups
+    source_files: list[str] = []  # Full source files for deep context (populated by frontend from prior response)
     topk: int = 15
-
-
-class DeepChatRequest(BaseModel):
-    query: str
-    evidence_ids: list[int] = []
 
 
 class FeedbackRequest(BaseModel):
@@ -156,121 +152,24 @@ def _chat_completion(system: str, messages: list[dict]) -> str:
     return data["choices"][0]["message"]["content"]
 
 
-@app.post("/chat")
-def api_chat(req: ChatRequest) -> dict:
-    """Stage 3: Generate AI answer from evidence context."""
-    start = time.time()
-
-    # If pre-filtered evidence IDs provided, use those
-    if req.evidence_ids:
-        with connect() as conn:
-            placeholders = ",".join("?" for _ in req.evidence_ids)
-            rows = conn.execute(
-                f"SELECT id, text, source_ref, dimension FROM chunks WHERE id IN ({placeholders})",
-                req.evidence_ids,
-            ).fetchall()
-        evidence = [
-            {
-                "id": r["id"],
-                "text": r["text"],
-                "source_ref": r["source_ref"],
-                "dimension": r["dimension"],
-            }
-            for r in rows
-        ]
-    else:
-        # Fallback: run search
-        sr = search(req.query, req.topk)
-        evidence = sr["results"]
-
-    # Send ALL evidence to LLM — let the model decide what's relevant
-    evidence_to_send = evidence
-
-    evidence_lines = []
-    for i, e in enumerate(evidence_to_send):
-        text = e.get("text", "").strip()
-        ref = e.get("source_ref", "")
-        if text:
-            evidence_lines.append(f"[{i+1}] ({ref}) {text}")
-
-    evidence_text = "\n".join(evidence_lines)
-
-    user_prompt = (
-        f"问题: {req.query}\n\n"
-        f"以下是从知识库中检索到的 {len(evidence_lines)} 条相关内容片段，可能来自不同文档（需求、技术方案、测试、产品等）。\n"
-        f"请综合所有片段回答问题。如果信息分布在多个片段中，请跨片段整合。\n"
-        f"引用时使用 [1] [2] 等编号标注来源。如果片段中包含表格，请保留表格格式。\n\n"
-        f"内容片段:\n{evidence_text}\n\n"
-        f"请直接回答问题，引用具体来源。"
-    )
-
-    # Build messages with conversation history for follow-ups
-    messages: list[dict] = []
-    for h in req.history[-6:]:  # Keep last 3 Q&A pairs max
-        messages.append({"role": h.role, "content": h.content})
-    messages.append({"role": "user", "content": user_prompt})
-
-    try:
-        answer = _chat_completion(
-            "You are a precise knowledge assistant for a team documentation system. "
-            "The knowledge base contains requirements, technical designs, test plans, product specs, and meeting notes. "
-            "Always cite evidence using [N] notation. Synthesize information across multiple documents when needed. "
-            "If a question spans multiple document types (e.g. requirement + test plan), connect them explicitly. "
-            "Preserve table formatting in your answer when the source contains tables. "
-            "Answer in the same language as the question. Never fabricate information not in the evidence.",
-            messages,
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc))
-
-    latency = int((time.time() - start) * 1000)
-    evidence_ids = [e.get("id") for e in evidence_to_send if e.get("id")]
-    with connect() as conn:
-        qid_row = conn.execute(
-            "SELECT id FROM query_logs ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-        qid = qid_row["id"] if qid_row else 0
-        conn.execute(
-            "INSERT INTO answer_logs(query_id, answer_text, evidence_refs, model_name, latency_ms) VALUES(?, ?, ?, ?, ?)",
-            (
-                qid,
-                answer,
-                json.dumps(evidence_ids),  # Store chunk IDs, not source_refs
-                settings.provider_chat_model,
-                latency,
-            ),
-        )
-        answer_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-        conn.commit()
-
-    return {
-        "answer_id": answer_id,
-        "answer": answer,
-        "evidence": evidence,
-        "latency_ms": latency,
-    }
-
-
-# ── Deep Chat: Two-round AI with source expansion ──
-
 def _read_full_source(source_file: str) -> str:
-    """Read full text of a source file (for deep context injection)."""
+    """Read full text of a source file."""
     p = Path(source_file)
     if not p.exists():
         return ""
     try:
-        return p.read_text(encoding="utf-8", errors="ignore")
+        text = p.read_text(encoding="utf-8", errors="ignore")
+        if len(text) > 50000:
+            text = text[:50000] + f"\n\n[... truncated, {len(text) - 50000} more chars ...]"
+        return text
     except Exception:
         return ""
 
 
-@app.post("/chat/deep")
-def api_chat_deep(req: DeepChatRequest) -> dict:
-    """Two-round deep chat: triage sources → expand best → final answer.
-
-    Round 1: AI evaluates chunk snippets, identifies most relevant source
-    Round 2: System fetches full source content, AI gives deep answer
-    """
+@app.post("/chat")
+def api_chat(req: ChatRequest) -> dict:
+    """Unified AI chat — first call returns quick answer + source_files cache.
+    Follow-ups with source_files get deep context from full documents."""
     start = time.time()
 
     # Load evidence chunks
@@ -283,114 +182,72 @@ def api_chat_deep(req: DeepChatRequest) -> dict:
             ).fetchall()
         evidence = [dict(r) for r in rows]
     else:
-        sr = search(req.query, 20)
+        sr = search(req.query, req.topk)
         evidence = sr["results"]
 
-    if not evidence:
-        return {"answer_id": 0, "answer": "No evidence found.", "evidence": [], "latency_ms": 0,
-                "triage": "", "expanded_source": None}
-
-    # ── Round 1: Triage ──
-    snippet_lines = []
+    # Build evidence text for the prompt
+    evidence_lines = []
     for i, e in enumerate(evidence):
-        text_preview = (e.get("text", "") or "")[:200].strip()
+        text = (e.get("text", "") or "").strip()
         ref = e.get("source_ref", "")
-        dim = e.get("dimension", "")
-        snippet_lines.append(f"[{i+1}] dim={dim} ref={ref}\n{text_preview}")
+        if text:
+            evidence_lines.append(f"[{i+1}] ({ref}) {text}")
+    evidence_text = "\n".join(evidence_lines)
 
-    triage_prompt = (
-        f"问题: {req.query}\n\n"
-        f"以下是从知识库检索到的 {len(snippet_lines)} 条内容摘要。"
-        f"请判断哪些来源最可能包含完整答案。\n\n"
-        + "\n\n".join(snippet_lines)
-        + "\n\n请回复JSON格式:\n"
-        '{"best_sources": [编号], "reason": "为什么这些来源最相关", "preliminary_answer": "基于摘要的初步回答", "need_full_doc": true/false}'
-    )
-
-    try:
-        triage_raw = _chat_completion(
-            "You are a source evaluator. Analyze evidence snippets and identify the most relevant sources. "
-            "Always respond with valid JSON. The best_sources array should contain 1-3 source numbers.",
-            [{"role": "user", "content": triage_prompt}],
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Triage failed: {exc}")
-
-    # Parse triage response
-    best_indices = []
-    need_full = True
-    triage_answer = triage_raw
-    try:
-        # Extract JSON from response (may have markdown code blocks)
-        cleaned = triage_raw.strip()
-        if "```" in cleaned:
-            cleaned = cleaned.split("```")[1]
-            if cleaned.startswith("json"):
-                cleaned = cleaned[4:]
-            cleaned = cleaned.strip()
-        triage_parsed = json.loads(cleaned)
-        best_indices = [int(i) - 1 for i in triage_parsed.get("best_sources", []) if 0 < int(i) <= len(evidence)]
-        need_full = triage_parsed.get("need_full_doc", True)
-        triage_answer = triage_parsed.get("preliminary_answer", triage_raw)
-    except (json.JSONDecodeError, ValueError, TypeError):
-        # Fallback: use top 3 evidence
-        best_indices = list(range(min(3, len(evidence))))
-
-    triage_ms = int((time.time() - start) * 1000)
-
-    # ── Round 2: Deep answer with expanded source ──
-    expanded_source = None
-    if need_full and best_indices:
-        # Collect source files from best evidence
-        source_files_seen = set()
+    # Deep mode: if source_files provided (follow-up), inject full document content
+    deep_context = ""
+    if req.source_files:
         full_texts = []
-        for idx in best_indices:
-            if idx >= len(evidence):
-                continue
-            sf = evidence[idx].get("source_file", "")
-            if sf and sf not in source_files_seen:
-                source_files_seen.add(sf)
-                full_text = _read_full_source(sf)
-                if full_text:
-                    fname = Path(sf).name
-                    # Cap per-source to avoid token overflow
-                    if len(full_text) > 50000:
-                        full_text = full_text[:50000] + f"\n\n[... truncated, {len(full_text) - 50000} more chars ...]"
-                    full_texts.append(f"=== Source: {fname} ===\n{full_text}")
-
+        for sf in req.source_files[:3]:  # Max 3 sources
+            full = _read_full_source(sf)
+            if full:
+                full_texts.append(f"=== {Path(sf).name} ===\n{full}")
         if full_texts:
-            expanded_source = {
-                "files": list(source_files_seen),
-                "total_chars": sum(len(t) for t in full_texts),
-            }
-
-            deep_prompt = (
-                f"问题: {req.query}\n\n"
-                f"初步分析: {triage_answer}\n\n"
-                f"以下是最相关文档的完整内容，请基于完整上下文给出深度回答。\n"
-                f"引用时使用文档名标注来源。\n\n"
+            deep_context = (
+                "\n\n以下是最相关文档的完整内容（供深度参考）:\n\n"
                 + "\n\n".join(full_texts)
-                + "\n\n请给出完整、深入的回答。"
             )
 
-            try:
-                answer = _chat_completion(
-                    "You are a deep knowledge assistant. You have been given full document content for the most relevant sources. "
-                    "Provide a thorough, well-structured answer. Cite specific sections. "
-                    "Answer in the same language as the question. Use markdown formatting.",
-                    [{"role": "user", "content": deep_prompt}],
-                )
-            except Exception as exc:
-                # Fallback to triage answer
-                answer = triage_answer
-        else:
-            answer = triage_answer
-    else:
-        answer = triage_answer
+    user_prompt = (
+        f"问题: {req.query}\n\n"
+        f"以下是从知识库中检索到的 {len(evidence_lines)} 条相关内容片段。\n"
+        f"请综合所有片段回答问题。引用时使用 [1] [2] 等编号标注来源。\n\n"
+        f"内容片段:\n{evidence_text}"
+        f"{deep_context}\n\n"
+        f"请直接回答问题，引用具体来源。"
+    )
+
+    messages: list[dict] = []
+    for h in req.history[-6:]:
+        messages.append({"role": h.role, "content": h.content})
+    messages.append({"role": "user", "content": user_prompt})
+
+    system = (
+        "You are a precise knowledge assistant. "
+        "Always cite evidence using [N] notation. "
+        "Answer in the same language as the question. Never fabricate information not in the evidence."
+    )
+    if deep_context:
+        system += " You have full document content available — give a thorough, deep answer citing specific sections."
+
+    try:
+        answer = _chat_completion(system, messages)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
 
     latency = int((time.time() - start) * 1000)
 
-    # Save to answer_logs
+    # Extract top source files for caching (deduplicated, top 3)
+    seen_files: set[str] = set()
+    top_source_files: list[str] = []
+    for e in evidence:
+        sf = e.get("source_file", "")
+        if sf and sf not in seen_files and Path(sf).exists():
+            seen_files.add(sf)
+            top_source_files.append(sf)
+            if len(top_source_files) >= 3:
+                break
+
     evidence_ids = [e.get("id") for e in evidence if e.get("id")]
     with connect() as conn:
         qid_row = conn.execute("SELECT id FROM query_logs ORDER BY id DESC LIMIT 1").fetchone()
@@ -407,9 +264,7 @@ def api_chat_deep(req: DeepChatRequest) -> dict:
         "answer": answer,
         "evidence": evidence,
         "latency_ms": latency,
-        "triage": triage_answer,
-        "triage_ms": triage_ms,
-        "expanded_source": expanded_source,
+        "source_files": top_source_files,
     }
 
 
@@ -610,7 +465,45 @@ def api_wiki_graph() -> dict:
             })
             topics[topic]["chunk_count"] += row["chunk_count"]
 
-    # Build edges: shared keywords between topics
+    # ── Add user's note as a node (non-wiki tag_segments) ──
+    with connect() as conn2:
+        note_seg_rows = conn2.execute(
+            "SELECT tag, topic_name, summary, keywords_json, source_file FROM tag_segments WHERE tag NOT LIKE 'wiki:%'"
+        ).fetchall()
+        note_chunk_count = conn2.execute(
+            "SELECT COUNT(1) c FROM chunks WHERE dimension NOT LIKE 'wiki:%'"
+        ).fetchone()["c"]
+        note_file_rows = conn2.execute(
+            "SELECT DISTINCT source_file, COUNT(1) chunk_count FROM chunks WHERE dimension NOT LIKE 'wiki:%' GROUP BY source_file"
+        ).fetchall()
+
+    # Collect note keywords from all note tag_segments
+    note_keywords: set[str] = set()
+    note_tags: list[str] = []
+    for row in note_seg_rows:
+        tag = row["tag"]
+        if tag not in note_tags:
+            note_tags.append(tag)
+        try:
+            kws = json.loads(row["keywords_json"]) if row["keywords_json"] else []
+            note_keywords.update(k.lower() for k in kws if isinstance(k, str) and len(k) > 2)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # Add note as a special node
+    if note_chunk_count > 0:
+        topics["__note__"] = {
+            "id": "__note__",
+            "name": "My Notes",
+            "summary": f"{len(note_tags)} tags, {note_chunk_count} chunks",
+            "keywords": list(note_keywords)[:100],
+            "folder": "",
+            "files": [{"path": r["source_file"], "chunks": r["chunk_count"]} for r in note_file_rows[:5]],
+            "chunk_count": note_chunk_count,
+            "is_note": True,
+        }
+
+    # Build edges: shared keywords between all nodes (wiki + note)
     edges = []
     topic_list = list(topics.values())
     for i in range(len(topic_list)):
@@ -618,7 +511,6 @@ def api_wiki_graph() -> dict:
         for j in range(i + 1, len(topic_list)):
             kws_j = set(topic_list[j]["keywords"])
             shared = kws_i & kws_j
-            # Only meaningful shared keywords (filter out stopwords)
             shared = {w for w in shared if len(w) > 2}
             if len(shared) >= 2:
                 edges.append({
@@ -628,17 +520,20 @@ def api_wiki_graph() -> dict:
                     "weight": len(shared),
                 })
 
-    # Clean up keywords from response (too large)
+    # Clean up keywords from response
     nodes = []
     for t in topic_list:
-        nodes.append({
+        node = {
             "id": t["id"],
             "name": t["name"],
             "summary": t["summary"],
             "folder": t["folder"],
             "files": t["files"],
             "chunk_count": t["chunk_count"],
-        })
+        }
+        if t.get("is_note"):
+            node["is_note"] = True
+        nodes.append(node)
 
     return {"nodes": nodes, "edges": edges}
 

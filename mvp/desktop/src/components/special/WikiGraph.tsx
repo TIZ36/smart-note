@@ -88,11 +88,18 @@ export function WikiGraph({ onSelectSource }: Props) {
         {/* Nodes */}
         {nodes.map((node) => {
           const isSelected = selected === node.id;
-          const r = Math.max(16, Math.min(28, 10 + node.chunk_count * 0.5));
+          const isNote = !!(node as any).is_note;
+          const r = isNote
+            ? Math.max(22, Math.min(32, 14 + node.chunk_count * 0.3))
+            : Math.max(16, Math.min(28, 10 + node.chunk_count * 0.5));
           return (
             <g
               key={node.id}
-              className={cn("proto-wiki-graph-node", isSelected && "proto-wiki-graph-node-active")}
+              className={cn(
+                "proto-wiki-graph-node",
+                isSelected && "proto-wiki-graph-node-active",
+                isNote && "proto-wiki-graph-node-note"
+              )}
               onClick={() => setSelected(isSelected ? null : node.id)}
               style={{ cursor: "pointer" }}
             >

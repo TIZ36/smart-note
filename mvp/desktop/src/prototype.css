@@ -539,14 +539,14 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 }
 
 .proto-results-topbar {
-  padding: 16px 24px 12px;
+  padding: 8px 16px 6px;
   border-bottom: 1px solid var(--color-border);
 }
 
 .proto-results-topbar-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .proto-results-topbar-search {
@@ -570,23 +570,23 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 
 /* Answer + sources */
 .proto-answer-section {
-  padding: 24px 32px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--color-border);
-  max-width: 720px;
 }
 
 .proto-answer-label {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--color-text-secondary);
-  margin-bottom: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
 }
 
 .proto-answer-body {
   font-size: 14px;
   line-height: 1.75;
   color: var(--color-text-primary);
-  max-width: 60ch;
 }
 
 .proto-answer-body p {
@@ -601,9 +601,93 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   color: var(--color-accent);
 }
 
+/* ── Markdown content styling (AI answers) ── */
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4 {
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 1em 0 0.4em;
+  line-height: 1.3;
+}
+.markdown-content h1 { font-size: 18px; }
+.markdown-content h2 { font-size: 16px; }
+.markdown-content h3 { font-size: 15px; }
+.markdown-content h4 { font-size: 14px; }
+
+.markdown-content ul,
+.markdown-content ol {
+  padding-left: 20px;
+  margin: 0.4em 0;
+}
+.markdown-content li {
+  margin: 0.2em 0;
+}
+.markdown-content li::marker {
+  color: var(--color-text-muted);
+}
+
+.markdown-content blockquote {
+  margin: 0.5em 0;
+  padding: 8px 14px;
+  border-left: 3px solid color-mix(in oklab, var(--color-accent) 30%, transparent);
+  background: color-mix(in oklab, var(--color-accent) 4%, transparent);
+  border-radius: 0 var(--radius-proto) var(--radius-proto) 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.markdown-content code {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.9em;
+  background: var(--color-bg-hover);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.markdown-content pre {
+  margin: 0.5em 0;
+  padding: 12px 16px;
+  background: var(--color-bg-elevated);
+  border-radius: var(--radius-proto);
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.markdown-content pre code {
+  background: none;
+  padding: 0;
+}
+
+.markdown-content table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  font-size: 13px;
+  width: 100%;
+}
+.markdown-content th,
+.markdown-content td {
+  border: 1px solid var(--color-border);
+  padding: 6px 10px;
+  text-align: left;
+}
+.markdown-content th {
+  background: var(--color-bg-elevated);
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.markdown-content hr {
+  border: none;
+  border-top: 1px solid var(--color-border);
+  margin: 1em 0;
+}
+
 .proto-answer-feedback {
-  margin-top: 16px;
-  padding-top: 12px;
+  margin-top: 8px;
+  padding-top: 8px;
   border-top: 1px solid var(--color-border);
 }
 
@@ -662,14 +746,14 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 }
 
 .proto-sources-section {
-  padding: 24px 32px;
+  padding: 10px 16px;
 }
 
 .proto-sources-label {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--color-text-secondary);
-  margin-bottom: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  margin-bottom: 6px;
 }
 
 .proto-sources-label-icon {
@@ -679,15 +763,18 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 }
 
 .proto-sources-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
-  gap: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--color-border);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-proto);
+  overflow: hidden;
 }
 
 .proto-source-card {
-  padding: 12px 14px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-proto);
+  padding: 6px 12px;
+  background: var(--color-bg-primary);
   cursor: pointer;
   transition: background 0.1s;
   overflow: hidden;
@@ -699,17 +786,16 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 }
 
 .proto-source-card-active {
-  border-color: color-mix(in oklab, var(--color-accent) 35%, transparent);
   background: color-mix(in oklab, var(--color-accent) 6%, transparent);
 }
 
-/* Wiki source card — subtle background tint (no border-left stripe) */
+/* Wiki source card — subtle tint */
 .proto-source-card-wiki-tint {
-  background: color-mix(in oklab, var(--color-wiki) 5%, transparent);
+  background: color-mix(in oklab, var(--color-wiki) 3%, var(--color-bg-primary));
 }
 
 .proto-source-card-wiki-tint:hover {
-  background: color-mix(in oklab, var(--color-wiki) 9%, transparent);
+  background: color-mix(in oklab, var(--color-wiki) 7%, var(--color-bg-primary));
 }
 
 .proto-wiki-badge-icon {
@@ -727,8 +813,8 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 14px;
-  margin: 0 32px;
+  padding: 6px 12px;
+  margin: 0 16px;
   font-size: 12px;
   color: var(--color-text-secondary);
   background: color-mix(in oklab, var(--color-wiki) 6%, transparent);
@@ -751,7 +837,8 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 /* ── Ask AI button row ── */
 .proto-ask-ai-row {
   display: flex;
-  padding: 8px 32px;
+  gap: 6px;
+  padding: 8px 16px;
 }
 .proto-ask-ai-btn {
   display: flex;
@@ -761,20 +848,23 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 }
 .proto-ask-ai-wiki-count {
   font-size: 11px;
-  opacity: 0.7;
+  opacity: 0.6;
   margin-left: 2px;
 }
 
-/* ── Wiki selectable cards ── */
+/* ── Wiki selectable rows ── */
 .proto-wiki-selectable {
   position: relative;
   min-width: 0;
-  overflow: hidden;
+}
+.proto-wiki-selectable .proto-source-card {
+  padding-left: 32px;
 }
 .proto-wiki-checkbox {
   position: absolute;
-  top: 6px;
-  left: 6px;
+  top: 50%;
+  left: 10px;
+  transform: translateY(-50%);
   z-index: 2;
   cursor: pointer;
 }
@@ -784,22 +874,22 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   accent-color: var(--color-wiki, var(--color-accent));
   cursor: pointer;
 }
-.proto-wiki-selected {
-  outline: 2px solid color-mix(in oklab, var(--color-wiki, var(--color-accent)) 60%, transparent);
-  border-radius: var(--radius-proto);
+.proto-wiki-selected .proto-source-card {
+  background: color-mix(in oklab, var(--color-wiki, var(--color-accent)) 6%, var(--color-bg-primary));
 }
-.proto-wiki-select-hint {
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--color-text-muted);
+.proto-wiki-auto-hint {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--color-accent);
+  opacity: 0.6;
   margin-left: 8px;
 }
 
 .proto-source-meta {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 6px;
+  gap: 5px;
+  margin-bottom: 2px;
   font-size: 11px;
   color: var(--color-text-muted);
   min-width: 0;
@@ -848,28 +938,26 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 }
 
 .proto-source-text {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--color-text-secondary);
-  line-height: 1.6;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  line-height: 1.4;
   overflow: hidden;
-  word-break: break-word;
-  overflow-wrap: break-word;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .proto-source-ref {
-  font-size: 11px;
+  font-size: 10px;
   font-family: ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text-muted);
-  margin-top: 6px;
+  margin-top: 1px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   letter-spacing: -0.01em;
   min-width: 0;
   max-width: 100%;
+  opacity: 0.7;
 }
 
 .proto-source-ref-dir {
@@ -1363,8 +1451,10 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 /* Follow-up input */
 .proto-followup-row {
   display: flex;
-  gap: 8px;
-  margin-top: 12px;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
 }
 
 .proto-followup-input {
@@ -1392,29 +1482,30 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 .proto-conversation-thread {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 0;
 }
 
 .proto-conversation-turn {
   display: flex;
   gap: 10px;
   padding: 10px 0;
-  line-height: 1.5;
+  line-height: 1.6;
 }
 
 .proto-conversation-turn + .proto-conversation-turn {
-  border-top: 1px solid var(--color-border);
+  border-top: 1px solid color-mix(in oklab, var(--color-border) 60%, transparent);
 }
 
 .proto-conversation-role {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 10px;
   font-weight: 600;
+  flex-shrink: 0;
   flex-shrink: 0;
   margin-top: 2px;
 }
@@ -1669,9 +1760,13 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   font-weight: 600;
   color: var(--color-accent);
   cursor: pointer;
-  background: color-mix(in oklab, var(--color-accent) 10%, transparent);
+  background: color-mix(in oklab, var(--color-accent) 8%, transparent);
   border: none;
   border-radius: 3px;
+  padding: 1px 4px;
+  vertical-align: baseline;
+  text-decoration: none;
+  transition: background 0.1s;
   padding: 0 3px;
   font-family: inherit;
   vertical-align: super;
@@ -1887,6 +1982,19 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 .proto-wiki-graph-node-active .proto-wiki-graph-label {
   fill: var(--color-text-primary);
   font-weight: 500;
+}
+
+/* Note node — distinct from wiki topic nodes */
+.proto-wiki-graph-node-note circle {
+  fill: color-mix(in oklab, var(--color-accent) 15%, var(--color-bg-elevated));
+  stroke: var(--color-accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 2;
+}
+
+.proto-wiki-graph-node-note .proto-wiki-graph-label {
+  fill: var(--color-accent);
+  font-weight: 600;
 }
 
 .proto-wiki-graph-detail {
@@ -2682,7 +2790,6 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 
 /* Source card loading skeleton */
 .proto-source-skeleton {
-  height: 96px;
-  border-radius: var(--radius-proto);
-  border: 1px solid var(--color-border);
+  height: 36px;
+  background: var(--color-bg-primary);
 }

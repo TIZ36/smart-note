@@ -98,7 +98,7 @@ export function SettingsPanel() {
             <h2 className="proto-form-section-title">Appearance</h2>
             <Field label="Theme">
               <div className="proto-settings-theme-group">
-                {(["system", "light", "dark"] as ThemeMode[]).map((m) => (
+                {(["system", "light", "dark", "niho"] as ThemeMode[]).map((m) => (
                   <button
                     key={m}
                     type="button"

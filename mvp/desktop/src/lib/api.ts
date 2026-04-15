@@ -68,25 +68,14 @@ export async function chat(
   query: string,
   evidenceIds: number[] = [],
   history: ChatHistoryItem[] = [],
-  topk = 10
+  sourceFiles: string[] = [],
 ): Promise<ChatResponse> {
+  const body: Record<string, unknown> = { query, evidence_ids: evidenceIds, history };
+  if (sourceFiles.length > 0) body.source_files = sourceFiles;
   const res = await fetch(`${BASE}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, evidence_ids: evidenceIds, history, topk }),
-  });
-  return res.json();
-}
-
-// Deep chat: two-round AI with source expansion
-export async function deepChat(
-  query: string,
-  evidenceIds: number[] = [],
-): Promise<import("./types").DeepChatResponse> {
-  const res = await fetch(`${BASE}/chat/deep`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, evidence_ids: evidenceIds }),
+    body: JSON.stringify(body),
   });
   return res.json();
 }
@@ -411,6 +400,7 @@ export type WikiGraphNode = {
   folder: string;
   files: { path: string; chunks: number }[];
   chunk_count: number;
+  is_note?: boolean;
 };
 
 export type WikiGraphEdge = {
