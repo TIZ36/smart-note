@@ -15,9 +15,9 @@ else
     echo "[1/4] Virtual environment exists"
 fi
 
-# 2. Install/update dependencies
+# 2. Install/update dependencies (avoid -q + tail: they hide all output until pip finishes)
 echo "[2/4] Installing dependencies..."
-.venv/bin/pip install -q -r requirements.txt 2>&1 | tail -1
+.venv/bin/pip install -r requirements.txt
 
 # 3. Kill old server process
 echo "[3/4] Stopping old server..."
