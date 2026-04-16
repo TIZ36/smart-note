@@ -765,6 +765,7 @@
   letter-spacing: 0.02em;
 }
 
+
 .proto-sidebar-footer {
   padding: 8px 12px 12px;
 }
@@ -2181,6 +2182,517 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   color: var(--color-text-muted);
   margin: 0 0 8px;
   letter-spacing: 0.01em;
+}
+
+/* ── Dashboard panel ─────────────────────────────────────────── */
+.proto-dashboard {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 48px clamp(32px, 5vw, 64px) 80px;
+  max-width: clamp(720px, 88vw, 1240px);
+  margin: 0 auto;
+}
+
+.proto-dashboard-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 8px;
+}
+
+.proto-dashboard-title {
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  margin: 0;
+}
+
+.proto-dashboard-error {
+  color: var(--color-danger);
+  font-size: 13px;
+  margin: 0 0 24px;
+}
+
+/* Narrative lead: one prose-ish line of context. Replaces the 8-tile
+   card grid from the old layout. Reads as a sentence, feels like Linear. */
+.proto-dashboard-lead {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--color-text-secondary);
+  margin: 0 0 48px;
+  max-width: 62ch;
+}
+.proto-dashboard-lead strong {
+  color: var(--color-text-primary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.proto-dashboard-lead-sep {
+  color: var(--color-text-muted);
+  opacity: 0.5;
+  margin: 0 8px;
+}
+.proto-dashboard-lead-cost {
+  color: var(--color-text-primary);
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.proto-dashboard-lead-aside {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Rhythmic section spacing — primary sections get more air than
+   follow-ups. Different from the flat 28px-everywhere from before. */
+.proto-dashboard-section {
+  margin-bottom: 40px;
+}
+.proto-dashboard-section--tight {
+  margin-bottom: 24px;
+}
+.proto-dashboard-section--loose {
+  margin-bottom: 56px;
+}
+
+/* Attribution bar — proportional horizontal strip of who did the work.
+   Replaces the 4-row list. Puts the "by Claude" narrative in one scan. */
+.proto-dashboard-bar {
+  display: flex;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--color-bg-surface);
+  margin-bottom: 14px;
+}
+.proto-dashboard-bar-segment {
+  height: 100%;
+  transition: filter 0.12s;
+}
+.proto-dashboard-bar-segment:hover {
+  filter: brightness(1.15);
+}
+.proto-dashboard-bar-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.proto-dashboard-bar-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.proto-dashboard-bar-legend-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.proto-dashboard-bar-legend-count {
+  color: var(--color-text-muted);
+  margin-left: 2px;
+}
+
+/* Lists grid — two columns on wide screens, single on narrow. Uses
+   container width via flex-basis so adjacent list sections pair up
+   instead of stacking vertically on every breakpoint. */
+.proto-dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 40px 48px;
+}
+
+.proto-dashboard-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.proto-dashboard-list-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 9px 10px;
+  margin: 0 -10px;
+  border-bottom: 1px solid var(--color-border);
+  gap: 16px;
+  min-width: 0;
+  border-radius: 4px;
+  transition: background 0.1s;
+}
+
+.proto-dashboard-list-row:hover {
+  background: var(--color-bg-surface);
+}
+
+.proto-dashboard-list-row:last-child {
+  border-bottom: none;
+}
+
+.proto-dashboard-list-primary {
+  font-size: 13px;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+
+.proto-dashboard-list-trailing {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.proto-dashboard-empty {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.proto-dashboard-hint {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin: 12px 0 0;
+  line-height: 1.5;
+}
+
+.proto-dashboard-hint code {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10px;
+  background: var(--color-bg-surface);
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--color-text-secondary);
+}
+
+/* ── Source panel (Wiki → Source) ────────────────────────────
+   Grouped list of wiki documents. Group headers are collapsible;
+   each folder under sn/source/ becomes one category. Typographic
+   hierarchy only — no badges, no color-coding. */
+.proto-source-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.proto-source-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.proto-source-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 0 8px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: color 0.12s;
+}
+
+.proto-source-group-header:hover {
+  color: var(--color-accent);
+}
+
+.proto-source-group-chevron {
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+  transition: transform 0.14s ease-out;
+}
+
+.proto-source-group-chevron-collapsed {
+  transform: rotate(-90deg);
+}
+
+.proto-source-group-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: -0.005em;
+}
+
+.proto-source-group-count {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.proto-source-list {
+  list-style: none;
+  padding: 4px 0 8px;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.proto-source-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 12px;
+  margin: 0;
+  background: transparent;
+  border: none;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.4;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  border-radius: var(--radius-proto);
+  transition: background 0.1s, color 0.1s;
+}
+
+.proto-source-row:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
+.proto-source-row-icon {
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.proto-source-row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Meta-memory Inspector ───────────────────────────────────── */
+.proto-meta-subtitle {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin: 6px 0 0;
+  max-width: 560px;
+  line-height: 1.5;
+}
+
+.proto-meta-add {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--color-bg-surface);
+  border-radius: var(--radius-proto);
+  border: 1px solid var(--color-border);
+}
+
+.proto-meta-add-textarea {
+  width: 100%;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text-primary);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-proto);
+  padding: 8px 10px;
+  resize: vertical;
+  font-family: inherit;
+  min-height: 48px;
+}
+
+.proto-meta-add-textarea:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.proto-meta-add-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.proto-meta-add-select,
+.proto-meta-add-scope {
+  font-size: 12px;
+  color: var(--color-text-primary);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-proto);
+  padding: 5px 8px;
+  font-family: inherit;
+}
+
+.proto-meta-add-select {
+  cursor: pointer;
+}
+
+.proto-meta-add-scope {
+  flex: 1;
+  min-width: 0;
+}
+
+.proto-meta-add-select:focus,
+.proto-meta-add-scope:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.proto-meta-add-controls .proto-btn {
+  margin-left: auto;
+}
+
+.proto-meta-hint {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.proto-meta-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.proto-meta-item {
+  padding: 10px 12px;
+  border-radius: var(--radius-proto);
+  border: 1px solid transparent;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.proto-meta-item:hover {
+  background: var(--color-bg-surface);
+  border-color: var(--color-border);
+}
+
+.proto-meta-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.proto-meta-kind {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--color-bg-surface);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+}
+
+.proto-meta-kind-rule {
+  color: var(--color-accent);
+  border-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+}
+
+.proto-meta-kind-vocab {
+  color: #4a8f5f;
+  border-color: color-mix(in srgb, #4a8f5f 30%, transparent);
+  background: color-mix(in srgb, #4a8f5f 8%, transparent);
+}
+
+.proto-meta-kind-alias {
+  color: #7a5cb0;
+  border-color: color-mix(in srgb, #7a5cb0 30%, transparent);
+  background: color-mix(in srgb, #7a5cb0 8%, transparent);
+}
+
+.proto-meta-kind-preference {
+  color: #b07a3f;
+  border-color: color-mix(in srgb, #b07a3f 30%, transparent);
+  background: color-mix(in srgb, #b07a3f 8%, transparent);
+}
+
+.proto-meta-kind-gotcha {
+  color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 30%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+}
+
+.proto-meta-scope {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  padding: 1px 6px;
+  background: var(--color-bg-surface);
+  border-radius: 3px;
+}
+
+.proto-meta-hits {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.proto-meta-time {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+
+.proto-meta-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  color: var(--color-text-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.proto-meta-delete:hover:not(:disabled) {
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+}
+
+.proto-meta-delete:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.proto-meta-text {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text-primary);
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* Respect user preference — pause all non-essential motion. */

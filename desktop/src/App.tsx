@@ -4,6 +4,9 @@ import { Sidebar } from "./components/layout/Sidebar";
 import { NihoParticles } from "./components/layout/NihoParticles";
 import { SearchPage } from "./components/search/SearchPage";
 import { SettingsPanel } from "./components/settings/SettingsPanel";
+import { DashboardPanel } from "./components/dashboard/DashboardPanel";
+import { MetaMemoryInspector } from "./components/dashboard/MetaMemoryInspector";
+import { WikiSourcesPanel } from "./components/wiki/WikiSourcesPanel";
 import { Toast } from "./components/layout/Toast";
 import { NotePage } from "./components/note/NotePage";
 import { SpecialKnowledgePanel } from "./components/special/SpecialKnowledgePanel";
@@ -16,7 +19,6 @@ import { useTheme } from "./hooks/useTheme";
 import { onIngestStatus, onWikiIngestStatus, getIngestStatus } from "./lib/electron";
 import type { IngestEvent } from "./lib/electron";
 import type { ChannelId } from "./lib/types";
-import type { WikiSource } from "./lib/api";
 
 export type IngestStep = {
   key: string;
@@ -91,7 +93,6 @@ export default function App() {
   const [wikiIngestSteps, setWikiIngestSteps] = useState<IngestStep[]>([]);
   const [wikiIngestResult, setWikiIngestResult] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [wikiTopicCount, setWikiTopicCount] = useState(0);
-  const [wikiSources, setWikiSources] = useState<WikiSource[]>([]);
 
   const prefs = usePrefs();
   const health = useHealth();
@@ -188,22 +189,17 @@ export default function App() {
     setBuildVersion((v) => v + 1);
   }, [refreshTags]);
 
-  function refreshWikiSources() {
-    import("./lib/api").then((api) =>
-      api.fetchWikiSources().then((d) => setWikiSources(d.sources)).catch(() => {})
-    );
-  }
-
-  // Load wiki sources on mount
-  useEffect(() => { refreshWikiSources(); }, []);
-
   function handleWikiTopicsChanged(count: number) {
     setWikiTopicCount(count);
-    refreshWikiSources();
   }
 
   function renderMainPanel() {
     if (activeChannel === "settings") return <SettingsPanel />;
+    if (activeChannel === "dashboard") return <DashboardPanel />;
+    if (activeChannel === "meta-memory") return <MetaMemoryInspector />;
+    if (activeChannel === "source-list") {
+      return <WikiSourcesPanel onSelectSource={(path) => setActiveChannel(`source:${path}` as ChannelId)} />;
+    }
     if (activeChannel === "search") return <SearchPage searchState={searchState} tags={tags} />;
     if (activeChannel === "note") {
       return (
@@ -240,7 +236,6 @@ export default function App() {
         ingestBusy={ingestBusy}
         embeddingMode={health.embeddingMode}
         wikiTopicCount={wikiTopicCount}
-        wikiSources={wikiSources}
       />
       <main className="flex-1 min-w-0 overflow-hidden bg-[var(--color-bg-primary)]">
         {renderMainPanel()}

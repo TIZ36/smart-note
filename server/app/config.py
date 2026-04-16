@@ -46,6 +46,15 @@ class Settings:
     )
     ingest_ai_model: str = os.getenv("INGEST_AI_MODEL", "")
 
+    # Prompt caching (Anthropic cache_control=ephemeral). Only emits the
+    # cache_control block when BOTH the provider looks like Anthropic AND
+    # this toggle is on — lets users disable it on proxies that route to
+    # Anthropic but reject the field, or on self-hosted deployments. Options:
+    #   "auto"  — default, enabled when provider_base_url contains 'anthropic'
+    #   "on"    — always emit cache_control (use at your own risk)
+    #   "off"   — never emit; concat prefix as plain system text
+    prompt_cache_mode: str = os.getenv("PROMPT_CACHE_MODE", "auto").lower()
+
     # Wiki source files directory (markdown docs ingested from URL/MCP)
     # Default: iCloud Drive ~/sn/source/  — synced across devices
     wiki_sources_dir: str = os.getenv(

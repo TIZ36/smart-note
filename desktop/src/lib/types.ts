@@ -1,8 +1,3 @@
-export type Health = {
-  status: string;
-  embedding_mode: string;
-};
-
 export type MvpStatus = {
   gateway_online: boolean;
   embedding_mode: string;

@@ -1138,11 +1138,13 @@ def find_duplicate_wiki_sources() -> str:
 def dedupe_wiki_sources(actions: list[dict], dry_run: bool = True) -> str:
     """Apply a list of dedup actions to orphan wiki source files.
 
-    Each item: `{path: str, action: 'delete' | 'keep' | 'import'}`
+    Each item: `{path: str, action: 'delete' | 'keep' | 'import', topic_name?: str, ai_delegate?: bool}`
       - delete — unlink the file; prune emptied parent dirs under wiki_sources_dir
       - keep   — no-op; explicit acknowledgement for audit
-      - import — not yet wired; use `import_wiki_doc(local_path=..., topic_name=...)`
-                 directly for distinct orphans
+      - import — move the orphan into its own topic folder under
+                 wiki_sources_dir and ingest it as a wiki topic. Optional
+                 `topic_name` overrides the default (filename stem); optional
+                 `ai_delegate=True` routes enrichment through MCP.
 
     Args:
         actions: list of per-file action dicts.

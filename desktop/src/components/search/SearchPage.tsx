@@ -129,71 +129,90 @@ export function SearchPage({ searchState: s, tags }: Props) {
     [s]
   );
 
-  /** Ask AI — auto-includes all wiki results, caches source_files for follow-ups */
+  // Append streamed delta to the last assistant turn (or create it on first delta).
+  function appendStreamDelta(delta: string, turnKey: number) {
+    s.setConversation((prev) => {
+      const last = prev[prev.length - 1];
+      if (last && last.role === "assistant" && last.timestamp === turnKey) {
+        return [...prev.slice(0, -1), { ...last, content: last.content + delta }];
+      }
+      return [
+        ...prev,
+        { role: "assistant", content: delta, timestamp: turnKey },
+      ];
+    });
+  }
+
+  /** Ask AI — streams the answer via SSE; caches source_files for deep follow-ups */
   async function handleAskAI() {
     if (stages.answer.status === "running") return;
     const searchQuery = s.activeQuery;
     if (!searchQuery) return;
 
-    // Auto-include all wiki chunk IDs + note evidence
     const allWikiIds = s.recallResults
       .filter((r) => (r.is_wiki || r.dimension?.startsWith("wiki:")) && typeof r.id === "number")
       .map((r) => r.id as number);
     const allEvidenceIds = [...new Set([...s.lastEvidenceIds.current, ...allWikiIds])];
 
-    s.setConversation([]);
+    const turnKey = Date.now();
+    const userTurn: ConversationTurn = { role: "user", content: searchQuery, timestamp: turnKey - 1 };
+    s.setConversation([userTurn]);
     s.setRelatedQuestions([]);
     cachedSourceFiles.current = [];
     setStages((st) => ({ ...st, answer: { status: "running" } }));
-    try {
-      const chatData = await api.chat(searchQuery, allEvidenceIds, []);
-      // Cache source_files for deep follow-ups
-      cachedSourceFiles.current = chatData.source_files || [];
 
-      const userTurn: ConversationTurn = { role: "user", content: searchQuery, timestamp: Date.now() };
-      const aiTurn: ConversationTurn = { role: "assistant", content: chatData.answer, answerId: chatData.answer_id, timestamp: Date.now() };
-      s.setConversation([userTurn, aiTurn]);
-      setStages((st) => ({ ...st, answer: { status: "done", ms: chatData.latency_ms } }));
-
-      // Show source hint if we have cached files for deeper follow-up
-      if (cachedSourceFiles.current.length > 0) {
-        const fileNames = cachedSourceFiles.current.map((f) => f.split("/").pop()).join(", ");
-        s.setRelatedQuestions([`Tell me more details from ${fileNames}`]);
-      }
-    } catch {
-      setStages((st) => ({ ...st, answer: { status: "error" } }));
-    }
+    api.chatStream(searchQuery, allEvidenceIds, [], [], {
+      onDelta: (d) => appendStreamDelta(d, turnKey),
+      onSourceFiles: (files) => { cachedSourceFiles.current = files; },
+      onDone: ({ answer_id, latency_ms }) => {
+        s.setConversation((prev) => prev.map((t) =>
+          t.timestamp === turnKey ? { ...t, answerId: answer_id } : t,
+        ));
+        setStages((st) => ({ ...st, answer: { status: "done", ms: latency_ms } }));
+        if (cachedSourceFiles.current.length > 0) {
+          const fileNames = cachedSourceFiles.current.map((f) => f.split("/").pop()).join(", ");
+          s.setRelatedQuestions([`Tell me more details from ${fileNames}`]);
+        }
+      },
+      onError: () => setStages((st) => ({ ...st, answer: { status: "error" } })),
+    });
   }
 
-  async function handleFollowUp() {
+  function handleFollowUp() {
     const q = followUp.trim();
     if (!q || stages.answer.status === "running") return;
     setFollowUp("");
 
-    const userTurn: ConversationTurn = { role: "user", content: q, timestamp: Date.now() };
+    const userKey = Date.now();
+    const turnKey = userKey + 1;
+    const userTurn: ConversationTurn = { role: "user", content: q, timestamp: userKey };
     s.setConversation((prev) => [...prev, userTurn]);
 
     setStages((st) => ({ ...st, answer: { status: "running" } }));
-    // Scroll to show loading dots
     setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }), 50);
-    try {
-      const history = s.getChatHistory();
-      // Follow-up uses cached source_files — backend reads full docs for deep context
-      const chatData = await api.chat(q, s.lastEvidenceIds.current, history, cachedSourceFiles.current);
-      const aiTurn: ConversationTurn = { role: "assistant", content: chatData.answer, answerId: chatData.answer_id, timestamp: Date.now() };
-      s.setConversation((prev) => [...prev, aiTurn]);
-      setStages((st) => ({ ...st, answer: { status: "done", ms: chatData.latency_ms } }));
-      // Update source cache if new sources found
-      if (chatData.source_files && chatData.source_files.length > 0) {
-        cachedSourceFiles.current = chatData.source_files;
-      }
-    } catch {
-      const errTurn: ConversationTurn = { role: "assistant", content: "Request failed.", timestamp: Date.now() };
-      s.setConversation((prev) => [...prev, errTurn]);
-      setStages((st) => ({ ...st, answer: { status: "error" } }));
-    }
 
-    setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }), 100);
+    const history = s.getChatHistory();
+    api.chatStream(q, s.lastEvidenceIds.current, history, cachedSourceFiles.current, {
+      onDelta: (d) => {
+        appendStreamDelta(d, turnKey);
+        scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+      },
+      onSourceFiles: (files) => {
+        if (files.length > 0) cachedSourceFiles.current = files;
+      },
+      onDone: ({ answer_id, latency_ms }) => {
+        s.setConversation((prev) => prev.map((t) =>
+          t.timestamp === turnKey ? { ...t, answerId: answer_id } : t,
+        ));
+        setStages((st) => ({ ...st, answer: { status: "done", ms: latency_ms } }));
+        setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }), 50);
+      },
+      onError: () => {
+        const errTurn: ConversationTurn = { role: "assistant", content: "Request failed.", timestamp: turnKey };
+        s.setConversation((prev) => [...prev, errTurn]);
+        setStages((st) => ({ ...st, answer: { status: "error" } }));
+      },
+    });
   }
 
   async function handleFeedback(answerId: number) {

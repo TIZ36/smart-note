@@ -227,8 +227,10 @@ def apply_dedup_actions(actions: list[dict], dry_run: bool = True) -> dict:
     Supported actions:
       - 'delete'  — unlink the file; remove the parent dir if it empties out
       - 'keep'    — no-op (explicitly acknowledge, keeps an audit trail)
-      - 'import'  — currently surfaces as "not wired"; caller should use
-                    import_wiki_doc directly to import a distinct orphan
+      - 'import'  — move the orphan into its own topic folder under
+                    wiki_sources_dir and ingest it as a wiki topic. Optional
+                    `topic_name` in the action dict overrides the default
+                    (orphan filename stem).
     """
     applied: list[dict] = []
     errors: list[dict] = []
@@ -268,10 +270,67 @@ def apply_dedup_actions(actions: list[dict], dry_run: bool = True) -> dict:
             applied.append({**act, "noted": "kept"})
 
         elif action == "import":
-            errors.append({
-                **act,
-                "error": "import action not yet wired; call import_wiki_doc(local_path=..., topic_name=...) separately",
-            })
+            topic_name = (act.get("topic_name") or "").strip() or p.stem
+            src_root = Path(settings.wiki_sources_dir).resolve()
+            # Target: wiki_sources_dir/<topic>/<filename>. If the orphan is
+            # already the only file in its own topic folder, reuse that folder
+            # in-place — avoids pointless filesystem churn.
+            try:
+                already_own_folder = (
+                    p.parent != src_root
+                    and p.parent.parent == src_root
+                    and sum(1 for f in p.parent.iterdir() if f.is_file()) == 1
+                )
+            except OSError:
+                already_own_folder = False
+
+            if already_own_folder:
+                topic_folder = p.parent
+                final_path = p
+            else:
+                safe_topic = re.sub(r'[^\w\s\u4e00-\u9fff-]', '_', topic_name)[:80] or p.stem
+                topic_folder = src_root / safe_topic
+                final_path = topic_folder / p.name
+
+            if dry_run:
+                applied.append({
+                    **act,
+                    "would": "import",
+                    "topic_name": topic_name,
+                    "target": str(final_path),
+                })
+                continue
+            try:
+                if not already_own_folder:
+                    topic_folder.mkdir(parents=True, exist_ok=True)
+                    if final_path.exists() and final_path.resolve() != p.resolve():
+                        # Don't clobber an existing file — append a suffix.
+                        i = 1
+                        while True:
+                            alt = topic_folder / f"{p.stem}_{i}{p.suffix}"
+                            if not alt.exists():
+                                final_path = alt
+                                break
+                            i += 1
+                    p.rename(final_path)
+                # Ingest the topic folder. Deferred import keeps wiki_dedup
+                # importable in contexts where special_ingest isn't loaded.
+                from app.special_ingest import ingest_folder
+                result = ingest_folder(
+                    str(topic_folder),
+                    topic_name=topic_name,
+                    ai_delegate=bool(act.get("ai_delegate", False)),
+                )
+                applied.append({
+                    **act,
+                    "imported": True,
+                    "topic_name": topic_name,
+                    "final_path": str(final_path),
+                    "chunk_count": result.get("chunk_count"),
+                    "segment_count": result.get("segment_count"),
+                })
+            except Exception as e:
+                errors.append({**act, "error": f"import failed: {e}"})
 
         else:
             errors.append({**act, "error": f"unknown action: {action}"})

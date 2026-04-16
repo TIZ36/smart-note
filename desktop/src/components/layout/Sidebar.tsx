@@ -1,7 +1,6 @@
-import { Search, Settings, Loader2, FileEdit, BookOpen, FileText } from "lucide-react";
+import { Search, Settings, Loader2, FileEdit, BookOpen, Gauge, Brain } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { ChannelId } from "@/lib/types";
-import type { WikiSource } from "@/lib/api";
 
 type Props = {
   activeChannel: ChannelId;
@@ -10,7 +9,6 @@ type Props = {
   ingestBusy: boolean;
   embeddingMode: string;
   wikiTopicCount?: number;
-  wikiSources?: WikiSource[];
 };
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -40,7 +38,7 @@ function NavItem({
   );
 }
 
-export function Sidebar({ activeChannel, onSelect, gatewayOnline, ingestBusy, embeddingMode, wikiTopicCount = 0, wikiSources = [] }: Props) {
+export function Sidebar({ activeChannel, onSelect, gatewayOnline, ingestBusy, embeddingMode, wikiTopicCount = 0 }: Props) {
   return (
     <div className="proto-sidebar">
       <div className="proto-sidebar-logo" style={{ WebkitAppRegion: "drag" } as React.CSSProperties}>
@@ -62,31 +60,18 @@ export function Sidebar({ activeChannel, onSelect, gatewayOnline, ingestBusy, em
 
         <SectionLabel>Wiki</SectionLabel>
         <NavItem
-          label="Topics"
+          label="Source"
           icon={<BookOpen size={15} strokeWidth={2} />}
-          active={activeChannel === "special-knowledge"}
-          onClick={() => onSelect("special-knowledge")}
+          active={activeChannel === "source-list"}
+          onClick={() => onSelect("source-list")}
           trailing={wikiTopicCount > 0 ? <span className="proto-nav-badge">{wikiTopicCount}</span> : undefined}
         />
-
-        {wikiSources.length > 0 && (
-          <>
-            <SectionLabel>Sources</SectionLabel>
-            {wikiSources.map((s) => (
-              <NavItem
-                key={s.path}
-                label={s.name}
-                icon={<FileText size={15} strokeWidth={2} />}
-                active={activeChannel === `source:${s.path}`}
-                onClick={() => onSelect(`source:${s.path}`)}
-              />
-            ))}
-          </>
-        )}
 
       </div>
 
       <div className="proto-sidebar-footer">
+        <NavItem label="Dashboard" icon={<Gauge size={15} strokeWidth={2} />} active={activeChannel === "dashboard"} onClick={() => onSelect("dashboard")} />
+        <NavItem label="Meta-memory" icon={<Brain size={15} strokeWidth={2} />} active={activeChannel === "meta-memory"} onClick={() => onSelect("meta-memory")} />
         <NavItem label="Settings" icon={<Settings size={15} strokeWidth={2} />} active={activeChannel === "settings"} onClick={() => onSelect("settings")} />
         <div className="proto-sidebar-status">
           <span className={cn("proto-status-dot", !gatewayOnline && "proto-status-dot-offline")} />

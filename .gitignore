@@ -14,10 +14,14 @@ desktop/release/
 
 # ── Data (user-specific, not committed) ──
 server/data/
+data/
 sample/note.md
 sample/views/
 sample/.state.json
 sample/candidates/
+
+# User-authored notes accidentally dropped at repo root
+/自定义*.md
 
 # ── Environment / Secrets ──
 .env

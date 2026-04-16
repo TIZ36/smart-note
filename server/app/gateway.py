@@ -199,9 +199,16 @@ def _chat_completion(system: str, messages: list[dict], cacheable_prefix: str = 
     url = f"{settings.provider_base_url.rstrip('/')}/chat/completions"
 
     # B1: Anthropic prompt caching. We wrap the cacheable prefix as a system
-    # content block with cache_control; the remainder stays uncached.
+    # content block with cache_control; the remainder stays uncached. Gated
+    # by both provider detection and `prompt_cache_mode` so users can opt out
+    # on proxies that route to Anthropic but reject the field.
     is_anthropic = "anthropic" in (settings.provider_base_url or "").lower()
-    if cacheable_prefix and is_anthropic:
+    cache_mode = (getattr(settings, "prompt_cache_mode", "auto") or "auto").lower()
+    cache_enabled = (
+        (cache_mode == "on")
+        or (cache_mode == "auto" and is_anthropic)
+    )
+    if cacheable_prefix and cache_enabled:
         system_blocks = [
             {"type": "text", "text": cacheable_prefix,
              "cache_control": {"type": "ephemeral"}},
@@ -222,6 +229,55 @@ def _chat_completion(system: str, messages: list[dict], cacheable_prefix: str = 
     resp.raise_for_status()
     data = resp.json()
     return data["choices"][0]["message"]["content"]
+
+
+def _meta_memory_prelude(query: str = "", limit: int = 12) -> str:
+    """Format top meta-memory entries as a system-prompt prelude.
+
+    Scope filtering: 'global' always included; scoped entries (tag/topic) are
+    included when the query mentions the scope token verbatim. Keeps the
+    prelude relevant without bloating token usage on every chat call.
+    Bumps `hit_count` on memories that actually fire so the inspector shows
+    which rules are pulling weight.
+    """
+    try:
+        with connect() as conn:
+            rows = conn.execute(
+                "SELECT id, kind, text, scope FROM meta_memory "
+                "ORDER BY hit_count DESC, updated_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+    except Exception:
+        return ""
+    if not rows:
+        return ""
+    q_lower = (query or "").lower()
+    picked: list[str] = []
+    fired_ids: list[int] = []
+    for r in rows:
+        scope = (r["scope"] or "global").strip()
+        if scope != "global" and scope.lower() not in q_lower:
+            continue
+        picked.append(f"  • [{r['kind']}] {r['text']}")
+        fired_ids.append(int(r["id"]))
+        if len(picked) >= 8:
+            break
+    if not picked:
+        return ""
+    try:
+        with connect() as conn:
+            ph = ",".join("?" for _ in fired_ids)
+            conn.execute(
+                f"UPDATE meta_memory SET hit_count = hit_count + 1 WHERE id IN ({ph})",
+                fired_ids,
+            )
+            conn.commit()
+    except Exception:
+        pass
+    return (
+        "Persistent learnings about this knowledge base (apply when relevant, "
+        "do not cite as evidence):\n" + "\n".join(picked)
+    )
 
 
 def _read_full_source(source_file: str) -> str:
@@ -320,6 +376,13 @@ def api_chat(req: ChatRequest) -> dict:
     )
     if deep_context:
         system += " You have full document content available — give a thorough, deep answer citing specific sections."
+
+    # Inject meta-memory — persistent cross-session learnings (vocab/alias/rule)
+    # that disambiguate user terminology. Scoped entries only fire when the
+    # query mentions them, so global-scope learnings always apply.
+    mm_prelude = _meta_memory_prelude(req.query)
+    if mm_prelude:
+        system = mm_prelude + "\n\n" + system
 
     # B1: prompt caching candidate — if evidence concentrates on ONE wiki
     # topic, we load its full text into a cached prefix so follow-up questions
@@ -1965,9 +2028,26 @@ def api_chat_stream(req: ChatRequest):
                 "You are a precise knowledge assistant. "
                 "Always cite evidence using [N]. Never fabricate."
             )
+            mm_prelude = _meta_memory_prelude(req.query)
+            if mm_prelude:
+                system = mm_prelude + "\n\n" + system
 
             evidence_ids_log = [e.get("id") for e in evidence if isinstance(e.get("id"), int)]
             yield f"event: evidence\ndata: {json.dumps({'ids': evidence_ids_log}, ensure_ascii=False)}\n\n"
+
+            # Emit source_files like /chat does, so clients can cache them
+            # for deep follow-ups. Same dedup + top-3 cap as the non-stream path.
+            _seen_sf: set[str] = set()
+            _top_sf: list[str] = []
+            for _e in evidence:
+                _sf = _e.get("source_file", "")
+                if _sf and _sf not in _seen_sf and Path(_sf).exists():
+                    _seen_sf.add(_sf)
+                    _top_sf.append(_sf)
+                    if len(_top_sf) >= 3:
+                        break
+            if _top_sf:
+                yield f"event: source_files\ndata: {json.dumps({'files': _top_sf}, ensure_ascii=False)}\n\n"
 
             # Minimal streaming call — OpenAI-compatible stream=true
             headers = {
@@ -2936,7 +3016,18 @@ def api_wiki_flatten(req: WikiFlattenRequest) -> dict:
 
 @app.get("/wiki-sources")
 def api_wiki_sources() -> dict:
-    """List all distinct source .md files from wiki chunks for the Sources panel."""
+    """List all distinct source .md files from wiki chunks for the Sources panel.
+
+    Each source also carries a `rel_path` computed server-side relative to
+    `wiki_sources_dir` — so the client-side tree never has to know or worry
+    about the absolute filesystem location. If a source somehow lives outside
+    the wiki dir, its rel_path falls back to just the filename.
+    """
+    import os as _os
+
+    base_dir = Path(_os.path.expanduser(settings.wiki_sources_dir)).resolve()
+    base_dir_str = str(base_dir)
+
     with connect() as conn:
         rows = conn.execute(
             """
@@ -2965,13 +3056,25 @@ def api_wiki_sources() -> dict:
             pass
         # Resolve to absolute path so Electron can read the file
         abs_path = str(Path(sf).resolve()) if not sf.startswith("/") else sf
+        # Compute path relative to wiki root; fall back to basename if the
+        # file somehow lives outside (defensive — shouldn't happen).
+        try:
+            rel_path = _os.path.relpath(abs_path, base_dir_str)
+            if rel_path.startswith(".."):
+                rel_path = Path(abs_path).name
+        except ValueError:
+            rel_path = Path(abs_path).name
         sources.append({
             "path": abs_path,
+            "rel_path": rel_path,
             "name": Path(sf).stem,
             "topic": r["topic_name"] or "",
             "category": category,
         })
-    return {"sources": sources}
+    return {
+        "sources": sources,
+        "base_dir": base_dir_str,
+    }
 
 
 @app.get("/ocr-langs")
