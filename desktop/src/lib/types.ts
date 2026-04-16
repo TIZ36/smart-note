@@ -82,6 +82,9 @@ export type FeedbackResponse = {
 
 export type AppSettings = {
   embedding_mode: string;
+  // Master kill switch for all LLM calls (chat answers, rerank, rewrite,
+  // ingest enrich, wiki topic summaries). Embedding continues to work.
+  ai_features_enabled: boolean;
   // Chat / AI provider
   provider_base_url: string;
   provider_api_key: string;

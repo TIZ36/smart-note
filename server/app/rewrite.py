@@ -30,6 +30,8 @@ DEFAULT_VALIDATION_DAYS = 7
 # ── AI Rewrite ──────────────────────────────────────────────────
 
 def _call_llm(system: str, user: str) -> str | None:
+    if not getattr(settings, "ai_features_enabled", True):
+        return None
     api_key = settings.provider_api_key
     if not api_key:
         return None

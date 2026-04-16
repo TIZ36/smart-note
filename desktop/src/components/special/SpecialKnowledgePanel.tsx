@@ -6,6 +6,7 @@ import { WikiGraph } from "./WikiGraph";
 import * as api from "@/lib/api";
 import type { WikiCategory } from "@/lib/api";
 import type { IngestStep } from "@/App";
+import { PipelineStep } from "../shared/PipelineStep";
 
 const CATEGORY_META: Record<WikiCategory, { label: string; icon: typeof BookOpen }> = {
   research: { label: "Research", icon: FileSearch },
@@ -359,19 +360,7 @@ function WikiImportDialog({ ingestBusy, ingestSteps, ingestResult, onClose }: {
                 )}
               </div>
               {ingestSteps.map((step) => (
-                <div key={step.key} className={cn("proto-pipeline-step", step.status === "done" && "proto-pipeline-step-done", step.status === "pending" && "proto-pipeline-step-pending", step.status === "active" && "proto-pipeline-step-active")}>
-                  <div className="proto-pipeline-step-icon">
-                    {step.status === "done" && "\u2713"}
-                    {step.status === "active" && "\u25CF"}
-                    {step.status === "pending" && "\u25CB"}
-                    {step.status === "error" && "\u2717"}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <span className={cn("text-[13px]", step.status === "active" ? "text-[var(--color-text-primary)]" : step.status === "done" ? "text-[var(--color-text-secondary)]" : "text-[var(--color-text-muted)] opacity-40")}>{step.label}</span>
-                    {step.status === "active" && step.total > 0 && <span style={{ fontSize: 11, color: "var(--color-accent)", marginLeft: 8 }}>{step.current}/{step.total}</span>}
-                    {step.detail && <p className="proto-step-detail" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{step.detail}</p>}
-                  </div>
-                </div>
+                <PipelineStep key={step.key} step={step} />
               ))}
             </div>
           )}

@@ -173,3 +173,60 @@ def strengthen_profile(query: str, boost: float = 1.0) -> None:
             (boost, query),
         )
         conn.commit()
+
+
+def adjust_weights_from_feedback(
+    query: str,
+    path_breakdown: dict[str, float],
+    sign: float = 1.0,
+    step: float = 0.03,
+) -> dict | None:
+    """A2: shift the stored weights of this query's profile toward whichever
+    retrieval path contributed most to the upvoted answer. Renormalize to
+    keep weights summing to ~1.
+
+    path_breakdown: avg per-path score across top evidence chunks (stored at
+    answer time in answer_logs.path_breakdown_json).
+    sign: +1 for upvote (reinforce winning paths), -1 for downvote (dampen).
+    step: max weight shift per feedback event.
+    """
+    if not path_breakdown:
+        return None
+    # Find the path with the highest contribution
+    top_path = max(path_breakdown.items(), key=lambda kv: float(kv[1] or 0))[0]
+    # Derive proportional deltas — winning path gets +step, others share -step.
+    deltas: dict[str, float] = {k: 0.0 for k in DEFAULT_WEIGHTS}
+    if top_path not in deltas:
+        return None
+    deltas[top_path] = sign * step
+    loser_keys = [k for k in deltas if k != top_path and k != "feedback_bias"]
+    if loser_keys:
+        share = -sign * step / len(loser_keys)
+        for k in loser_keys:
+            deltas[k] = share
+
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT id, effective_weights_json FROM query_profiles "
+            "WHERE query_text = ? ORDER BY updated_at DESC LIMIT 1",
+            (query,),
+        ).fetchone()
+        if not row:
+            return None
+        try:
+            weights = json.loads(row["effective_weights_json"])
+        except (json.JSONDecodeError, TypeError):
+            weights = dict(DEFAULT_WEIGHTS)
+        for k, d in deltas.items():
+            weights[k] = max(0.0, min(1.0, weights.get(k, 0) + d))
+        total = sum(weights.values())
+        if total > 0:
+            for k in list(weights.keys()):
+                weights[k] /= total
+        conn.execute(
+            "UPDATE query_profiles SET effective_weights_json = ?, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (json.dumps(weights), row["id"]),
+        )
+        conn.commit()
+    return {"winning_path": top_path, "shift": step * sign, "new_weights": weights}

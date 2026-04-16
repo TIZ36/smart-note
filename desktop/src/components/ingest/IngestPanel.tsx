@@ -5,6 +5,8 @@ import { cn } from "@/lib/cn";
 import { ingestRawAsync, appendTextToRaw, readClipboard, pickRawFile, pickNoteFile } from "@/lib/electron";
 import * as api from "@/lib/api";
 import type { IngestStep } from "@/App";
+import { PipelineStep } from "../shared/PipelineStep";
+import { BuildAttributionBadge } from "../shared/BuildAttributionBadge";
 
 type Props = {
   rawPath: string;
@@ -27,12 +29,6 @@ type Version = {
   segments?: number;
   tags?: Record<string, number>;
 };
-
-function formatElapsed(ms: number): string {
-  if (ms >= 60000) return `${Math.floor(ms / 60000)}m${Math.round((ms % 60000) / 1000)}s`;
-  if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
-  return `${ms}ms`;
-}
 
 export function IngestPanel({ rawPath, notePath, onSetRawPath, onSetNotePath, onIngestComplete, ingestBusy, ingestSteps, ingestResult }: Props) {
   const [pasteMsg, setPasteMsg] = useState("");
@@ -178,45 +174,7 @@ export function IngestPanel({ rawPath, notePath, onSetRawPath, onSetNotePath, on
                       )}
                     </div>
                     {ingestSteps.map((step) => (
-                      <div
-                        key={step.key}
-                        className={cn(
-                          "proto-pipeline-step",
-                          step.status === "done" && "proto-pipeline-step-done",
-                          step.status === "pending" && "proto-pipeline-step-pending",
-                          step.status === "active" && "proto-pipeline-step-active"
-                        )}
-                      >
-                        <div className="proto-pipeline-step-icon">
-                          {step.status === "done" && "\u2713"}
-                          {step.status === "active" && "\u25CF"}
-                          {step.status === "pending" && "\u25CB"}
-                          {step.status === "error" && "\u2717"}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                            <span className={cn("text-[13px]", step.status === "active" ? "text-[var(--color-text-primary)]" : step.status === "done" ? "text-[var(--color-text-secondary)]" : "text-[var(--color-text-muted)] opacity-40")}>
-                              {step.label}
-                            </span>
-                            {step.status === "active" && step.total > 0 && (
-                              <span style={{ fontSize: 11, color: "var(--color-accent)", fontVariantNumeric: "tabular-nums" }}>
-                                {step.current}/{step.total}
-                              </span>
-                            )}
-                            {step.elapsedMs > 0 && (step.status === "active" || step.status === "done") && (
-                              <span style={{ fontSize: 10, color: "var(--color-text-muted)", fontVariantNumeric: "tabular-nums", marginLeft: "auto", opacity: 0.7 }}>
-                                {formatElapsed(step.elapsedMs)}
-                              </span>
-                            )}
-                          </div>
-                          {step.detail && <p className="proto-step-detail" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{step.detail}</p>}
-                          {step.status === "active" && step.total > 0 && (
-                            <div className="proto-progress-bar">
-                              <div className="proto-progress-fill" style={{ width: `${Math.round((step.current / step.total) * 100)}%`, transition: "width 0.3s" }} />
-                            </div>
-                          )}
-                        </div>
-                      </div>
+                      <PipelineStep key={step.key} step={step} showElapsed showProgressBar />
                     ))}
                   </div>
                 </motion.div>
@@ -226,9 +184,7 @@ export function IngestPanel({ rawPath, notePath, onSetRawPath, onSetNotePath, on
             {/* Builds Timeline */}
             {builds.length > 0 && (
               <div>
-                <h2 style={{ fontSize: 12, fontWeight: 500, color: "var(--color-text-muted)", marginBottom: 12 }}>
-                  Builds
-                </h2>
+                <h2 className="proto-section-label" style={{ marginBottom: 12 }}>Builds</h2>
                 {builds.map((b) => {
                   const isLoading = buildBusy === b.id;
                   const isExpanded = expandedBuild === b.id;
@@ -238,10 +194,13 @@ export function IngestPanel({ rawPath, notePath, onSetRawPath, onSetNotePath, on
                       <div className="proto-version-item" style={{ cursor: "pointer" }} onClick={() => setExpandedBuild(isExpanded ? null : b.id)}>
                         <div className={cn("proto-version-dot", !b.is_active && "proto-version-dot-old")} />
                         <div className="flex-1 min-w-0">
-                          <div className="proto-version-id">{b.id}</div>
+                          <div className="proto-version-id">
+                            {b.id}
+                            <BuildAttributionBadge enrichStatus={b.enrich_status} completedBy={b.completed_by} awaitingForSeconds={b.awaiting_for_seconds} />
+                          </div>
                           <div className="proto-version-meta">
                             {b.chunk_count} chunks · {b.segment_count} segments
-                            {hasCost && <span style={{ color: "var(--color-warning)" }}> · ¥{b.estimated_cost_cny.toFixed(2)}</span>}
+                            {hasCost && <span className="proto-version-cost"> · ¥{b.estimated_cost_cny.toFixed(2)}</span>}
                           </div>
                         </div>
                         <div style={{ display: "flex", gap: 8, alignItems: "center" }} onClick={(e) => e.stopPropagation()}>

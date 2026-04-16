@@ -4,6 +4,8 @@ import { cn } from "@/lib/cn";
 import { ingestRawAsync } from "@/lib/electron";
 import * as api from "@/lib/api";
 import type { IngestStep } from "@/App";
+import { PipelineStep } from "../shared/PipelineStep";
+import { BuildAttributionBadge } from "../shared/BuildAttributionBadge";
 
 type Props = {
   rawPath: string;
@@ -86,23 +88,7 @@ export function IngestDialog({ rawPath, notePath, ingestBusy, ingestSteps, inges
                 )}
               </div>
               {ingestSteps.map((step) => (
-                <div key={step.key} className={cn("proto-pipeline-step", step.status === "done" && "proto-pipeline-step-done", step.status === "pending" && "proto-pipeline-step-pending", step.status === "active" && "proto-pipeline-step-active")}>
-                  <div className="proto-pipeline-step-icon">
-                    {step.status === "done" && "\u2713"}
-                    {step.status === "active" && "\u25CF"}
-                    {step.status === "pending" && "\u25CB"}
-                    {step.status === "error" && "\u2717"}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <span className={cn("text-[13px]", step.status === "active" ? "text-[var(--color-text-primary)]" : step.status === "done" ? "text-[var(--color-text-secondary)]" : "text-[var(--color-text-muted)] opacity-40")}>
-                      {step.label}
-                    </span>
-                    {step.status === "active" && step.total > 0 && (
-                      <span style={{ fontSize: 11, color: "var(--color-accent)", marginLeft: 8 }}>{step.current}/{step.total}</span>
-                    )}
-                    {step.detail && <p className="proto-step-detail" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{step.detail}</p>}
-                  </div>
-                </div>
+                <PipelineStep key={step.key} step={step} />
               ))}
             </div>
           )}
@@ -117,15 +103,18 @@ export function IngestDialog({ rawPath, notePath, ingestBusy, ingestSteps, inges
           {/* Builds */}
           {builds.length > 0 && (
             <div>
-              <h3 style={{ fontSize: 12, fontWeight: 500, color: "var(--color-text-muted)", marginBottom: 8 }}>Builds</h3>
+              <h3 className="proto-section-label">Builds</h3>
               {builds.map((b) => (
                 <div key={b.id} className="proto-version-item">
                   <div className={cn("proto-version-dot", !b.is_active && "proto-version-dot-old")} />
                   <div className="flex-1 min-w-0">
-                    <div className="proto-version-id">{b.id}</div>
+                    <div className="proto-version-id">
+                      {b.id}
+                      <BuildAttributionBadge enrichStatus={b.enrich_status} completedBy={b.completed_by} awaitingForSeconds={b.awaiting_for_seconds} />
+                    </div>
                     <div className="proto-version-meta">
                       {b.chunk_count} chunks · {b.segment_count} seg
-                      {b.estimated_cost_cny > 0 && <span style={{ color: "var(--color-warning)" }}> · ¥{b.estimated_cost_cny.toFixed(2)}</span>}
+                      {b.estimated_cost_cny > 0 && <span className="proto-version-cost"> · ¥{b.estimated_cost_cny.toFixed(2)}</span>}
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 6, alignItems: "center" }}>

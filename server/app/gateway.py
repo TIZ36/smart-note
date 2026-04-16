@@ -7,6 +7,7 @@ from pathlib import Path
 import requests
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.adaptive import strengthen_profile
@@ -87,6 +88,41 @@ def health() -> dict:
     return {"status": "ok", "embedding_mode": settings.embedding_mode}
 
 
+# ── Ingest progress SSE ──
+# Lets the desktop app observe ingest runs that execute inside this gateway
+# process (e.g. MCP-triggered). CLI-spawned ingests already stream over stderr.
+
+@app.get("/events/ingest")
+def api_events_ingest():
+    from app.events import subscribe, unsubscribe
+
+    q = subscribe()
+
+    def gen():
+        try:
+            # Initial comment so the client knows the stream is open.
+            yield ": connected\n\n"
+            while True:
+                try:
+                    event = q.get(timeout=15)
+                except Exception:
+                    # Periodic keep-alive so NAT/proxies don't close idle streams.
+                    yield ": ping\n\n"
+                    continue
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        finally:
+            unsubscribe(q)
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @app.post("/search")
 def api_search(req: SearchRequest) -> dict:
     """Stage 1: Wide recall with 5 retrieval paths + adaptive weights."""
@@ -106,13 +142,24 @@ def api_search(req: SearchRequest) -> dict:
 
     # Save to search history (keep latest 20, prune old)
     try:
-        result_count = len(result.get("results", []))
+        results = result.get("results", [])
+        result_count = len(results)
+        top_score = float(results[0].get("score", 0)) if results else 0.0
         with connect() as conn:
             conn.execute(
                 "INSERT INTO search_history(query_text, result_count, tag_filter) VALUES(?, ?, ?)",
                 (req.query, result_count, req.tag_filter),
             )
             conn.execute("DELETE FROM search_history WHERE id NOT IN (SELECT id FROM search_history ORDER BY created_at DESC LIMIT 20)")
+            # Track knowledge gaps: miss = no results, or top score weak.
+            # Feeds the list_knowledge_gaps MCP tool so Claude can proactively
+            # ingest docs to fill what the user keeps searching for.
+            if result_count == 0 or top_score < 0.3:
+                conn.execute(
+                    "INSERT INTO search_misses(query_text, result_count, top_score, tag_filter) "
+                    "VALUES(?, ?, ?, ?)",
+                    (req.query, result_count, top_score, req.tag_filter),
+                )
             conn.commit()
     except Exception:
         pass
@@ -131,7 +178,17 @@ def api_rerank(req: RerankRequest) -> dict:
 
 # ── Stage 3: AI Answer ──
 
-def _chat_completion(system: str, messages: list[dict]) -> str:
+def _chat_completion(system: str, messages: list[dict], cacheable_prefix: str = "") -> str:
+    """Call the configured chat provider.
+
+    `cacheable_prefix`: when non-empty AND the provider is Anthropic
+    (base_url contains 'anthropic'), wrap the prefix with a
+    cache_control={"type": "ephemeral"} breakpoint — this flips input-token
+    billing to 10x cheaper for repeat calls within ~5 min. Other providers
+    quietly ignore the field.
+    """
+    if not getattr(settings, "ai_features_enabled", True):
+        return "AI features are disabled in Settings."
     if not settings.provider_api_key:
         return "Provider API key not configured."
 
@@ -140,7 +197,22 @@ def _chat_completion(system: str, messages: list[dict]) -> str:
         "Content-Type": "application/json",
     }
     url = f"{settings.provider_base_url.rstrip('/')}/chat/completions"
-    all_messages = [{"role": "system", "content": system}] + messages
+
+    # B1: Anthropic prompt caching. We wrap the cacheable prefix as a system
+    # content block with cache_control; the remainder stays uncached.
+    is_anthropic = "anthropic" in (settings.provider_base_url or "").lower()
+    if cacheable_prefix and is_anthropic:
+        system_blocks = [
+            {"type": "text", "text": cacheable_prefix,
+             "cache_control": {"type": "ephemeral"}},
+        ]
+        if system:
+            system_blocks.append({"type": "text", "text": system})
+        all_messages = [{"role": "system", "content": system_blocks}] + messages
+    else:
+        sys_text = (cacheable_prefix + "\n\n" + system).strip() if cacheable_prefix else system
+        all_messages = [{"role": "system", "content": sys_text}] + messages
+
     payload = {
         "model": settings.provider_chat_model,
         "messages": all_messages,
@@ -173,6 +245,7 @@ def api_chat(req: ChatRequest) -> dict:
     start = time.time()
 
     # Load evidence chunks
+    search_result = None
     if req.evidence_ids:
         with connect() as conn:
             placeholders = ",".join("?" for _ in req.evidence_ids)
@@ -182,8 +255,26 @@ def api_chat(req: ChatRequest) -> dict:
             ).fetchall()
         evidence = [dict(r) for r in rows]
     else:
-        sr = search(req.query, req.topk)
-        evidence = sr["results"]
+        search_result = search(req.query, req.topk)
+        evidence = search_result["results"]
+
+    # A3: answer cache lookup (query + sorted evidence ids signature)
+    from app.cache import lookup_answer as _cache_lookup, save_answer as _cache_save
+    ev_ids_ordered = [int(e.get("id")) for e in evidence if isinstance(e.get("id"), int)]
+    cached = _cache_lookup(req.query, ev_ids_ordered)
+    if cached and not req.source_files:
+        # Only serve cache when NOT in deep-source follow-up mode — deep mode
+        # injects the full raw doc which would need a fresh call.
+        latency = int((time.time() - start) * 1000)
+        return {
+            "answer_id": 0,
+            "answer": cached["answer"],
+            "evidence": evidence,
+            "latency_ms": latency,
+            "source_files": [],
+            "from_cache": True,
+            "cache_hit_count": cached["hit_count"],
+        }
 
     # Build evidence text for the prompt
     evidence_lines = []
@@ -230,8 +321,34 @@ def api_chat(req: ChatRequest) -> dict:
     if deep_context:
         system += " You have full document content available — give a thorough, deep answer citing specific sections."
 
+    # B1: prompt caching candidate — if evidence concentrates on ONE wiki
+    # topic, we load its full text into a cached prefix so follow-up questions
+    # on the same topic are ~10x cheaper.
+    cacheable_prefix = ""
+    dim_counts: dict[str, int] = {}
+    for e in evidence:
+        dim = (e.get("dimension") or "")
+        if dim.startswith("wiki:"):
+            dim_counts[dim] = dim_counts.get(dim, 0) + 1
+    if dim_counts:
+        top_dim, top_n = max(dim_counts.items(), key=lambda kv: kv[1])
+        if top_n >= max(2, len(evidence) // 2):
+            # At least half evidence agrees on one wiki topic.
+            wiki_source_files = {e.get("source_file") for e in evidence
+                                 if (e.get("dimension") or "") == top_dim}
+            wiki_text_parts = []
+            for sf in list(wiki_source_files)[:2]:
+                full = _read_full_source(sf)
+                if full:
+                    wiki_text_parts.append(f"=== {Path(sf).name} ===\n{full}")
+            if wiki_text_parts:
+                cacheable_prefix = (
+                    f"# Primary wiki context (topic: {top_dim[5:]})\n\n"
+                    + "\n\n".join(wiki_text_parts)
+                )
+
     try:
-        answer = _chat_completion(system, messages)
+        answer = _chat_completion(system, messages, cacheable_prefix=cacheable_prefix)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc))
 
@@ -249,15 +366,55 @@ def api_chat(req: ChatRequest) -> dict:
                 break
 
     evidence_ids = [e.get("id") for e in evidence if e.get("id")]
+
+    # A2: aggregate per-path contributions across top evidence so feedback
+    # can later nudge weights toward the path that actually drove this hit.
+    path_breakdown_agg: dict[str, float] = {}
+    count = 0
+    for e in evidence[:5]:
+        pb = e.get("path_breakdown") or {}
+        if not pb:
+            continue
+        count += 1
+        for k, v in pb.items():
+            path_breakdown_agg[k] = path_breakdown_agg.get(k, 0.0) + float(v or 0)
+    if count:
+        for k in list(path_breakdown_agg.keys()):
+            path_breakdown_agg[k] /= count
+
+    # Evidence trust sum (for answer cache gating)
+    trust_sum = 0.0
+    try:
+        if evidence_ids:
+            with connect() as conn:
+                ph = ",".join("?" for _ in evidence_ids)
+                for r in conn.execute(
+                    f"SELECT trust_score FROM chunks WHERE id IN ({ph})",
+                    evidence_ids,
+                ).fetchall():
+                    trust_sum += float(r["trust_score"] or 0)
+    except Exception:
+        pass
+
     with connect() as conn:
         qid_row = conn.execute("SELECT id FROM query_logs ORDER BY id DESC LIMIT 1").fetchone()
         qid = qid_row["id"] if qid_row else 0
         conn.execute(
-            "INSERT INTO answer_logs(query_id, answer_text, evidence_refs, model_name, latency_ms) VALUES(?, ?, ?, ?, ?)",
-            (qid, answer, json.dumps(evidence_ids), settings.provider_chat_model, latency),
+            "INSERT INTO answer_logs(query_id, answer_text, evidence_refs, "
+            "model_name, latency_ms, path_breakdown_json) "
+            "VALUES(?, ?, ?, ?, ?, ?)",
+            (qid, answer, json.dumps(evidence_ids),
+             settings.provider_chat_model, latency,
+             json.dumps(path_breakdown_agg, ensure_ascii=False)),
         )
         answer_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         conn.commit()
+
+    # A3: cache the answer if evidence is trusted
+    _cache_save(
+        req.query, ev_ids_ordered, answer,
+        settings.provider_chat_model, trust_sum,
+    )
 
     return {
         "answer_id": answer_id,
@@ -265,6 +422,8 @@ def api_chat(req: ChatRequest) -> dict:
         "evidence": evidence,
         "latency_ms": latency,
         "source_files": top_source_files,
+        "prompt_cache_used": bool(cacheable_prefix),
+        "path_breakdown_avg": path_breakdown_agg,
     }
 
 
@@ -275,11 +434,56 @@ def api_feedback(req: FeedbackRequest) -> dict:
     """Stage 4: Strengthen — saves Q&A memory with params, updates query profiles."""
     add_feedback(req.answer_id, req.feedback_type)
 
-    if req.feedback_type == "plus_one":
-        # Strengthen the query profile
-        if req.query_text:
+    if req.feedback_type == "plus_one" or req.feedback_type == "minus_one":
+        # Strengthen the query profile (only for plus_one)
+        if req.feedback_type == "plus_one" and req.query_text:
             strengthen_profile(req.query_text, boost=1.0)
 
+        # A2: nudge this query's weights toward the path that dominated the
+        # upvoted evidence (or dampen the winning path on downvote).
+        try:
+            from app.adaptive import adjust_weights_from_feedback as _adjust
+            with connect() as conn:
+                pb_row = conn.execute(
+                    "SELECT path_breakdown_json FROM answer_logs WHERE id = ?",
+                    (req.answer_id,),
+                ).fetchone()
+            if pb_row and pb_row["path_breakdown_json"] and req.query_text:
+                try:
+                    pb = json.loads(pb_row["path_breakdown_json"])
+                except (json.JSONDecodeError, TypeError):
+                    pb = {}
+                sign = 1.0 if req.feedback_type == "plus_one" else -0.5
+                _adjust(req.query_text, pb, sign=sign)
+        except Exception:
+            pass
+
+        # Adjust trust_score on evidence chunks: +1 for plus_one, -0.5 for minus_one. Retrieval factors this in
+        # so the knowledge base self-curates toward chunks that led to good
+        # answers. Compounds with usage: heavily-trusted chunks surface
+        # faster in subsequent searches.
+        try:
+            with connect() as conn:
+                a_row = conn.execute(
+                    "SELECT evidence_refs FROM answer_logs WHERE id = ?",
+                    (req.answer_id,),
+                ).fetchone()
+                if a_row and a_row["evidence_refs"]:
+                    ev_ids = json.loads(a_row["evidence_refs"] or "[]")
+                    ev_ids = [i for i in ev_ids if isinstance(i, int)]
+                    if ev_ids:
+                        delta = 1.0 if req.feedback_type == "plus_one" else -0.5
+                        ph = ",".join("?" for _ in ev_ids)
+                        conn.execute(
+                            f"UPDATE chunks SET trust_score = trust_score + ? "
+                            f"WHERE id IN ({ph})",
+                            (delta, *ev_ids),
+                        )
+                        conn.commit()
+        except Exception:
+            pass
+
+    if req.feedback_type == "plus_one":
         # Save full Q&A snapshot as memory
         with connect() as conn:
             answer_row = conn.execute(
@@ -682,11 +886,1186 @@ def api_build_delete(build_id: str) -> dict:
     return {"deleted": build_id}
 
 
+# ── User Prefs (read by MCP server to find active note path) ──
+
+@app.get("/prefs")
+def api_prefs() -> dict:
+    """Return stored user preferences (raw note path, etc.)."""
+    prefs_file = Path(settings.db_path).resolve().parent / "prefs.json"
+    if prefs_file.exists():
+        import json as _json
+        try:
+            return _json.loads(prefs_file.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+# ── Raw Note Ingest (via API) ──
+
+class IngestRequest(BaseModel):
+    raw_path: str
+    note_path: str
+    reset: bool = False
+    # When true, skip provider-side ai_enrich entirely. Used by MCP-triggered
+    # ingests so Claude (or another caller) can classify segments afterwards
+    # via POST /tag-segments/classify instead of burning DeepSeek tokens.
+    ai_delegate: bool = False
+
+
+@app.post("/ingest")
+def api_ingest(req: IngestRequest) -> dict:
+    """Ingest raw notes — incremental (default) or full rebuild."""
+    from app.ingest import ingest_raw
+    try:
+        result = ingest_raw(req.raw_path, req.note_path, reset=req.reset, ai_delegate=req.ai_delegate)
+        if req.ai_delegate:
+            result = {**result, "ai_delegated": True, "source_file": req.raw_path}
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Delegated classification (called by MCP caller after ai_delegate ingest) ──
+
+class ClassifySegmentRequest(BaseModel):
+    source_file: str
+    line_start: int
+    line_end: int
+    tag: str
+    topic_name: str = ""
+    summary: str = ""
+    keywords: list[str] = []
+    entities: list[dict] = []
+    secondary_tags: list[str] = []
+    is_credential: bool = False
+
+
+@app.post("/tag-segments/classify")
+def api_classify_segment(req: ClassifySegmentRequest) -> dict:
+    """Record a classification for an already-ingested line range.
+
+    Intended for MCP callers (Claude) who run ingest with ai_delegate=True and
+    then classify the resulting "others"-tagged content in their own context.
+    Inserts a tag_segment row and updates chunks' dimension within the range.
+    """
+    if req.line_end < req.line_start:
+        raise HTTPException(status_code=400, detail="line_end must be >= line_start")
+    if not req.tag.strip():
+        raise HTTPException(status_code=400, detail="tag is required")
+
+    active = get_active_build_id() or ""
+    tag = req.tag.strip()
+    affected_chunks = 0
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO tag_segments(build_id, source_file, tag, topic_name, line_start, line_end, summary, keywords_json, entities_json, is_credential)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                active,
+                req.source_file,
+                tag,
+                req.topic_name or "",
+                req.line_start,
+                req.line_end,
+                req.summary or "",
+                json.dumps(req.keywords, ensure_ascii=False),
+                json.dumps(req.entities, ensure_ascii=False),
+                1 if req.is_credential else 0,
+            ),
+        )
+        for stag in req.secondary_tags or []:
+            st = (stag or "").strip()
+            if not st or st == tag:
+                continue
+            conn.execute(
+                """
+                INSERT INTO tag_segments(build_id, source_file, tag, topic_name, line_start, line_end, summary, keywords_json, entities_json, is_credential)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    active, req.source_file, st, req.topic_name or "",
+                    req.line_start, req.line_end, req.summary or "",
+                    json.dumps(req.keywords, ensure_ascii=False),
+                    json.dumps(req.entities, ensure_ascii=False),
+                    1 if req.is_credential else 0,
+                ),
+            )
+        # Retag chunks whose source_ref line falls inside the range.
+        rows = conn.execute(
+            "SELECT id, source_ref FROM chunks WHERE source_file = ? AND (dimension = 'others' OR dimension = '' OR dimension IS NULL)",
+            (req.source_file,),
+        ).fetchall()
+        for row in rows:
+            ref = row["source_ref"] or ""
+            # Refs look like "foo.md:line:42:kind"
+            line_no = None
+            for part in ref.split(":"):
+                try:
+                    n = int(part.split("-")[0])
+                    if n > 0:
+                        line_no = n
+                        break
+                except ValueError:
+                    continue
+            if line_no is None:
+                continue
+            if req.line_start <= line_no <= req.line_end:
+                conn.execute("UPDATE chunks SET dimension = ? WHERE id = ?", (tag, row["id"]))
+                affected_chunks += 1
+        conn.commit()
+
+    return {
+        "ok": True,
+        "tag": tag,
+        "line_start": req.line_start,
+        "line_end": req.line_end,
+        "chunks_retagged": affected_chunks,
+    }
+
+
+# ── Enrichment queue (delegate mode) ──
+#
+# When an ingest runs with ai_delegate=True, the backend creates placeholder
+# records without LLM-generated content (tag segments, chunk summaries, topic
+# summaries, or re-formatted markdown). An MCP caller (typically Claude)
+# discovers these via GET /enrich-queue and fills them in via POST /enrich-bulk.
+#
+# Kinds of pending enrichment:
+#   - note_segments: a raw note file ingested with ai_delegate — chunks have
+#     empty `dimension`, need tag_segments written.
+#   - wiki_chunks:   wiki chunks with empty ai_summary.
+#   - wiki_topic:    wiki tag_segments with empty summary.
+#   - doc_format:    raw docs parked in pending_format_docs awaiting markdown
+#     rewrite (triggers downstream wiki ingest on submit).
+
+
+@app.get("/enrich-queue")
+def api_enrich_queue(
+    kind: str = Query("summary", description="summary | note_segments | wiki_chunks | wiki_topic | doc_format"),
+    build_id: str = Query("", description="Filter to a specific build"),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+) -> dict:
+    with connect() as conn:
+        if kind == "summary":
+            # Pending builds by kind
+            note_rows = conn.execute(
+                "SELECT id, source_file, chunk_count FROM builds "
+                "WHERE enrich_status = 'awaiting_enrich' AND source_file NOT LIKE 'wiki:%' "
+                "ORDER BY created_at DESC"
+            ).fetchall()
+            wiki_rows = conn.execute(
+                "SELECT id, source_file, chunk_count FROM builds "
+                "WHERE enrich_status = 'awaiting_enrich' AND source_file LIKE 'wiki:%' "
+                "ORDER BY created_at DESC"
+            ).fetchall()
+            wiki_chunks_pending = conn.execute(
+                "SELECT COUNT(1) c FROM chunks "
+                "WHERE dimension LIKE 'wiki:%' AND (ai_summary IS NULL OR ai_summary = '')"
+            ).fetchone()["c"]
+            wiki_topic_pending = conn.execute(
+                "SELECT COUNT(1) c FROM tag_segments "
+                "WHERE tag LIKE 'wiki:%' AND (summary IS NULL OR summary = '')"
+            ).fetchone()["c"]
+            doc_format_pending = conn.execute(
+                "SELECT COUNT(1) c FROM pending_format_docs WHERE status = 'awaiting'"
+            ).fetchone()["c"]
+            return {
+                "kind": "summary",
+                "note_segments": {
+                    "pending_builds": len(note_rows),
+                    "builds": [
+                        {
+                            "build_id": r["id"],
+                            "source_file": r["source_file"],
+                            "chunks": r["chunk_count"],
+                        }
+                        for r in note_rows
+                    ],
+                },
+                "wiki_chunks": {
+                    "pending_chunks": int(wiki_chunks_pending or 0),
+                    "builds": [
+                        {
+                            "build_id": r["id"],
+                            "topic": (r["source_file"] or "").replace("wiki:", "", 1),
+                        }
+                        for r in wiki_rows
+                    ],
+                },
+                "wiki_topic": {
+                    "pending_topics": int(wiki_topic_pending or 0),
+                },
+                "doc_format": {
+                    "pending_docs": int(doc_format_pending or 0),
+                },
+            }
+
+        if kind == "note_segments":
+            q = (
+                "SELECT id, source_file, chunk_count FROM builds "
+                "WHERE enrich_status = 'awaiting_enrich' AND source_file NOT LIKE 'wiki:%'"
+            )
+            params: list = []
+            if build_id:
+                q += " AND id = ?"
+                params.append(build_id)
+            q += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+            rows = conn.execute(q, params).fetchall()
+            builds = []
+            for r in rows:
+                sf = r["source_file"]
+                total_lines = 0
+                try:
+                    p = Path(sf)
+                    if p.exists():
+                        with p.open("rb") as fh:
+                            total_lines = sum(1 for _ in fh)
+                except Exception:
+                    pass
+
+                # Existing segments on this build (so Claude can preserve them
+                # on incremental ingests and only classify pending ranges).
+                seg_rows = conn.execute(
+                    "SELECT line_start, line_end, tag, topic_name, summary "
+                    "FROM tag_segments WHERE build_id = ? AND source_file = ? "
+                    "ORDER BY line_start, line_end",
+                    (r["id"], sf),
+                ).fetchall()
+                existing_segments = [
+                    {
+                        "line_start": s["line_start"],
+                        "line_end": s["line_end"],
+                        "tag": s["tag"],
+                        "topic_name": s["topic_name"],
+                        "summary": s["summary"],
+                    }
+                    for s in seg_rows
+                ]
+
+                # Pending line ranges: chunks with empty dimension, their
+                # source_ref line numbers coalesced into contiguous ranges.
+                pending_rows = conn.execute(
+                    "SELECT source_ref FROM chunks "
+                    "WHERE build_id = ? AND source_file = ? "
+                    "AND (dimension = '' OR dimension IS NULL) "
+                    "ORDER BY id",
+                    (r["id"], sf),
+                ).fetchall()
+                line_nums: list[int] = []
+                for cr in pending_rows:
+                    ref = cr["source_ref"] or ""
+                    for part in ref.split(":"):
+                        try:
+                            n = int(part.split("-")[0])
+                            if n > 0:
+                                line_nums.append(n)
+                                break
+                        except ValueError:
+                            continue
+                line_nums.sort()
+                dedup: list[int] = []
+                last = -1
+                for n in line_nums:
+                    if n != last:
+                        dedup.append(n)
+                        last = n
+                # Coalesce into ranges (gap <= 2 lines counts as same range).
+                pending_ranges: list[dict] = []
+                if dedup:
+                    rs = re = dedup[0]
+                    for n in dedup[1:]:
+                        if n - re <= 2:
+                            re = n
+                        else:
+                            pending_ranges.append({"line_start": rs, "line_end": re})
+                            rs = re = n
+                    pending_ranges.append({"line_start": rs, "line_end": re})
+
+                incremental = len(existing_segments) > 0
+
+                # Suggested partitions for parallel subagent enrichment.
+                # Each partition is a roughly equal slice of pending lines
+                # (~1500 lines each, max 8 partitions). Empty when only a
+                # small amount is pending — no point spinning up subagents.
+                total_pending_lines = sum(
+                    pr["line_end"] - pr["line_start"] + 1 for pr in pending_ranges
+                )
+                suggested_partitions: list[dict] = []
+                if total_pending_lines >= 3000 and pending_ranges:
+                    target = min(8, max(2, total_pending_lines // 1500))
+                    slice_size = max(1, total_pending_lines // target)
+                    # Walk pending_ranges, accumulate lines into slots.
+                    buf_start: int | None = None
+                    buf_end: int = 0
+                    buf_lines: int = 0
+                    for pr in pending_ranges:
+                        s, e = pr["line_start"], pr["line_end"]
+                        if buf_start is None:
+                            buf_start, buf_end, buf_lines = s, e, e - s + 1
+                        else:
+                            buf_end = e
+                            buf_lines += e - s + 1
+                        if buf_lines >= slice_size:
+                            suggested_partitions.append({
+                                "line_start": buf_start, "line_end": buf_end,
+                                "approx_lines": buf_lines,
+                            })
+                            buf_start = None
+                            buf_lines = 0
+                    if buf_start is not None:
+                        suggested_partitions.append({
+                            "line_start": buf_start, "line_end": buf_end,
+                            "approx_lines": buf_lines,
+                        })
+
+                hint = (
+                    "Incremental enrich: only classify the lines in `pending_line_ranges`. "
+                    "Existing segments in `existing_segments` are preserved — don't re-emit them. "
+                    if incremental
+                    else "Read the source_file, decide semantic segments for the whole file. "
+                ) + (
+                    "Submit via submit_enrichments(kind='note_segments', items=[...]) "
+                    "or items_file=<absolute path> for large batches. "
+                )
+                if suggested_partitions:
+                    hint += (
+                        f"For speed, spawn {len(suggested_partitions)} subagents — one per "
+                        "partition in `suggested_partitions` — each writes its JSONL to "
+                        "/tmp/seg-<idx>.jsonl, then merge and submit with items_file."
+                    )
+
+                builds.append({
+                    "build_id": r["id"],
+                    "source_file": sf,
+                    "chunks": r["chunk_count"],
+                    "total_lines": total_lines,
+                    "existing_segments": existing_segments,
+                    "pending_line_ranges": pending_ranges,
+                    "pending_chunk_count": len(pending_rows),
+                    "incremental": incremental,
+                    "suggested_partitions": suggested_partitions,
+                    "hint": hint,
+                })
+            return {"kind": "note_segments", "builds": builds}
+
+        if kind == "wiki_chunks":
+            q_where = "c.dimension LIKE 'wiki:%' AND (c.ai_summary IS NULL OR c.ai_summary = '')"
+            params = []
+            if build_id:
+                q_where += " AND c.build_id = ?"
+                params.append(build_id)
+            rows = conn.execute(
+                f"SELECT c.id, c.build_id, c.source_file, c.source_ref, c.text, c.dimension "
+                f"FROM chunks c WHERE {q_where} "
+                f"ORDER BY c.build_id, c.id LIMIT ? OFFSET ?",
+                (*params, limit, offset),
+            ).fetchall()
+            total_row = conn.execute(
+                f"SELECT COUNT(1) c FROM chunks c WHERE {q_where}", params
+            ).fetchone()
+            chunks = [
+                {
+                    "chunk_id": r["id"],
+                    "build_id": r["build_id"],
+                    "topic": (r["dimension"] or "").replace("wiki:", "", 1),
+                    "source_file": r["source_file"],
+                    "source_ref": r["source_ref"],
+                    "text": r["text"],
+                }
+                for r in rows
+            ]
+            return {
+                "kind": "wiki_chunks",
+                "total": int(total_row["c"] or 0),
+                "returned": len(chunks),
+                "offset": offset,
+                "limit": limit,
+                "chunks": chunks,
+                "hint": (
+                    "Each chunk needs a summary (1 sentence, <30 words), keywords (3-6), "
+                    "and entities ([{name, type}]). Submit via submit_enrichments("
+                    "kind='wiki_chunks', items=[{chunk_id, summary, keywords, entities}])."
+                ),
+            }
+
+        if kind == "wiki_topic":
+            q = (
+                "SELECT id, build_id, tag, topic_name, source_file, keywords_json "
+                "FROM tag_segments WHERE tag LIKE 'wiki:%' AND (summary IS NULL OR summary = '')"
+            )
+            params = []
+            if build_id:
+                q += " AND build_id = ?"
+                params.append(build_id)
+            q += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+            rows = conn.execute(q, params).fetchall()
+            topics = []
+            for r in rows:
+                # Gather already-enriched chunk summaries as context hints
+                chunk_hints = conn.execute(
+                    "SELECT source_ref, ai_summary FROM chunks "
+                    "WHERE dimension = ? AND ai_summary != '' LIMIT 20",
+                    (r["tag"],),
+                ).fetchall()
+                topics.append({
+                    "tag_segment_id": r["id"],
+                    "build_id": r["build_id"],
+                    "topic_name": r["topic_name"],
+                    "source_file": r["source_file"],
+                    "chunk_summary_samples": [
+                        {"source_ref": h["source_ref"], "summary": h["ai_summary"]}
+                        for h in chunk_hints
+                    ],
+                    "structural_keywords": (
+                        json.loads(r["keywords_json"]) if r["keywords_json"] else []
+                    )[:30],
+                })
+            return {
+                "kind": "wiki_topic",
+                "topics": topics,
+                "hint": (
+                    "Use chunk_summary_samples as context. Produce a 2-3 sentence "
+                    "topic-level summary. Submit via submit_enrichments("
+                    "kind='wiki_topic', items=[{tag_segment_id, summary, keywords}])."
+                ),
+            }
+
+        if kind == "doc_format":
+            rows = conn.execute(
+                "SELECT id, format_id, topic_name, title, raw_content, source, target_dir "
+                "FROM pending_format_docs WHERE status = 'awaiting' "
+                "ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            ).fetchall()
+            docs = [
+                {
+                    "format_id": r["format_id"],
+                    "topic_name": r["topic_name"],
+                    "title": r["title"],
+                    "raw_content": r["raw_content"],
+                    "source": r["source"],
+                    "target_dir": r["target_dir"],
+                }
+                for r in rows
+            ]
+            return {
+                "kind": "doc_format",
+                "docs": docs,
+                "hint": (
+                    "Rewrite raw_content into clean, well-structured Markdown — "
+                    "preserve all content, add proper headings/lists/tables, keep the "
+                    "original language. Submit via submit_enrichments("
+                    "kind='doc_format', items=[{format_id, markdown}]). This triggers a "
+                    "delegated wiki ingest (expect wiki_chunks + wiki_topic to become pending)."
+                ),
+            }
+
+        raise HTTPException(status_code=400, detail=f"Unknown kind: {kind}")
+
+
+class EnrichBulkRequest(BaseModel):
+    kind: str
+    items: list[dict] = []
+    # Optional: absolute path to a file containing items. Supports .json (a
+    # JSON array) or .jsonl (one JSON object per line). Reading from disk
+    # avoids the overhead of the MCP caller (e.g. Claude) generating a huge
+    # JSON payload token-by-token for large batches.
+    items_file: str = ""
+
+
+@app.post("/enrich-bulk")
+def api_enrich_bulk(req: EnrichBulkRequest) -> dict:
+    """Apply a batch of enrichments produced by an MCP caller (e.g. Claude).
+
+    See GET /enrich-queue for the item shape per kind.
+    """
+    from app.builds import recompute_enrich_status
+    from app.events import publish as _publish
+
+    kind = (req.kind or "").strip()
+    items = list(req.items or [])
+    # Optionally hydrate items from a local file (avoids the caller emitting
+    # a huge JSON payload). JSONL is streamed line-by-line; .json expects a
+    # top-level array.
+    if req.items_file:
+        p = Path(req.items_file)
+        if not p.exists():
+            raise HTTPException(status_code=400, detail=f"items_file not found: {req.items_file}")
+        try:
+            if p.suffix.lower() == ".jsonl":
+                with p.open(encoding="utf-8") as fh:
+                    for idx, line in enumerate(fh, start=1):
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            items.append(json.loads(line))
+                        except json.JSONDecodeError as e:
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"items_file parse error at line {idx}: {e}",
+                            )
+            else:
+                parsed = json.loads(p.read_text(encoding="utf-8"))
+                if not isinstance(parsed, list):
+                    raise HTTPException(status_code=400, detail="items_file must be a JSON array")
+                items.extend(parsed)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"items_file read error: {e}")
+    if not items:
+        return {"kind": kind, "applied": 0, "failed": []}
+
+    # Broadcast enrich progress over SSE so the desktop pipeline lights up when
+    # Claude is doing the work (same channel as ingest). Channel is 'note' for
+    # note_segments; 'wiki' for wiki_chunks / wiki_topic / doc_format.
+    sse_channel = "note" if kind == "note_segments" else "wiki"
+    total_items = len(items)
+
+    def _emit(step: str, current: int, detail: str) -> None:
+        try:
+            _publish({
+                "channel": sse_channel,
+                "step": step,
+                "current": current,
+                "total": total_items,
+                "detail": detail,
+                "actor": "mcp:delegate",
+                "kind": kind,
+            })
+        except Exception:
+            pass
+
+    _emit("ai_enrich", 0, f"Claude submitting {total_items} {kind}...")
+
+    applied = 0
+    failed: list[dict] = []
+    touched_builds: set[str] = set()
+
+    conflicts_created: list[dict] = []
+
+    if kind == "note_segments":
+        active = get_active_build_id() or ""
+        with connect() as conn:
+            for idx, it in enumerate(items):
+                try:
+                    source_file = it["source_file"]
+                    line_start = int(it["line_start"])
+                    line_end = int(it["line_end"])
+                    tag = (it.get("tag") or "").strip()
+                    if not tag or line_end < line_start:
+                        raise ValueError("tag + line_start<=line_end required")
+
+                    # C1: conflict detection — any existing segment whose
+                    # range OVERLAPS the incoming range AND has a different
+                    # tag is a conflict. Checks full overlap semantics (not
+                    # just exact-range match):
+                    #   existing.start <= incoming.end AND existing.end >= incoming.start
+                    overlap = conn.execute(
+                        "SELECT id, tag, topic_name, build_id, line_start, line_end "
+                        "FROM tag_segments "
+                        "WHERE source_file = ? "
+                        "AND line_start <= ? AND line_end >= ? "
+                        "AND tag != ? AND tag NOT LIKE 'wiki:%' "
+                        "LIMIT 1",
+                        (source_file, line_end, line_start, tag),
+                    ).fetchone()
+                    if overlap:
+                        conn.execute(
+                            "INSERT INTO conflict_pending("
+                            "build_id, source_file, line_start, line_end, "
+                            "existing_tag, existing_topic, incoming_tag, "
+                            "incoming_topic, incoming_summary, incoming_payload_json) "
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            (
+                                overlap["build_id"] or active,
+                                source_file, line_start, line_end,
+                                overlap["tag"], overlap["topic_name"] or "",
+                                tag, it.get("topic_name", "") or "",
+                                it.get("summary", "") or "",
+                                json.dumps(it, ensure_ascii=False),
+                            ),
+                        )
+                        conflicts_created.append({
+                            "line_start": line_start, "line_end": line_end,
+                            "existing_tag": overlap["tag"], "incoming_tag": tag,
+                        })
+                        conn.commit()
+                        # Skip applying — wait for human resolution
+                        continue
+                    # Find the chunks' build_id (prefer the most recent one for this file)
+                    b_row = conn.execute(
+                        "SELECT build_id FROM chunks WHERE source_file = ? ORDER BY id DESC LIMIT 1",
+                        (source_file,),
+                    ).fetchone()
+                    build_id = (b_row["build_id"] if b_row else "") or active
+                    kws = it.get("keywords") or []
+                    ents = it.get("entities") or []
+                    conn.execute(
+                        """
+                        INSERT INTO tag_segments(build_id, source_file, tag, topic_name, line_start, line_end, summary, keywords_json, entities_json, is_credential)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            build_id, source_file, tag, it.get("topic_name", "") or "",
+                            line_start, line_end, it.get("summary", "") or "",
+                            json.dumps(kws, ensure_ascii=False),
+                            json.dumps(ents, ensure_ascii=False),
+                            1 if it.get("is_credential") else 0,
+                        ),
+                    )
+                    for stag in it.get("secondary_tags") or []:
+                        st = (stag or "").strip()
+                        if not st or st == tag:
+                            continue
+                        conn.execute(
+                            """
+                            INSERT INTO tag_segments(build_id, source_file, tag, topic_name, line_start, line_end, summary, keywords_json, entities_json, is_credential)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                build_id, source_file, st, it.get("topic_name", "") or "",
+                                line_start, line_end, it.get("summary", "") or "",
+                                json.dumps(kws, ensure_ascii=False),
+                                json.dumps(ents, ensure_ascii=False),
+                                1 if it.get("is_credential") else 0,
+                            ),
+                        )
+                    # Retag chunks falling inside the range (pending ones only)
+                    chunk_rows = conn.execute(
+                        "SELECT id, source_ref FROM chunks WHERE source_file = ? "
+                        "AND (dimension = '' OR dimension IS NULL OR dimension = 'others')",
+                        (source_file,),
+                    ).fetchall()
+                    for cr in chunk_rows:
+                        ref = cr["source_ref"] or ""
+                        line_no = None
+                        for part in ref.split(":"):
+                            try:
+                                n = int(part.split("-")[0])
+                                if n > 0:
+                                    line_no = n
+                                    break
+                            except ValueError:
+                                continue
+                        if line_no is not None and line_start <= line_no <= line_end:
+                            conn.execute("UPDATE chunks SET dimension = ? WHERE id = ?", (tag, cr["id"]))
+                    if build_id:
+                        touched_builds.add(build_id)
+                    applied += 1
+                except Exception as e:
+                    failed.append({"index": idx, "error": str(e)})
+            conn.commit()
+
+    elif kind == "wiki_chunks":
+        with connect() as conn:
+            for idx, it in enumerate(items):
+                try:
+                    chunk_id = int(it["chunk_id"])
+                    summary = (it.get("summary") or "").strip()
+                    if not summary:
+                        raise ValueError("summary required")
+                    kws = it.get("keywords") or []
+                    ents = it.get("entities") or []
+                    # Merge kws into existing keywords_json
+                    row = conn.execute(
+                        "SELECT build_id, keywords_json FROM chunks WHERE id = ?", (chunk_id,)
+                    ).fetchone()
+                    if not row:
+                        raise ValueError(f"chunk {chunk_id} not found")
+                    try:
+                        existing_kws = json.loads(row["keywords_json"]) if row["keywords_json"] else []
+                    except (json.JSONDecodeError, TypeError):
+                        existing_kws = []
+                    merged = list({(k or "").lower() for k in (*existing_kws, *kws) if k})
+                    conn.execute(
+                        "UPDATE chunks SET ai_summary = ?, keywords_json = ?, entities_json = ? WHERE id = ?",
+                        (
+                            summary,
+                            json.dumps(merged, ensure_ascii=False),
+                            json.dumps(ents, ensure_ascii=False),
+                            chunk_id,
+                        ),
+                    )
+                    if row["build_id"]:
+                        touched_builds.add(row["build_id"])
+                    applied += 1
+                except Exception as e:
+                    failed.append({"index": idx, "error": str(e)})
+            conn.commit()
+
+    elif kind == "wiki_topic":
+        with connect() as conn:
+            for idx, it in enumerate(items):
+                try:
+                    seg_id = int(it["tag_segment_id"])
+                    summary = (it.get("summary") or "").strip()
+                    if not summary:
+                        raise ValueError("summary required")
+                    kws = it.get("keywords") or []
+                    row = conn.execute(
+                        "SELECT build_id, keywords_json FROM tag_segments WHERE id = ?", (seg_id,)
+                    ).fetchone()
+                    if not row:
+                        raise ValueError(f"tag_segment {seg_id} not found")
+                    try:
+                        existing_kws = json.loads(row["keywords_json"]) if row["keywords_json"] else []
+                    except (json.JSONDecodeError, TypeError):
+                        existing_kws = []
+                    # Preserve existing structural kws; prepend new LLM kws
+                    merged = list(dict.fromkeys([*(kws or []), *(existing_kws or [])]))
+                    conn.execute(
+                        "UPDATE tag_segments SET summary = ?, keywords_json = ? WHERE id = ?",
+                        (summary, json.dumps(merged[:300], ensure_ascii=False), seg_id),
+                    )
+                    if row["build_id"]:
+                        touched_builds.add(row["build_id"])
+                    applied += 1
+                except Exception as e:
+                    failed.append({"index": idx, "error": str(e)})
+            conn.commit()
+
+    elif kind == "doc_format":
+        from app.special_ingest import ingest_folder
+        chained: list[dict] = []
+        with connect() as conn:
+            for idx, it in enumerate(items):
+                try:
+                    format_id = it["format_id"]
+                    markdown = (it.get("markdown") or "").strip()
+                    if not markdown:
+                        raise ValueError("markdown required")
+                    row = conn.execute(
+                        "SELECT topic_name, target_dir FROM pending_format_docs "
+                        "WHERE format_id = ? AND status = 'awaiting'",
+                        (format_id,),
+                    ).fetchone()
+                    if not row:
+                        raise ValueError(f"format_id {format_id} not found or already done")
+                    target_dir = Path(row["target_dir"])
+                    target_dir.mkdir(parents=True, exist_ok=True)
+                    import re as _re
+                    safe_name = _re.sub(r'[^\w\s\u4e00-\u9fff-]', '_', row["topic_name"])[:80]
+                    md_path = target_dir / f"{safe_name}.md"
+                    md_path.write_text(markdown, encoding="utf-8")
+                    conn.execute(
+                        "UPDATE pending_format_docs SET status = 'completed' WHERE format_id = ?",
+                        (format_id,),
+                    )
+                    conn.commit()
+                    # Chain into delegated wiki ingest (creates wiki_chunks + wiki_topic pending)
+                    try:
+                        ing = ingest_folder(str(target_dir), topic_name=row["topic_name"], ai_delegate=True)
+                        chained.append({"format_id": format_id, **ing})
+                        if ing.get("build_id"):
+                            touched_builds.add(ing["build_id"])
+                    except Exception as ie:
+                        chained.append({"format_id": format_id, "ingest_error": str(ie)})
+                    applied += 1
+                except Exception as e:
+                    failed.append({"index": idx, "error": str(e)})
+        _emit("ai_enrich", applied, f"Applied {applied}/{total_items} doc_format (chained ingests: {len(chained)})")
+        _emit("done", applied, f"Claude completed doc_format: {applied} applied, {len(chained)} wiki ingests triggered")
+        return {
+            "kind": kind,
+            "applied": applied,
+            "failed": failed,
+            "chained_ingests": chained,
+        }
+
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown kind: {kind}")
+
+    _emit("ai_enrich", applied, f"Applied {applied}/{total_items} {kind}")
+
+    # After note_segments submissions, consolidate adjacent same-tag segments
+    # AND refresh segment centroids so the next incremental auto_inherit
+    # benefits from what Claude just classified.
+    merged_total = 0
+    if kind == "note_segments" and applied > 0 and touched_builds:
+        try:
+            from app.autoclassify import (
+                merge_adjacent_segments as _merge,
+                refresh_segment_centroids as _refresh,
+            )
+            for bid in touched_builds:
+                r = _merge(bid)
+                merged_total += int(r.get("merged", 0) or 0)
+                _refresh(bid)
+        except Exception:
+            pass
+
+    # Recompute enrich_status for all touched builds
+    build_status: dict[str, str] = {}
+    for bid in touched_builds:
+        try:
+            build_status[bid] = recompute_enrich_status(bid)
+        except Exception:
+            pass
+
+    all_done = bool(build_status) and all(v == "completed" for v in build_status.values())
+    if all_done:
+        _emit("done", applied, f"Claude completed {kind}: {applied} applied")
+    return {
+        "kind": kind,
+        "applied": applied,
+        "failed": failed,
+        "merged_adjacent": merged_total,
+        "conflicts_parked": conflicts_created,
+        "build_status_after": build_status,
+    }
+
+
+# ── Conflicts, split suggestions, dashboard, streaming chat ──
+
+@app.post("/ocr/process")
+def api_ocr_process(limit: int = Query(20, ge=1, le=100)) -> dict:
+    """C4: drain pending OCR queue (best-effort — requires local tesseract)."""
+    from app.ocr import process_pending_ocr
+    return process_pending_ocr(limit=limit)
+
+
+@app.get("/ocr/pending")
+def api_ocr_pending_list(limit: int = Query(50, ge=1, le=500)) -> dict:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT id, source_file, line_no, image_ref, status, "
+            "extracted_text, created_at, processed_at "
+            "FROM ocr_pending ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return {"pending": [dict(r) for r in rows]}
+
+
+@app.get("/conflicts")
+def api_conflicts_list(status: str = Query("pending")) -> dict:
+    """C1: unresolved enrichment conflicts awaiting human choice."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT id, build_id, source_file, line_start, line_end, "
+            "existing_tag, existing_topic, incoming_tag, incoming_topic, "
+            "incoming_summary, status, created_at "
+            "FROM conflict_pending WHERE status = ? ORDER BY created_at DESC",
+            (status,),
+        ).fetchall()
+    return {"conflicts": [dict(r) for r in rows]}
+
+
+class ConflictResolveRequest(BaseModel):
+    conflict_id: int
+    choice: str  # 'keep_existing' | 'accept_incoming' | 'dismiss'
+
+
+@app.post("/conflicts/resolve")
+def api_conflict_resolve(req: ConflictResolveRequest) -> dict:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM conflict_pending WHERE id = ?", (req.conflict_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="conflict not found")
+        if req.choice == "accept_incoming":
+            # Overwrite: drop existing segment covering range + re-insert incoming
+            conn.execute(
+                "DELETE FROM tag_segments WHERE source_file = ? "
+                "AND line_start = ? AND line_end = ? AND tag = ?",
+                (row["source_file"], row["line_start"], row["line_end"], row["existing_tag"]),
+            )
+            try:
+                payload = json.loads(row["incoming_payload_json"] or "{}")
+            except (json.JSONDecodeError, TypeError):
+                payload = {}
+            conn.execute(
+                "INSERT INTO tag_segments(build_id, source_file, tag, topic_name, "
+                "line_start, line_end, summary, keywords_json, entities_json, is_credential) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    row["build_id"], row["source_file"], row["incoming_tag"],
+                    row["incoming_topic"] or "",
+                    row["line_start"], row["line_end"],
+                    row["incoming_summary"] or "",
+                    json.dumps(payload.get("keywords", []), ensure_ascii=False),
+                    json.dumps(payload.get("entities", []), ensure_ascii=False),
+                    1 if payload.get("is_credential") else 0,
+                ),
+            )
+        conn.execute(
+            "UPDATE conflict_pending SET status = ? WHERE id = ?",
+            (req.choice, req.conflict_id),
+        )
+        conn.commit()
+    return {"resolved": req.conflict_id, "choice": req.choice}
+
+
+@app.get("/segments/split-suggestions")
+def api_split_suggestions(
+    min_lines: int = Query(200, ge=50),
+    min_subheadings: int = Query(3, ge=2),
+) -> dict:
+    """C2: segments likely to benefit from splitting — too large AND contain
+    multiple sub-headings in the raw text. Scans each source_file ONCE.
+    """
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT id, build_id, source_file, tag, topic_name, line_start, line_end, summary "
+            "FROM tag_segments WHERE (line_end - line_start + 1) >= ? "
+            "AND tag NOT LIKE 'wiki:%'",
+            (min_lines,),
+        ).fetchall()
+    # Group candidates by source_file so we read each file exactly once.
+    by_file: dict[str, list] = {}
+    for r in rows:
+        by_file.setdefault(r["source_file"], []).append(r)
+    suggestions: list[dict] = []
+    for sf, segs in by_file.items():
+        try:
+            p = Path(sf)
+            if not p.exists():
+                continue
+            # Collect ALL heading positions once, then bucket into segments.
+            heading_lines: list[int] = []
+            with p.open(encoding="utf-8", errors="ignore") as fh:
+                for idx, line in enumerate(fh, start=1):
+                    s = line.strip()
+                    if s.startswith("## ") or s.startswith("### ") or s.startswith("#### "):
+                        heading_lines.append(idx)
+            for r in segs:
+                ls, le = r["line_start"], r["line_end"]
+                hits = [h for h in heading_lines if ls <= h <= le]
+                if len(hits) >= min_subheadings:
+                    suggestions.append({
+                        "segment_id": r["id"],
+                        "source_file": sf,
+                        "tag": r["tag"],
+                        "topic_name": r["topic_name"],
+                        "line_start": ls,
+                        "line_end": le,
+                        "line_count": le - ls + 1,
+                        "subheadings_at": hits,
+                    })
+        except Exception:
+            continue
+    return {"suggestions": suggestions}
+
+
+@app.get("/dashboard/overview")
+def api_dashboard() -> dict:
+    """D1: single-shot aggregated metrics so the UI can render 'how much the
+    system has saved me' in one place. All numbers are current state snapshots."""
+    with connect() as conn:
+        counts = {}
+        for t in ("chunks", "tag_segments", "search_history", "search_misses",
+                  "answer_cache", "meta_memory", "ocr_pending", "builds"):
+            try:
+                counts[t] = conn.execute(f"SELECT COUNT(1) c FROM {t}").fetchone()["c"]
+            except Exception:
+                counts[t] = 0
+        # conflict_pending: show only actually-open ones (matches list_conflicts default)
+        try:
+            counts["conflict_pending"] = conn.execute(
+                "SELECT COUNT(1) c FROM conflict_pending WHERE status = 'pending'"
+            ).fetchone()["c"]
+        except Exception:
+            counts["conflict_pending"] = 0
+        # Build attribution distribution
+        attr = conn.execute(
+            "SELECT completed_by, COUNT(1) c FROM builds GROUP BY completed_by"
+        ).fetchall()
+        attribution = {r["completed_by"] or "(unknown)": r["c"] for r in attr}
+        # Cache savings
+        cache_row = conn.execute(
+            "SELECT COALESCE(SUM(hit_count), 0) hits, COUNT(1) entries "
+            "FROM answer_cache"
+        ).fetchone()
+        cache_stats = {
+            "entries": cache_row["entries"],
+            "total_hits": int(cache_row["hits"] or 0),
+        }
+        # Token usage totals across builds
+        tok_row = conn.execute(
+            "SELECT COALESCE(SUM(estimated_cost_cny), 0) cost FROM builds"
+        ).fetchone()
+        # Recent activity — note builds only (users care about their note,
+        # not the wiki ingest cadence).
+        last_ingest = conn.execute(
+            "SELECT id, created_at, completed_by, source_file FROM builds "
+            "WHERE source_file NOT LIKE 'wiki:%' "
+            "ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+        last_wiki_ingest = conn.execute(
+            "SELECT id, created_at, completed_by, source_file FROM builds "
+            "WHERE source_file LIKE 'wiki:%' "
+            "ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+        # Trust leaders — top chunks by trust score
+        trust_top = conn.execute(
+            "SELECT id, source_ref, trust_score FROM chunks "
+            "WHERE trust_score > 0 ORDER BY trust_score DESC LIMIT 5"
+        ).fetchall()
+        # Top gaps
+        gap_row = conn.execute(
+            "SELECT query_text, COUNT(1) c FROM search_misses "
+            "WHERE created_at >= datetime('now', '-7 days') "
+            "GROUP BY query_text ORDER BY c DESC LIMIT 5"
+        ).fetchall()
+    return {
+        "counts": counts,
+        "build_attribution": attribution,
+        "answer_cache": cache_stats,
+        "total_cost_cny": float(tok_row["cost"] or 0),
+        "last_ingest": dict(last_ingest) if last_ingest else None,
+        "last_wiki_ingest": dict(last_wiki_ingest) if last_wiki_ingest else None,
+        "trust_top_chunks": [dict(r) for r in trust_top],
+        "recent_gaps": [dict(r) for r in gap_row],
+    }
+
+
+@app.post("/chat/stream")
+def api_chat_stream(req: ChatRequest):
+    """B2: streaming variant of /chat. Sends SSE frames as the provider
+    emits tokens. On non-Anthropic providers that don't support streaming,
+    falls back to a single 'data: <full answer>' frame."""
+
+    def gen():
+        # Reuse the non-streaming implementation for evidence assembly.
+        try:
+            search_result = None
+            if req.evidence_ids:
+                with connect() as conn:
+                    ph = ",".join("?" for _ in req.evidence_ids)
+                    rows = conn.execute(
+                        f"SELECT id, text, source_ref, source_file, dimension "
+                        f"FROM chunks WHERE id IN ({ph})",
+                        req.evidence_ids,
+                    ).fetchall()
+                evidence = [dict(r) for r in rows]
+            else:
+                search_result = search(req.query, req.topk)
+                evidence = search_result["results"]
+            ev_lines = []
+            for i, e in enumerate(evidence):
+                t = (e.get("text") or "").strip()
+                r = e.get("source_ref", "")
+                if t:
+                    ev_lines.append(f"[{i+1}] ({r}) {t}")
+            user_prompt = (
+                f"问题: {req.query}\n\n"
+                f"{len(ev_lines)} 条证据:\n"
+                + "\n".join(ev_lines)
+                + "\n\n引用时使用 [N]。"
+            )
+            system = (
+                "You are a precise knowledge assistant. "
+                "Always cite evidence using [N]. Never fabricate."
+            )
+
+            evidence_ids_log = [e.get("id") for e in evidence if isinstance(e.get("id"), int)]
+            yield f"event: evidence\ndata: {json.dumps({'ids': evidence_ids_log}, ensure_ascii=False)}\n\n"
+
+            # Minimal streaming call — OpenAI-compatible stream=true
+            headers = {
+                "Authorization": f"Bearer {settings.provider_api_key}",
+                "Content-Type": "application/json",
+            }
+            url = f"{settings.provider_base_url.rstrip('/')}/chat/completions"
+            payload = {
+                "model": settings.provider_chat_model,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "temperature": 0.2,
+                "stream": True,
+            }
+            stream_start = time.time()
+            accumulated = []  # accumulate deltas for post-stream logging
+            with requests.post(url, headers=headers, json=payload, stream=True, timeout=60) as resp:
+                resp.raise_for_status()
+                for raw in resp.iter_lines():
+                    if not raw:
+                        continue
+                    line = raw.decode("utf-8", errors="ignore")
+                    if not line.startswith("data:"):
+                        continue
+                    payload_part = line[5:].strip()
+                    if not payload_part or payload_part == "[DONE]":
+                        continue
+                    try:
+                        chunk = json.loads(payload_part)
+                        delta = (
+                            chunk.get("choices", [{}])[0]
+                            .get("delta", {})
+                            .get("content", "")
+                        )
+                        if delta:
+                            accumulated.append(delta)
+                            yield f"data: {json.dumps({'delta': delta}, ensure_ascii=False)}\n\n"
+                    except (json.JSONDecodeError, KeyError, IndexError):
+                        continue
+
+            # Persist so streamed answers can also receive 👍/👎 feedback and
+            # feed the trust_score / adaptive-weight loops.
+            full_answer = "".join(accumulated)
+            latency_ms = int((time.time() - stream_start) * 1000)
+            answer_id = 0
+            try:
+                with connect() as conn:
+                    qid_row = conn.execute(
+                        "SELECT id FROM query_logs ORDER BY id DESC LIMIT 1"
+                    ).fetchone()
+                    qid = qid_row["id"] if qid_row else 0
+                    conn.execute(
+                        "INSERT INTO answer_logs(query_id, answer_text, evidence_refs, "
+                        "model_name, latency_ms) VALUES(?, ?, ?, ?, ?)",
+                        (qid, full_answer,
+                         json.dumps(evidence_ids_log),
+                         settings.provider_chat_model, latency_ms),
+                    )
+                    answer_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                    conn.commit()
+            except Exception:
+                pass
+            yield f"event: done\ndata: {json.dumps({'answer_id': answer_id, 'latency_ms': latency_ms}, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# ── Append to Raw Note File ──
+
+class AppendNoteRequest(BaseModel):
+    raw_path: str
+    content: str
+
+
+@app.post("/note/append")
+def api_note_append(req: AppendNoteRequest) -> dict:
+    """Append content to a raw note file. Creates the file if it doesn't exist."""
+    p = Path(req.raw_path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    existing = p.read_text(encoding="utf-8") if p.exists() else ""
+    sep = ""
+    if existing and not existing.endswith("\n\n"):
+        sep = "\n" if existing.endswith("\n") else "\n\n"
+    p.write_text(f"{existing}{sep}{req.content.strip()}\n", encoding="utf-8")
+    return {"ok": True, "path": str(p.resolve()), "bytes_written": len(req.content.strip())}
+
+
 # ── Special Knowledge Ingest ──
 
 class SpecialIngestRequest(BaseModel):
     folder_path: str
     topic_name: str | None = None
+    ai_delegate: bool = False
 
 
 @app.post("/special-ingest")
@@ -694,7 +2073,10 @@ def api_special_ingest(req: SpecialIngestRequest) -> dict:
     """Ingest a folder as a specialknowledge topic."""
     from app.special_ingest import ingest_folder
     try:
-        return ingest_folder(req.folder_path, topic_name=req.topic_name)
+        result = ingest_folder(req.folder_path, topic_name=req.topic_name, ai_delegate=req.ai_delegate)
+        if req.ai_delegate:
+            result = {**result, "ai_delegated": True}
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -919,6 +2301,7 @@ def api_mcp_read_resource(name: str, req: McpReadResourceRequest) -> dict:
 class UrlImportRequest(BaseModel):
     url: str
     topic_name: str = ""
+    ai_delegate: bool = False
 
 
 @app.post("/wiki/import-url")
@@ -933,7 +2316,13 @@ def api_wiki_import_url(req: UrlImportRequest) -> dict:
         result = import_url(req.url, str(wiki_dir), req.topic_name or None)
         md_path = Path(result["md_path"]).resolve()
         # Ingest only the directory containing this specific file
-        ingest_result = ingest_folder(str(md_path.parent), topic_name=result["topic_name"])
+        ingest_result = ingest_folder(
+            str(md_path.parent),
+            topic_name=result["topic_name"],
+            ai_delegate=req.ai_delegate,
+        )
+        if req.ai_delegate:
+            ingest_result = {**ingest_result, "ai_delegated": True}
         return {**ingest_result, "md_path": str(md_path), "source_url": req.url}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -946,6 +2335,7 @@ class McpDocImportRequest(BaseModel):
     doc_url: str = ""       # Feishu doc URL — auto-extract doc ID
     document_id: str = ""   # Or pass doc ID directly
     topic_name: str = ""
+    ai_delegate: bool = False
 
 
 def _extract_feishu_doc_id(url: str) -> str:
@@ -973,7 +2363,13 @@ def _extract_title_from_content(content: str) -> str:
 
 @app.post("/wiki/import-mcp")
 def api_wiki_import_mcp(req: McpDocImportRequest) -> dict:
-    """Fetch document from MCP server and ingest as wiki topic."""
+    """Fetch document from MCP server and ingest as wiki topic.
+
+    When ai_delegate=True the raw content is parked in `pending_format_docs`
+    and no ingest runs. Claude is expected to submit the rewritten markdown
+    via POST /enrich-bulk with kind='doc_format', which triggers a delegated
+    wiki ingest downstream.
+    """
     from app.mcp_client import mcp_call_tool
 
     try:
@@ -1005,6 +2401,33 @@ def api_wiki_import_mcp(req: McpDocImportRequest) -> dict:
         safe_name = _re.sub(r'[^\w\s\u4e00-\u9fff-]', '_', topic)[:80]
         topic_dir = wiki_dir / safe_name
         topic_dir.mkdir(parents=True, exist_ok=True)
+
+        # Delegate path: park raw content awaiting Claude rewrite
+        if req.ai_delegate:
+            from app.mcp_import import _new_format_id
+            format_id = _new_format_id()
+            with connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO pending_format_docs(format_id, topic_name, title, raw_content, source, target_dir, status)
+                    VALUES (?, ?, ?, ?, ?, ?, 'awaiting')
+                    """,
+                    (
+                        format_id, topic, title, content,
+                        f"mcp:{req.server_name}:{doc_id}", str(topic_dir),
+                    ),
+                )
+                conn.commit()
+            return {
+                "status": "awaiting_format",
+                "format_id": format_id,
+                "topic": topic,
+                "title": title,
+                "raw_length": len(content),
+                "target_dir": str(topic_dir),
+                "source": f"mcp:{req.server_name}",
+            }
+
         md_path = topic_dir / f"{safe_name}.md"
         md_path.write_text(content, encoding="utf-8")
 
@@ -1098,6 +2521,102 @@ def api_tag_colors() -> dict:
 
 
 # ── Search history ──
+
+@app.get("/search/gaps")
+def api_search_gaps(limit: int = Query(20, ge=1, le=200)) -> dict:
+    """Return recurring search misses grouped by normalized query. A knowledge
+    base that gets used the most will develop characteristic gaps — this
+    endpoint surfaces them so Claude (or the user) can proactively ingest
+    content to fill them.
+    """
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT query_text, COUNT(1) c, MAX(created_at) last_seen,
+                   AVG(top_score) avg_top, AVG(result_count) avg_results
+            FROM search_misses
+            WHERE created_at >= datetime('now', '-60 days')
+            GROUP BY query_text
+            ORDER BY c DESC, last_seen DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return {
+        "gaps": [
+            {
+                "query": r["query_text"],
+                "miss_count": r["c"],
+                "last_seen": r["last_seen"],
+                "avg_top_score": round(float(r["avg_top"] or 0), 3),
+                "avg_result_count": round(float(r["avg_results"] or 0), 2),
+            }
+            for r in rows
+        ]
+    }
+
+
+class MetaMemoryRequest(BaseModel):
+    kind: str = "rule"
+    text: str
+    scope: str = "global"
+
+
+@app.get("/meta-memory")
+def api_meta_memory_list(limit: int = Query(100, ge=1, le=500)) -> dict:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT id, kind, text, scope, hit_count, created_at, updated_at "
+            "FROM meta_memory ORDER BY hit_count DESC, updated_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return {
+        "memories": [
+            {
+                "id": r["id"], "kind": r["kind"], "text": r["text"],
+                "scope": r["scope"], "hit_count": r["hit_count"],
+                "created_at": r["created_at"], "updated_at": r["updated_at"],
+            }
+            for r in rows
+        ]
+    }
+
+
+@app.post("/meta-memory")
+def api_meta_memory_add(req: MetaMemoryRequest) -> dict:
+    text = (req.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+    with connect() as conn:
+        # De-dup exact text within same scope
+        existing = conn.execute(
+            "SELECT id FROM meta_memory WHERE text = ? AND scope = ?",
+            (text, req.scope),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE meta_memory SET hit_count = hit_count + 1, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (existing["id"],),
+            )
+            conn.commit()
+            return {"id": existing["id"], "deduped": True}
+        conn.execute(
+            "INSERT INTO meta_memory(kind, text, scope) VALUES(?, ?, ?)",
+            ((req.kind or "rule").strip(), text, (req.scope or "global").strip()),
+        )
+        new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.commit()
+    return {"id": new_id, "deduped": False}
+
+
+@app.delete("/meta-memory/{memory_id}")
+def api_meta_memory_delete(memory_id: int) -> dict:
+    with connect() as conn:
+        conn.execute("DELETE FROM meta_memory WHERE id = ?", (memory_id,))
+        conn.commit()
+    return {"deleted": memory_id}
+
 
 @app.get("/search/history")
 def api_search_history() -> dict:

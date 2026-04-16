@@ -18,16 +18,18 @@ type Props = {
   ingestBusy: boolean;
   ingestSteps: IngestStep[];
   ingestResult: { message: string; type: "success" | "error" } | null;
+  buildVersion?: number;
   tags: { name: string; color?: string; desc?: string; segments: number }[];
   onTagsChanged?: () => void;
 };
 
-export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIngestComplete, ingestBusy, ingestSteps, ingestResult, tags, onTagsChanged }: Props) {
+export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIngestComplete, ingestBusy, ingestSteps, ingestResult, buildVersion, tags, onTagsChanged }: Props) {
   const [showIngest, setShowIngest] = useState(false);
   const [activeBuild, setActiveBuild] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [scrollTarget, setScrollTarget] = useState<{ start: number; end: number } | null>(null);
   const [showTags, setShowTags] = useState(() => localStorage.getItem("smartnote-show-tags") !== "false");
+  const [recentDone, setRecentDone] = useState(false);
 
   useEffect(() => {
     api.fetchBuilds().then((d) => {
@@ -35,6 +37,24 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
       if (active) setActiveBuild(active.id);
     }).catch(() => {});
   }, [ingestResult]);
+
+  // Keep the completion/error badge visible briefly after finishing.
+  useEffect(() => {
+    if (ingestBusy) { setRecentDone(false); return; }
+    if (!ingestResult) return;
+    setRecentDone(true);
+    const t = setTimeout(() => setRecentDone(false), 4000);
+    return () => clearTimeout(t);
+  }, [ingestBusy, ingestResult]);
+
+  const activeStep = ingestSteps.find((s) => s.status === "active");
+  const showProgressPill = ingestBusy || recentDone;
+  const progressLabel = ingestBusy
+    ? (activeStep ? activeStep.label : "Starting ingest…")
+    : (ingestResult?.type === "error" ? "Ingest failed" : "Ingest complete");
+  const progressCount = ingestBusy && activeStep && activeStep.total > 0
+    ? `${activeStep.current}/${activeStep.total}`
+    : "";
 
   async function handlePickFile() {
     const p = await pickRawFile();
@@ -81,6 +101,30 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
           )}
         </div>
         <div className="proto-note-header-actions">
+          <AnimatePresence>
+            {showProgressPill && (
+              <motion.button
+                key="ingest-progress-pill"
+                type="button"
+                onClick={() => setShowIngest(true)}
+                initial={{ opacity: 0, y: -2 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -2 }}
+                transition={{ duration: 0.18, ease: [0.25, 1, 0.5, 1] }}
+                className={cn(
+                  "proto-note-header-progress",
+                  ingestBusy && "proto-note-header-progress-active",
+                  !ingestBusy && ingestResult?.type === "success" && "proto-note-header-progress-done",
+                  !ingestBusy && ingestResult?.type === "error" && "proto-note-header-progress-error",
+                )}
+                title="Ingest pipeline — click for details"
+              >
+                <span className="proto-note-header-progress-dot" />
+                <span>{progressLabel}</span>
+                {progressCount && <span style={{ opacity: 0.7 }}>{progressCount}</span>}
+              </motion.button>
+            )}
+          </AnimatePresence>
           <button
             type="button"
             onClick={() => { const next = !showTags; setShowTags(next); localStorage.setItem("smartnote-show-tags", String(next)); }}
@@ -120,7 +164,7 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
               transition={{ duration: 0.15, ease: [0.25, 1, 0.5, 1] }}
               style={{ overflow: "hidden" }}
             >
-              <NoteSegments refreshKey={ingestResult?.message} tags={tags} onScrollToLine={(start, end) => setScrollTarget({ start, end })} onTagsChanged={onTagsChanged} />
+              <NoteSegments refreshKey={`${ingestResult?.message ?? ""}|${buildVersion ?? 0}`} tags={tags} onScrollToLine={(start, end) => setScrollTarget({ start, end })} onTagsChanged={onTagsChanged} />
             </motion.div>
           )}
         </AnimatePresence>

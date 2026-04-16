@@ -265,6 +265,11 @@ def _extract_structural_keywords(content: str, ext: str) -> list[str]:
 def _progress(step: str, current: int, total: int, detail: str):
     msg = {"step": step, "current": current, "total": total, "detail": detail}
     print(json.dumps(msg, ensure_ascii=False), file=sys.stderr, flush=True)
+    try:
+        from app.events import publish
+        publish({"channel": "wiki", **msg})
+    except Exception:
+        pass
 
 
 def _read_file_safe(path: Path) -> str:
@@ -835,8 +840,16 @@ def _ai_enrich_all(all_chunks: list[dict], on_progress=None) -> list[dict]:
 
 
 def _generate_topic_summary(ai_enrichments: list[dict], structural_kws: list[str],
-                            topic_name: str, file_count: int) -> str:
-    """Generate a semantic summary for the entire wiki topic."""
+                            topic_name: str, file_count: int,
+                            ai_delegate: bool = False) -> str:
+    """Generate a semantic summary for the entire wiki topic.
+
+    When ai_delegate=True, returns empty string — the caller (e.g. Claude)
+    will submit the topic summary via submit_enrichments(kind="wiki_topic").
+    """
+    if ai_delegate:
+        return ""
+
     if getattr(settings, "ingest_ai_enabled", False):
         from app.ai_enrich import _call_llm
         # Collect first N chunk summaries
@@ -855,7 +868,7 @@ def _generate_topic_summary(ai_enrichments: list[dict], structural_kws: list[str
 
 # ── Main ingestion ──
 
-def ingest_folder(folder_path: str, topic_name: str | None = None) -> dict:
+def ingest_folder(folder_path: str, topic_name: str | None = None, ai_delegate: bool = False) -> dict:
     """Ingest all supported files in a folder as a single specialknowledge topic."""
     folder = Path(folder_path)
     if not folder.is_dir():
@@ -984,17 +997,25 @@ def ingest_folder(folder_path: str, topic_name: str | None = None) -> dict:
 
     # AI enrichment (optional, gated by settings)
     ai_enrichments = None
-    if getattr(settings, "ingest_ai_enabled", False):
+    ai_wiki_active = (
+        getattr(settings, "ai_features_enabled", True)
+        and getattr(settings, "ingest_ai_enabled", False)
+        and not ai_delegate
+    )
+    if ai_wiki_active:
         _progress("ai_enrich", 0, total, "AI enrichment...")
         ai_enrichments = _ai_enrich_all(
             all_chunks,
             on_progress=lambda done, tot: _progress("ai_enrich", done, tot, f"AI enrichment {done}/{tot}")
         )
         _progress("ai_enrich", total, total, "AI enrichment done")
+    elif ai_delegate:
+        _progress("ai_enrich", 0, total, "AI enrichment delegated to caller (MCP) — skipping provider calls")
 
-    # Generate topic-level summary
+    # Generate topic-level summary (empty when delegated — Claude fills in)
     topic_summary = _generate_topic_summary(
-        ai_enrichments or [], unique_structural, topic_name, len(files)
+        ai_enrichments or [], unique_structural, topic_name, len(files),
+        ai_delegate=ai_delegate,
     )
 
     # Store chunks
@@ -1085,6 +1106,20 @@ def ingest_folder(folder_path: str, topic_name: str | None = None) -> dict:
             ),
         )
 
+        # Mark build.enrich_status — delegated wiki ingest parks awaiting
+        # chunk summaries + topic summary from the MCP caller.
+        enrich_status = "awaiting_enrich" if ai_delegate else "completed"
+        if ai_delegate:
+            completed_by = ""
+        elif ai_wiki_active:
+            model = getattr(settings, "ingest_ai_model", "") or getattr(settings, "provider_chat_model", "")
+            completed_by = f"provider:{model}" if model else "provider:unknown"
+        else:
+            completed_by = "fallback"
+        conn.execute(
+            "UPDATE builds SET chunk_count = ?, segment_count = 1, enrich_status = ?, completed_by = ? WHERE id = ?",
+            (inserted, enrich_status, completed_by, build_id),
+        )
         conn.commit()
 
     summary = f"Ingested {inserted} chunks from {len(files)} files as topic '{topic_name}'"
@@ -1095,10 +1130,12 @@ def ingest_folder(folder_path: str, topic_name: str | None = None) -> dict:
         "files": len(files),
         "topic": topic_name,
         "message": summary,
+        "build_id": build_id,
+        "enrich_status": enrich_status,
     }
 
 
-def ingest_pdf(pdf_path: str, topic_name: str | None = None) -> dict:
+def ingest_pdf(pdf_path: str, topic_name: str | None = None, ai_delegate: bool = False) -> dict:
     """Ingest a PDF file as a wiki topic.
 
     Converts PDF → markdown, saves to wiki_sources_dir/{topic}/ (iCloud),
@@ -1175,18 +1212,26 @@ def ingest_pdf(pdf_path: str, topic_name: str | None = None) -> dict:
     segmented = [segment(t) for t in texts]
     _progress("segment", total, total, "Segmentation done")
 
-    # AI enrichment (optional)
+    # AI enrichment (optional, skipped when delegated)
     ai_enrichments = None
-    if getattr(settings, "ingest_ai_enabled", False):
+    ai_pdf_active = (
+        getattr(settings, "ai_features_enabled", True)
+        and getattr(settings, "ingest_ai_enabled", False)
+        and not ai_delegate
+    )
+    if ai_pdf_active:
         _progress("ai_enrich", 0, total, "AI enrichment...")
         ai_enrichments = _ai_enrich_all(
             all_chunks,
             on_progress=lambda done, tot: _progress("ai_enrich", done, tot, f"AI enrichment {done}/{tot}")
         )
         _progress("ai_enrich", total, total, "AI enrichment done")
+    elif ai_delegate:
+        _progress("ai_enrich", 0, total, "AI enrichment delegated to caller (MCP) — skipping provider calls")
 
     topic_summary = _generate_topic_summary(
-        ai_enrichments or [], unique_kws, topic_name, 1
+        ai_enrichments or [], unique_kws, topic_name, 1,
+        ai_delegate=ai_delegate,
     )
 
     # Store
@@ -1265,6 +1310,19 @@ def ingest_pdf(pdf_path: str, topic_name: str | None = None) -> dict:
             ),
         )
 
+        # Mark build.enrich_status
+        enrich_status = "awaiting_enrich" if ai_delegate else "completed"
+        if ai_delegate:
+            completed_by = ""
+        elif ai_pdf_active:
+            model = getattr(settings, "ingest_ai_model", "") or getattr(settings, "provider_chat_model", "")
+            completed_by = f"provider:{model}" if model else "provider:unknown"
+        else:
+            completed_by = "fallback"
+        conn.execute(
+            "UPDATE builds SET chunk_count = ?, segment_count = 1, enrich_status = ?, completed_by = ? WHERE id = ?",
+            (inserted, enrich_status, completed_by, build_id),
+        )
         conn.commit()
 
     summary = f"Ingested PDF '{pdf.name}' → {inserted} chunks as topic '{topic_name}'"
@@ -1277,4 +1335,6 @@ def ingest_pdf(pdf_path: str, topic_name: str | None = None) -> dict:
         "md_path": md_path,
         "pdf_path": pdf_path,
         "message": summary,
+        "build_id": build_id,
+        "enrich_status": enrich_status,
     }

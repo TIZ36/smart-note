@@ -28,6 +28,16 @@ class Settings:
         "PROVIDER_EMBED_MODEL", "text-embedding-3-small"
     )
 
+    # Master kill switch for ALL LLM calls (ingest enrich, rerank LLM mode,
+    # rewrite candidate generation, wiki topic summaries, etc.). When false,
+    # the app falls back to non-LLM paths everywhere. Defaults to true so
+    # existing installs keep their current behavior.
+    ai_features_enabled: bool = os.getenv("AI_FEATURES_ENABLED", "true").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+
     # AI ingestion
     ingest_ai_enabled: bool = os.getenv("INGEST_AI_ENABLED", "false").lower() in (
         "true",

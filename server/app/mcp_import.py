@@ -72,22 +72,36 @@ RULES:
     return raw_content
 
 
+def _new_format_id() -> str:
+    import secrets, datetime as _dt
+    return f"fmt_{_dt.datetime.now().strftime('%Y%m%d_%H%M%S')}_{secrets.token_hex(3)}"
+
+
 def import_mcp_doc(
     server_name: str,
     doc_url: str = "",
     document_id: str = "",
     topic_name: str = "",
+    ai_delegate: bool = False,
 ) -> dict:
     """Full MCP document import pipeline with progress streaming.
 
-    Steps:
+    Steps (normal):
     1. Fetch document via MCP
     2. AI rewrite to clean markdown
     3. Save .md file
     4. Ingest as wiki topic
+
+    Delegate mode (ai_delegate=True):
+    1. Fetch document via MCP
+    2. Park raw content in `pending_format_docs` with a format_id
+    3. Return early — caller (Claude) must submit the rewritten markdown via
+       submit_enrichments(kind="doc_format", items=[{format_id, markdown}]),
+       which triggers downstream ingest in delegate mode.
     """
     from app.mcp_client import mcp_call_tool
     from app.special_ingest import ingest_folder
+    from app.db import connect
 
     # Step 1: Resolve document ID
     _progress("fetch", 0, 4, "Resolving document ID...")
@@ -108,27 +122,56 @@ def import_mcp_doc(
     if not content or not content.strip():
         raise ValueError("MCP returned empty document content")
 
-    # Content is already unwrapped at the MCP client layer (mcp_client._call_tool)
-
     raw_len = len(content)
     title = _extract_title(content)
     topic = topic_name or title or doc_id
     _progress("fetch", 2, 4, f"Fetched: {title or doc_id} ({raw_len} chars)")
+
+    # Prepare output dir (same convention whether delegated or not)
+    wiki_dir = Path(settings.wiki_sources_dir)
+    wiki_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = re.sub(r'[^\w\s\u4e00-\u9fff-]', '_', topic)[:80]
+    topic_dir = wiki_dir / safe_name
+    topic_dir.mkdir(parents=True, exist_ok=True)
+    md_path = topic_dir / f"{safe_name}.md"
+
+    # Delegate path: park raw content, let Claude rewrite asynchronously
+    if ai_delegate:
+        format_id = _new_format_id()
+        _progress("rewrite", 0, 1, "AI rewrite delegated to caller (MCP)...")
+        with connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO pending_format_docs(format_id, topic_name, title, raw_content, source, target_dir, status)
+                VALUES (?, ?, ?, ?, ?, ?, 'awaiting')
+                """,
+                (
+                    format_id,
+                    topic,
+                    title,
+                    content,
+                    f"mcp:{server_name}:{doc_id}",
+                    str(topic_dir),
+                ),
+            )
+            conn.commit()
+        _progress("done", 1, 1, f"Parked as {format_id} — awaiting Claude rewrite")
+        return {
+            "status": "awaiting_format",
+            "format_id": format_id,
+            "topic": topic,
+            "title": title,
+            "raw_length": raw_len,
+            "target_dir": str(topic_dir),
+            "source": f"mcp:{server_name}",
+        }
 
     # Step 3: AI rewrite to clean markdown
     _progress("rewrite", 0, 1, "Rewriting to clean Markdown...")
     clean_md = _ai_rewrite_to_markdown(content, title)
     _progress("rewrite", 1, 1, f"Rewritten: {len(clean_md)} chars")
 
-    # Step 4: Save .md file — use a dedicated subdirectory per topic
-    # to avoid ingest_folder picking up other topics' files
-    wiki_dir = Path(settings.wiki_sources_dir)
-    wiki_dir.mkdir(parents=True, exist_ok=True)
-    topic_dir = wiki_dir / re.sub(r'[^\w\s\u4e00-\u9fff-]', '_', topic)[:80]
-    topic_dir.mkdir(parents=True, exist_ok=True)
-
-    safe_name = re.sub(r'[^\w\s\u4e00-\u9fff-]', '_', topic)[:80]
-    md_path = topic_dir / f"{safe_name}.md"
+    # Step 4: Save .md file
     md_path.write_text(clean_md, encoding="utf-8")
     _progress("fetch", 3, 4, f"Saved: {md_path.name}")
 

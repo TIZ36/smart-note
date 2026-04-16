@@ -20,6 +20,7 @@ export function SettingsPanel() {
   }, []);
   const [settings, setSettings] = useState<AppSettings>({
     embedding_mode: "local",
+    ai_features_enabled: true,
     provider_base_url: "https://api.openai.com/v1",
     provider_api_key: "",
     provider_chat_model: "gpt-4o-mini",
@@ -179,6 +180,30 @@ export function SettingsPanel() {
                 {settings.embedding_mode === "api" && "Uses the provider API below for both embedding and chat."}
               </p>
             </Field>
+          </section>
+
+          <div className="proto-form-divider" />
+
+          <section className="proto-form-section">
+            <h2 className="proto-form-section-title">AI Features</h2>
+            <p className="proto-form-hint proto-settings-section-hint">
+              Master switch for every LLM call — chat answers, rerank, rewrite, ingest enrichment, wiki topic summaries.
+              Embedding continues to work when this is off (uses the Embedding Provider below).
+            </p>
+            <div className="proto-toggle-row">
+              <div>
+                <div className="proto-toggle-label">Enable AI features</div>
+                <div className="proto-toggle-desc">Turn off to fall back to non-LLM paths everywhere.</div>
+              </div>
+              <button
+                type="button"
+                aria-pressed={settings.ai_features_enabled}
+                onClick={() => update("ai_features_enabled", !settings.ai_features_enabled)}
+                className={cn("proto-toggle-switch", settings.ai_features_enabled && "proto-toggle-switch-on")}
+              >
+                <span className="proto-toggle-knob" />
+              </button>
+            </div>
           </section>
 
           <div className="proto-form-divider" />

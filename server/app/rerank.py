@@ -76,7 +76,7 @@ def rerank(query: str, chunk_ids: list[int], use_llm: bool = False, topk: int = 
         })
 
     # Optionally use LLM for higher-quality scoring
-    if use_llm and settings.provider_api_key and len(results) > 1:
+    if use_llm and getattr(settings, "ai_features_enabled", True) and settings.provider_api_key and len(results) > 1:
         llm_results = _llm_rerank(query, results, topk)
         if llm_results:
             latency = int((time.time() - start) * 1000)

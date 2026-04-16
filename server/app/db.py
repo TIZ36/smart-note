@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS chunks (
   keywords_json TEXT NOT NULL DEFAULT '[]',
   entities_json TEXT NOT NULL DEFAULT '[]',
   ai_summary TEXT NOT NULL DEFAULT '',
+  content_hash TEXT NOT NULL DEFAULT '',
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -130,8 +131,25 @@ CREATE TABLE IF NOT EXISTS builds (
   estimated_cost_cny REAL NOT NULL DEFAULT 0,
   tags_json TEXT NOT NULL DEFAULT '{}',
   tags_config_json TEXT NOT NULL DEFAULT '[]',
+  enrich_status TEXT NOT NULL DEFAULT 'completed',
+  completed_by TEXT NOT NULL DEFAULT '',
+  awaiting_since TEXT,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS pending_format_docs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  format_id TEXT NOT NULL UNIQUE,
+  topic_name TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  raw_content TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT '',
+  target_dir TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'awaiting',
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_format_status ON pending_format_docs(status);
 
 CREATE TABLE IF NOT EXISTS tag_segments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -145,7 +163,70 @@ CREATE TABLE IF NOT EXISTS tag_segments (
   keywords_json TEXT NOT NULL DEFAULT '[]',
   entities_json TEXT NOT NULL DEFAULT '[]',
   is_credential INTEGER NOT NULL DEFAULT 0,
+  centroid_json TEXT NOT NULL DEFAULT '',
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS search_misses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  query_text TEXT NOT NULL,
+  query_embedding_json TEXT,
+  result_count INTEGER NOT NULL DEFAULT 0,
+  top_score REAL NOT NULL DEFAULT 0,
+  tag_filter TEXT,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_search_misses_created ON search_misses(created_at);
+
+CREATE TABLE IF NOT EXISTS meta_memory (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL DEFAULT 'rule',
+  text TEXT NOT NULL,
+  scope TEXT NOT NULL DEFAULT 'global',
+  hit_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS answer_cache (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  signature TEXT NOT NULL UNIQUE,
+  query_text TEXT NOT NULL,
+  evidence_ids_json TEXT NOT NULL,
+  answer_text TEXT NOT NULL,
+  model_name TEXT,
+  trust_floor REAL NOT NULL DEFAULT 0,
+  hit_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_answer_cache_sig ON answer_cache(signature);
+
+CREATE TABLE IF NOT EXISTS conflict_pending (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  build_id TEXT NOT NULL,
+  source_file TEXT NOT NULL,
+  line_start INTEGER NOT NULL,
+  line_end INTEGER NOT NULL,
+  existing_tag TEXT,
+  existing_topic TEXT,
+  incoming_tag TEXT,
+  incoming_topic TEXT,
+  incoming_summary TEXT,
+  incoming_payload_json TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS ocr_pending (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_file TEXT NOT NULL,
+  line_no INTEGER NOT NULL,
+  image_ref TEXT NOT NULL,
+  extracted_text TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  processed_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_tag_segments_build ON tag_segments(build_id);
@@ -224,10 +305,25 @@ def migrate_db() -> None:
             "keywords_json": "TEXT NOT NULL DEFAULT '[]'",
             "entities_json": "TEXT NOT NULL DEFAULT '[]'",
             "ai_summary": "TEXT NOT NULL DEFAULT ''",
+            "content_hash": "TEXT NOT NULL DEFAULT ''",
+            "trust_score": "REAL NOT NULL DEFAULT 0",
+            "embedding_q8": "BLOB",  # int8-quantized embedding + scale (B3)
+            "embedding_scale": "REAL NOT NULL DEFAULT 0",
         }
         for col, typedef in new_cols.items():
             if col not in columns:
                 conn.execute(f"ALTER TABLE chunks ADD COLUMN {col} {typedef}")
+
+        # Backfill content_hash for pre-existing chunks so incremental edit
+        # detection has a baseline instead of treating every chunk as changed.
+        if "content_hash" not in columns:
+            import hashlib as _hl
+            stale = conn.execute(
+                "SELECT id, text FROM chunks WHERE content_hash = ''"
+            ).fetchall()
+            for r in stale:
+                h = _hl.sha256((r["text"] or "").encode("utf-8")).hexdigest()[:16]
+                conn.execute("UPDATE chunks SET content_hash = ? WHERE id = ?", (h, r["id"]))
 
         # Check if entities table exists
         tables = {
@@ -297,6 +393,129 @@ def migrate_db() -> None:
             b_cols = {r[1] for r in conn.execute("PRAGMA table_info(builds)").fetchall()}
             if "tags_config_json" not in b_cols:
                 conn.execute("ALTER TABLE builds ADD COLUMN tags_config_json TEXT NOT NULL DEFAULT '[]'")
+            if "enrich_status" not in b_cols:
+                conn.execute("ALTER TABLE builds ADD COLUMN enrich_status TEXT NOT NULL DEFAULT 'completed'")
+            if "completed_by" not in b_cols:
+                conn.execute("ALTER TABLE builds ADD COLUMN completed_by TEXT NOT NULL DEFAULT ''")
+            if "awaiting_since" not in b_cols:
+                conn.execute("ALTER TABLE builds ADD COLUMN awaiting_since TEXT")
+                # Backfill awaiting_since to created_at for builds currently
+                # sitting in awaiting_enrich, so the UI staleness clock is
+                # meaningful right away rather than NULL.
+                conn.execute(
+                    "UPDATE builds SET awaiting_since = created_at "
+                    "WHERE awaiting_since IS NULL AND enrich_status = 'awaiting_enrich'"
+                )
+
+        if "search_misses" not in tables:
+            conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS search_misses (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  query_text TEXT NOT NULL,
+                  query_embedding_json TEXT,
+                  result_count INTEGER NOT NULL DEFAULT 0,
+                  top_score REAL NOT NULL DEFAULT 0,
+                  tag_filter TEXT,
+                  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_search_misses_created ON search_misses(created_at);
+                """
+            )
+
+        # Answer logs: path breakdown for A2 adaptive weight learning
+        if "answer_logs" in tables:
+            al_cols = {r[1] for r in conn.execute("PRAGMA table_info(answer_logs)").fetchall()}
+            if "path_breakdown_json" not in al_cols:
+                conn.execute("ALTER TABLE answer_logs ADD COLUMN path_breakdown_json TEXT")
+
+        if "answer_cache" not in tables:
+            conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS answer_cache (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  signature TEXT NOT NULL UNIQUE,
+                  query_text TEXT NOT NULL,
+                  evidence_ids_json TEXT NOT NULL,
+                  answer_text TEXT NOT NULL,
+                  model_name TEXT,
+                  trust_floor REAL NOT NULL DEFAULT 0,
+                  hit_count INTEGER NOT NULL DEFAULT 0,
+                  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_answer_cache_sig ON answer_cache(signature);
+                """
+            )
+
+        if "conflict_pending" not in tables:
+            conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS conflict_pending (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  build_id TEXT NOT NULL,
+                  source_file TEXT NOT NULL,
+                  line_start INTEGER NOT NULL,
+                  line_end INTEGER NOT NULL,
+                  existing_tag TEXT,
+                  existing_topic TEXT,
+                  incoming_tag TEXT,
+                  incoming_topic TEXT,
+                  incoming_summary TEXT,
+                  incoming_payload_json TEXT,
+                  status TEXT NOT NULL DEFAULT 'pending',
+                  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+                """
+            )
+
+        if "ocr_pending" not in tables:
+            conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS ocr_pending (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  source_file TEXT NOT NULL,
+                  line_no INTEGER NOT NULL,
+                  image_ref TEXT NOT NULL,
+                  extracted_text TEXT NOT NULL DEFAULT '',
+                  status TEXT NOT NULL DEFAULT 'pending',
+                  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                  processed_at TEXT
+                );
+                """
+            )
+
+        if "meta_memory" not in tables:
+            conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS meta_memory (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  kind TEXT NOT NULL DEFAULT 'rule',
+                  text TEXT NOT NULL,
+                  scope TEXT NOT NULL DEFAULT 'global',
+                  hit_count INTEGER NOT NULL DEFAULT 0,
+                  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+                """
+            )
+
+        if "pending_format_docs" not in tables:
+            conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS pending_format_docs (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  format_id TEXT NOT NULL UNIQUE,
+                  topic_name TEXT NOT NULL,
+                  title TEXT NOT NULL DEFAULT '',
+                  raw_content TEXT NOT NULL,
+                  source TEXT NOT NULL DEFAULT '',
+                  target_dir TEXT NOT NULL,
+                  status TEXT NOT NULL DEFAULT 'awaiting',
+                  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_pending_format_status ON pending_format_docs(status);
+                """
+            )
 
         if "tag_segments" not in tables:
             conn.executescript(
@@ -324,6 +543,8 @@ def migrate_db() -> None:
                 conn.execute("ALTER TABLE tag_segments ADD COLUMN topic_name TEXT NOT NULL DEFAULT ''")
             if "build_id" not in ts_cols:
                 conn.execute("ALTER TABLE tag_segments ADD COLUMN build_id TEXT NOT NULL DEFAULT ''")
+            if "centroid_json" not in ts_cols:
+                conn.execute("ALTER TABLE tag_segments ADD COLUMN centroid_json TEXT NOT NULL DEFAULT ''")
 
         if "search_history" not in tables:
             conn.execute(

@@ -54,6 +54,11 @@ export type IngestEvent = {
   total: number;
   elapsed_ms: number;
   message: string;
+  // Attribution: 'mcp:delegate' when produced by Claude via submit_enrichments,
+  // 'provider:<model>' when backend LLM, otherwise absent/empty.
+  actor?: string;
+  // For enrich events: 'note_segments' | 'wiki_chunks' | 'wiki_topic' | 'doc_format'
+  kind?: string;
 };
 
 export async function ingestRawAsync(

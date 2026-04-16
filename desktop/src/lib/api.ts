@@ -367,6 +367,14 @@ export type BuildInfo = {
   token_usage: Record<string, number>;
   estimated_cost_cny: number;
   tags: Record<string, number>;
+  // 'completed' | 'awaiting_enrich' | 'partial'
+  enrich_status: string;
+  // '' (awaiting) | 'provider:<model>' | 'mcp:delegate' | 'mcp:auto_inherit' | 'fallback'
+  completed_by: string;
+  // ISO timestamp when status last flipped to awaiting_enrich; null when completed.
+  awaiting_since: string | null;
+  // Seconds elapsed since awaiting_since; null when not awaiting.
+  awaiting_for_seconds: number | null;
   created_at: string;
 };
 

@@ -26,6 +26,9 @@ export type IngestStep = {
   current: number;
   total: number;
   elapsedMs: number;
+  // Attribution ('mcp:delegate' | 'provider:<model>' | undefined)
+  actor?: string;
+  kind?: string;
 };
 
 const STEP_LABELS: Record<string, string> = {
@@ -79,6 +82,9 @@ export default function App() {
   const [ingestBusy, setIngestBusy] = useState(false);
   const [ingestSteps, setIngestSteps] = useState<IngestStep[]>([]);
   const [ingestResult, setIngestResult] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  // Bumped on ingest completion AND build activation — downstream views
+  // (tag segments, etc.) key their re-fetch on this.
+  const [buildVersion, setBuildVersion] = useState(0);
 
   // Wiki ingest — separate from note ingest
   const [wikiIngestBusy, setWikiIngestBusy] = useState(false);
@@ -108,17 +114,21 @@ export default function App() {
         if (activeChannelRef.current !== "raw-input") setToast({ message: event.message, type: "info" });
       } else if (event.status === "progress") {
         setIngestSteps((prev) => prev.map((s) => {
-          if (s.key === event.step) return { ...s, status: "active", detail: event.message, current: event.current, total: event.total, elapsedMs: event.elapsed_ms };
+          if (s.key === event.step) return { ...s, status: "active", detail: event.message, current: event.current, total: event.total, elapsedMs: event.elapsed_ms, actor: event.actor, kind: event.kind };
           const thisIdx = STEP_ORDER.indexOf(s.key);
           const eventIdx = STEP_ORDER.indexOf(event.step);
           if (thisIdx < eventIdx && s.status !== "done") return { ...s, status: "done" };
           return s;
         }));
+        // MCP-delegated enrich fires after initial ingest done — make sure
+        // spinner is visible and tag views refresh when it completes.
+        if (event.actor === "mcp:delegate") setIngestBusy(true);
       } else if (event.status === "completed") {
         setIngestBusy(false);
         setIngestSteps((prev) => prev.map((s) => ({ ...s, status: "done" })));
         setIngestResult({ message: event.message, type: "success" });
         setToast({ message: event.message, type: "success" });
+        setBuildVersion((v) => v + 1);
       } else if (event.status === "error") {
         setIngestBusy(false);
         setIngestResult({ message: event.message, type: "error" });
@@ -137,17 +147,19 @@ export default function App() {
         setWikiIngestSteps(initialWikiSteps());
       } else if (event.status === "progress") {
         setWikiIngestSteps((prev) => prev.map((s) => {
-          if (s.key === event.step) return { ...s, status: "active", detail: event.message, current: event.current, total: event.total, elapsedMs: event.elapsed_ms };
+          if (s.key === event.step) return { ...s, status: "active", detail: event.message, current: event.current, total: event.total, elapsedMs: event.elapsed_ms, actor: event.actor, kind: event.kind };
           const thisIdx = WIKI_STEP_ORDER.indexOf(s.key);
           const eventIdx = WIKI_STEP_ORDER.indexOf(event.step);
           if (thisIdx < eventIdx && s.status !== "done") return { ...s, status: "done" };
           return s;
         }));
+        if (event.actor === "mcp:delegate") setWikiIngestBusy(true);
       } else if (event.status === "completed") {
         setWikiIngestBusy(false);
         setWikiIngestSteps((prev) => prev.map((s) => ({ ...s, status: "done" })));
         setWikiIngestResult({ message: event.message, type: "success" });
         setToast({ message: event.message, type: "success" });
+        setBuildVersion((v) => v + 1);
       } else if (event.status === "error") {
         setWikiIngestBusy(false);
         setWikiIngestResult({ message: event.message, type: "error" });
@@ -173,6 +185,7 @@ export default function App() {
 
   const handleIngestComplete = useCallback(() => {
     refreshTags();
+    setBuildVersion((v) => v + 1);
   }, [refreshTags]);
 
   function refreshWikiSources() {
@@ -203,6 +216,7 @@ export default function App() {
           ingestBusy={ingestBusy}
           ingestSteps={ingestSteps}
           ingestResult={ingestResult}
+          buildVersion={buildVersion}
           tags={tags}
           onTagsChanged={refreshTags}
         />

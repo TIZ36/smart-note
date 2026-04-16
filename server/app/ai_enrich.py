@@ -94,6 +94,8 @@ def get_token_usage() -> dict:
 
 
 def _call_llm(system: str, user: str) -> str | None:
+    if not getattr(settings, "ai_features_enabled", True):
+        return None
     api_key = settings.provider_api_key
     if not api_key:
         return None
@@ -134,18 +136,30 @@ def _call_llm(system: str, user: str) -> str | None:
 def classify_lines(
     lines: list[str],
     on_progress: callable | None = None,
+    delegate: bool = False,
 ) -> list[dict]:
     """Classify all lines into tag segments using concurrent AI calls.
 
     Args:
         lines: raw file lines (0-indexed in list, but line numbers are 1-based)
         on_progress: optional callback(done_lines, total_lines)
+        delegate: if True, skip LLM calls entirely and emit the "others" fallback
+            (used when an external caller — e.g. Claude via MCP — will classify
+            the content itself via POST /tag-segments/classify afterwards).
 
     Returns:
         List of segments: [{tag, line_start, line_end, summary, keywords, entities, is_credential}]
     """
-    if not getattr(settings, "ingest_ai_enabled", False):
-        # Fallback: everything is "others"
+    if delegate:
+        # Delegated to caller (e.g. Claude via MCP). No segments are created —
+        # the caller is expected to discover pending content via
+        # `list_pending_enrichments(kind="note_segments")` and submit segments
+        # via `submit_enrichments(kind="note_segments", items=[...])`.
+        return []
+
+    if not getattr(settings, "ai_features_enabled", True) or not getattr(settings, "ingest_ai_enabled", False):
+        # AI disabled globally. Mark the whole file as "others" so it's still
+        # discoverable, but keep the single-segment fallback tight.
         return [{
             "tag": "others",
             "line_start": 1,

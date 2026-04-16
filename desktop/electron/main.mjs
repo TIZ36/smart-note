@@ -5,6 +5,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
 import net from "net";
+import http from "http";
 import { spawn } from "child_process";
 import readline from "readline";
 
@@ -66,7 +67,8 @@ function parseEnvFile(content) {
 }
 
 function runIngestCmd(rawPath, notePath, doReset) {
-  const args = ["-m", "app.cli", "ingest", "--raw", rawPath, "--note", notePath];
+  // Same as ingestRawAsync: always delegate enrichment to the MCP caller.
+  const args = ["-m", "app.cli", "ingest", "--raw", rawPath, "--note", notePath, "--ai-delegate"];
   if (doReset) args.push("--reset");
   const proc = spawn(pythonBin(), args, { cwd: serverRoot() });
   let stdout = "";
@@ -104,6 +106,124 @@ function emitIngest(win, payload) {
   if (win && !win.isDestroyed()) win.webContents.send("ingest:status", payload);
 }
 
+function emitWikiIngest(win, payload) {
+  if (win && !win.isDestroyed()) win.webContents.send("wiki-ingest:status", payload);
+}
+
+// ── Gateway SSE bridge ──
+// Mirrors ingest progress from the FastAPI process (e.g. MCP-triggered ingest)
+// into the same IPC channels the CLI-spawned path uses, so the editor pipeline
+// panel lights up regardless of how ingest was started.
+let sseReconnectTimer = null;
+
+function forwardSseEvent(event) {
+  const w = BrowserWindow.getAllWindows()[0] ?? mainWindow;
+  if (!w || w.isDestroyed()) return;
+  const step = event.step ?? "";
+  const channel = event.channel === "wiki" ? "wiki" : "note";
+  const isStore = step === "store" && Number(event.current || 0) === 0;
+  const isDone = step === "done";
+  const isError = step === "error";
+  const status = isDone ? "completed" : isError ? "error" : "progress";
+
+  // Synthesize a 'started' event on the first sign of activity so the UI
+  // resets step state to match a fresh run.
+  if (channel === "note") {
+    if (step === "parse" && Number(event.current || 0) === 0 && !noteIngestRunning) {
+      noteIngestRunning = true;
+      emitIngest(w, {
+        status: "started",
+        step: "parse",
+        current: 0,
+        total: 0,
+        elapsed_ms: 0,
+        message: event.detail || "Ingest started",
+      });
+    }
+    emitIngest(w, {
+      status,
+      step,
+      current: Number(event.current ?? 0) || 0,
+      total: Number(event.total ?? 0) || 0,
+      elapsed_ms: Number(event.elapsed_ms ?? 0) || 0,
+      message: event.detail ?? "",
+      actor: event.actor ?? undefined,
+      kind: event.kind ?? undefined,
+    });
+    if (isDone || isError) noteIngestRunning = false;
+  } else {
+    if (!wikiIngestRunning && (step === "parse" || step === "fetch") && Number(event.current || 0) === 0) {
+      wikiIngestRunning = true;
+      emitWikiIngest(w, {
+        status: "started",
+        step,
+        current: 0,
+        total: 0,
+        elapsed_ms: 0,
+        message: event.detail || "Wiki ingest started",
+      });
+    }
+    emitWikiIngest(w, {
+      status,
+      step,
+      current: Number(event.current ?? 0) || 0,
+      total: Number(event.total ?? 0) || 0,
+      elapsed_ms: Number(event.elapsed_ms ?? 0) || 0,
+      message: event.detail ?? "",
+      actor: event.actor ?? undefined,
+      kind: event.kind ?? undefined,
+    });
+    if (isDone || isError) wikiIngestRunning = false;
+  }
+  // `isStore` is intentionally unused — kept for future UI needs.
+  void isStore;
+}
+
+function connectIngestSse() {
+  const req = http.request(
+    { host: "127.0.0.1", port: 8787, path: "/events/ingest", method: "GET", headers: { Accept: "text/event-stream" } },
+    (res) => {
+      if (res.statusCode !== 200) {
+        res.resume();
+        scheduleSseReconnect();
+        return;
+      }
+      res.setEncoding("utf8");
+      let buf = "";
+      res.on("data", (chunk) => {
+        buf += chunk;
+        let idx;
+        while ((idx = buf.indexOf("\n\n")) !== -1) {
+          const frame = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          for (const line of frame.split("\n")) {
+            if (!line.startsWith("data:")) continue;
+            const payload = line.slice(5).trim();
+            if (!payload) continue;
+            try {
+              forwardSseEvent(JSON.parse(payload));
+            } catch {
+              /* ignore malformed frames */
+            }
+          }
+        }
+      });
+      res.on("end", scheduleSseReconnect);
+      res.on("error", scheduleSseReconnect);
+    },
+  );
+  req.on("error", scheduleSseReconnect);
+  req.end();
+}
+
+function scheduleSseReconnect() {
+  if (sseReconnectTimer) return;
+  sseReconnectTimer = setTimeout(() => {
+    sseReconnectTimer = null;
+    connectIngestSse();
+  }, 2000);
+}
+
 function ingestRawAsync(win, rawPath, notePath, doReset) {
   noteIngestRunning = true;
   emitIngest(win, {
@@ -115,7 +235,11 @@ function ingestRawAsync(win, rawPath, notePath, doReset) {
     message: doReset ? "Rebuilding knowledge base..." : "Ingesting new content...",
   });
 
-  const args = ["-m", "app.cli", "ingest", "--raw", rawPath, "--note", notePath];
+  // Always run in delegate mode: skip backend ai_enrich and let the MCP
+  // caller (Claude) fill in classifications. This matches how the MCP
+  // `ingest_notes` tool behaves and avoids silently overwriting prior
+  // mcp:delegate-enriched builds when the user clicks Rebuild all.
+  const args = ["-m", "app.cli", "ingest", "--raw", rawPath, "--note", notePath, "--ai-delegate"];
   if (doReset) args.push("--reset");
   const proc = spawn(pythonBin(), args, {
     cwd: serverRoot(),
@@ -229,6 +353,7 @@ app.whenReady().then(() => {
   createWindow();
   loadHotkeyConfig();
   registerHotkey();
+  connectIngestSse();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -242,10 +367,6 @@ ipcMain.handle("ingest_raw", async (_, { rawPath, notePath, reset }) => {
   const doReset = !!reset;
   return runIngestCmd(rawPath, notePath, doReset);
 });
-
-function emitWikiIngest(win, payload) {
-  if (win && !win.isDestroyed()) win.webContents.send("wiki-ingest:status", payload);
-}
 
 ipcMain.handle("special_ingest_async", async (event, { folderPath, filePath, topicName }) => {
   const win = BrowserWindow.fromWebContents(event.sender);
@@ -409,8 +530,10 @@ ipcMain.handle("read_settings", async () => {
   const content = fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf8") : "";
   const map = parseEnvFile(content);
   const ingestAi = map.get("INGEST_AI_ENABLED")?.toLowerCase() ?? "";
+  const aiFeatures = map.get("AI_FEATURES_ENABLED")?.toLowerCase() ?? "true";
   return {
     embedding_mode: map.get("EMBEDDING_MODE") ?? "local",
+    ai_features_enabled: !["false", "0", "no"].includes(aiFeatures),
     provider_base_url: map.get("PROVIDER_BASE_URL") ?? "https://api.openai.com/v1",
     provider_api_key: map.get("PROVIDER_API_KEY") ?? "",
     provider_chat_model: map.get("PROVIDER_CHAT_MODEL") ?? "gpt-4o-mini",
@@ -426,8 +549,10 @@ ipcMain.handle("write_settings", async (_, { newSettings }) => {
   const envPath = path.join(serverRoot(), ".env");
   const existing = fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf8") : "";
   const aiEnabledStr = newSettings.ingest_ai_enabled ? "true" : "false";
+  const aiFeaturesStr = newSettings.ai_features_enabled === false ? "false" : "true";
   const updates = new Map([
     ["EMBEDDING_MODE", newSettings.embedding_mode],
+    ["AI_FEATURES_ENABLED", aiFeaturesStr],
     ["PROVIDER_BASE_URL", newSettings.provider_base_url],
     ["PROVIDER_API_KEY", newSettings.provider_api_key],
     ["PROVIDER_CHAT_MODEL", newSettings.provider_chat_model],
