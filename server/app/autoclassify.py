@@ -58,17 +58,56 @@ def refresh_segment_centroids(build_id: str | None = None) -> int:
         if not seg_rows:
             return 0
 
-        # Batch load int8 embeddings grouped by source_file. For each file
-        # we get (line_no, np_int8_view, scale) tuples — dequantize on demand
-        # in chunks to amortize. Much faster than JSON parse per row.
-        source_files = {s["source_file"] for s in seg_rows}
-        file_to_entries: dict[str, list[tuple[int, bytes, float]]] = {s: [] for s in source_files}
-        ph = ",".join("?" for _ in source_files)
-        chunk_rows = conn.execute(
-            f"SELECT source_file, source_ref, embedding_q8, embedding_scale, embedding_json "
-            f"FROM chunks WHERE source_file IN ({ph})",
-            list(source_files),
-        ).fetchall()
+        # Note-side segments have tag_segments.source_file == chunks.source_file.
+        # Wiki-side segments store the CONTAINING FOLDER while chunks store
+        # the inner .md path. For wiki, group by dimension tag instead.
+        note_segs = [s for s in seg_rows if not (s["tag"] or "").startswith("wiki:")]
+        wiki_segs = [s for s in seg_rows if (s["tag"] or "").startswith("wiki:")]
+
+        # Load note-side chunks by source_file
+        note_source_files = {s["source_file"] for s in note_segs}
+        file_to_entries: dict[str, list[tuple[int, bytes, float]]] = {s: [] for s in note_source_files}
+        tag_to_entries: dict[str, list[tuple[int, bytes, float]]] = {}
+
+        if note_source_files:
+            ph = ",".join("?" for _ in note_source_files)
+            chunk_rows = conn.execute(
+                f"SELECT source_file, source_ref, embedding_q8, embedding_scale, embedding_json "
+                f"FROM chunks WHERE source_file IN ({ph})",
+                list(note_source_files),
+            ).fetchall()
+        else:
+            chunk_rows = []
+
+        # Load wiki-side chunks by dimension tag
+        if wiki_segs:
+            wiki_tags = list({s["tag"] for s in wiki_segs})
+            ph2 = ",".join("?" for _ in wiki_tags)
+            wiki_chunk_rows = conn.execute(
+                f"SELECT dimension, source_ref, embedding_q8, embedding_scale, embedding_json "
+                f"FROM chunks WHERE dimension IN ({ph2})",
+                wiki_tags,
+            ).fetchall()
+            for cr in wiki_chunk_rows:
+                q8 = cr["embedding_q8"]
+                scale = float(cr["embedding_scale"] or 0)
+                # line_no isn't meaningful for wiki grouping; use 0 as sentinel
+                if q8 and scale > 0:
+                    tag_to_entries.setdefault(cr["dimension"], []).append((0, bytes(q8), scale))
+                elif cr["embedding_json"]:
+                    try:
+                        v = json.loads(cr["embedding_json"])
+                        if v:
+                            max_abs = max(abs(x) for x in v) or 1.0
+                            int8 = bytearray(len(v))
+                            inv = 127.0 / max_abs
+                            for i, x in enumerate(v):
+                                iv = max(-128, min(127, int(round(x * inv))))
+                                int8[i] = iv & 0xFF
+                            tag_to_entries.setdefault(cr["dimension"], []).append((0, bytes(int8), max_abs))
+                    except Exception:
+                        continue
+
         for cr in chunk_rows:
             ln = _parse_line_no(cr["source_ref"] or "")
             if ln is None:
@@ -96,11 +135,16 @@ def refresh_segment_centroids(build_id: str | None = None) -> int:
 
         updates: list[tuple[str, int]] = []
         for s in seg_rows:
-            entries = file_to_entries.get(s["source_file"], [])
-            if not entries:
-                continue
-            ls, le = s["line_start"], s["line_end"]
-            pick = [(blob, sc) for (ln, blob, sc) in entries if ls <= ln <= le]
+            is_wiki = (s["tag"] or "").startswith("wiki:")
+            if is_wiki:
+                # Wiki: all chunks for this dimension are in-scope.
+                pick = [(blob, sc) for (_, blob, sc) in tag_to_entries.get(s["tag"], [])]
+            else:
+                entries = file_to_entries.get(s["source_file"], [])
+                if not entries:
+                    continue
+                ls, le = s["line_start"], s["line_end"]
+                pick = [(blob, sc) for (ln, blob, sc) in entries if ls <= ln <= le]
             if not pick:
                 continue
             # Stack int8 rows; dequantize per-row (simple float mult).

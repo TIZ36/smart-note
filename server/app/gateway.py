@@ -2149,6 +2149,791 @@ def api_special_knowledge_delete(topic_name: str) -> dict:
     return {"deleted": topic_name, "chunks_removed": chunk_del, "segments_removed": seg_del, "files_deleted": files_deleted}
 
 
+# ── Wiki optimization + grouping (P0) ──
+
+@app.get("/wiki/find")
+def api_wiki_find(q: str = Query(..., min_length=1), top_k: int = Query(5, ge=1, le=20)) -> dict:
+    """Resolve a natural-language query to existing wiki topic candidates.
+
+    Ranks by (a) embedding cosine between query and topic centroid (when
+    available), and (b) substring / keyword overlap on topic_name + summary.
+    Used by MCP callers to pick an EXISTING topic to optimize rather than
+    create a new one.
+    """
+    with connect() as conn:
+        topics = conn.execute(
+            "SELECT id, build_id, topic_name, tag, summary, keywords_json, "
+            "source_file, centroid_json FROM tag_segments "
+            "WHERE tag LIKE 'wiki:%' ORDER BY created_at DESC"
+        ).fetchall()
+    if not topics:
+        return {"candidates": []}
+
+    # Compute query embedding once
+    try:
+        qv = embed_texts([q])[0]
+    except Exception:
+        qv = None
+
+    import math as _math
+    ql = q.lower()
+    ranked: list[tuple[float, dict]] = []
+    for t in topics:
+        name = (t["topic_name"] or "").strip()
+        summary = (t["summary"] or "").strip()
+        try:
+            kws = json.loads(t["keywords_json"] or "[]")
+        except (json.JSONDecodeError, TypeError):
+            kws = []
+
+        # Lexical score
+        name_low = name.lower()
+        sum_low = summary.lower()
+        lex = 0.0
+        if ql in name_low:
+            lex += 0.6
+        elif any(tok in name_low for tok in ql.split() if len(tok) >= 2):
+            lex += 0.35
+        if ql in sum_low:
+            lex += 0.3
+        for kw in kws[:30]:
+            if not isinstance(kw, str):
+                continue
+            if ql in kw.lower() or kw.lower() in ql:
+                lex += 0.1
+                break
+
+        # Semantic score via centroid
+        sem = 0.0
+        if qv and t["centroid_json"]:
+            try:
+                centroid = json.loads(t["centroid_json"])
+                if centroid and len(centroid) == len(qv):
+                    dot = sum(a * b for a, b in zip(qv, centroid))
+                    na = _math.sqrt(sum(a * a for a in qv))
+                    nb = _math.sqrt(sum(b * b for b in centroid))
+                    if na > 1e-9 and nb > 1e-9:
+                        sem = max(0.0, dot / (na * nb))
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        score = 0.55 * sem + 0.45 * min(lex, 1.0)
+        if score < 0.1 and not lex and not sem:
+            continue
+        # Derive group from source_file path convention:
+        # .../sn/source/<group>/<topic>/<file.md> vs .../sn/source/<topic>/<file.md>
+        group = ""
+        sf = t["source_file"] or ""
+        try:
+            from app.config import settings as _cfg
+            src_root = Path(_cfg.wiki_sources_dir).resolve()
+            rel = Path(sf).resolve().relative_to(src_root)
+            parts = rel.parts
+            if len(parts) >= 2:
+                group = parts[0]
+        except Exception:
+            pass
+        ranked.append((score, {
+            "topic_name": name,
+            "tag": t["tag"],
+            "summary": summary[:400],
+            "keywords": kws[:12],
+            "source_file": sf,
+            "group": group if group and group != name else "",
+            "build_id": t["build_id"],
+            "score": round(score, 3),
+            "lex": round(lex, 3),
+            "sem": round(sem, 3),
+        }))
+    ranked.sort(key=lambda x: x[0], reverse=True)
+    return {"candidates": [r[1] for r in ranked[:top_k]]}
+
+
+@app.get("/wiki/source")
+def api_wiki_source(topic: str = Query(..., min_length=1)) -> dict:
+    """Return the raw markdown of a wiki topic so an MCP caller can review
+    before proposing a rewrite."""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT source_file, topic_name FROM tag_segments "
+            "WHERE tag = ? OR tag = ? OR topic_name = ? LIMIT 1",
+            (f"wiki:{topic}", topic, topic),
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"wiki topic not found: {topic}")
+    sf = row["source_file"]
+    # source_file is the containing folder for wiki topics; find the .md inside.
+    p = Path(sf)
+    candidates: list[Path] = []
+    if p.is_dir():
+        candidates = sorted(p.rglob("*.md"))
+    elif p.suffix.lower() == ".md" and p.exists():
+        candidates = [p]
+    if not candidates:
+        raise HTTPException(status_code=404, detail=f"no .md file under {sf}")
+    # Prefer a file whose name matches the topic
+    picked = candidates[0]
+    for c in candidates:
+        if topic in c.stem:
+            picked = c
+            break
+    try:
+        content = picked.read_text(encoding="utf-8", errors="ignore")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "topic_name": row["topic_name"] or topic,
+        "md_path": str(picked.resolve()),
+        "content": content,
+        "length": len(content),
+    }
+
+
+class WikiUpdateRequest(BaseModel):
+    topic_name: str
+    content: str
+    delegate_enrich: bool = True
+
+
+@app.post("/wiki/update")
+def api_wiki_update(req: WikiUpdateRequest) -> dict:
+    """Overwrite a wiki topic's .md AND rebuild its index (chunks + embeddings
+    + segments). Used by MCP callers to optimize an existing wiki in place
+    rather than creating a duplicate.
+    """
+    from app.special_ingest import ingest_folder
+    from app.versioning import create_snapshot
+
+    topic = req.topic_name.strip()
+    if not topic or not req.content.strip():
+        raise HTTPException(status_code=400, detail="topic_name + non-empty content required")
+
+    # Locate existing topic folder
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT source_file, build_id FROM tag_segments "
+            "WHERE tag = ? OR tag = ? OR topic_name = ? LIMIT 1",
+            (f"wiki:{topic}", topic, topic),
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"wiki topic not found: {topic}")
+    topic_dir = Path(row["source_file"])
+    if not topic_dir.is_dir():
+        topic_dir = topic_dir.parent
+    if not topic_dir.exists():
+        raise HTTPException(status_code=404, detail=f"topic dir missing: {topic_dir}")
+
+    # Snapshot the existing build (best effort) before wipe.
+    try:
+        create_snapshot(str(topic_dir), reason="pre-wiki-update")
+    except Exception:
+        pass
+
+    # Wipe old chunks + segments for this topic so re-ingest doesn't duplicate.
+    dim = f"wiki:{topic}"
+    with connect() as conn:
+        old_build_ids = [
+            r["build_id"] for r in conn.execute(
+                "SELECT DISTINCT build_id FROM chunks WHERE dimension = ?", (dim,)
+            ).fetchall()
+        ]
+        conn.execute("DELETE FROM chunks WHERE dimension = ?", (dim,))
+        conn.execute("DELETE FROM tag_segments WHERE tag = ?", (dim,))
+        for bid in old_build_ids:
+            conn.execute("DELETE FROM builds WHERE id = ? AND source_file LIKE 'wiki:%'", (bid,))
+        conn.commit()
+
+    # Overwrite the primary .md inside the topic dir.
+    import re as _re
+    safe = _re.sub(r"[^\w\s\u4e00-\u9fff-]", "_", topic)[:80]
+    md_path = topic_dir / f"{safe}.md"
+    # If a differently-named file was the source, prefer overwriting that one.
+    existing_mds = sorted(topic_dir.glob("*.md"))
+    if existing_mds and not md_path.exists():
+        md_path = existing_mds[0]
+    md_path.write_text(req.content.strip() + "\n", encoding="utf-8")
+
+    # Re-ingest the folder under the same topic_name.
+    result = ingest_folder(str(topic_dir), topic_name=topic, ai_delegate=req.delegate_enrich)
+    return {
+        **result,
+        "updated": True,
+        "md_path": str(md_path.resolve()),
+    }
+
+
+@app.post("/wiki/redistill")
+def api_wiki_redistill(topic: str = Query(..., min_length=1)) -> dict:
+    """Reset enrichment state for a wiki topic without touching the .md.
+    Clears chunk ai_summary + topic summary + marks build awaiting_enrich
+    so Claude re-distills from scratch (better chunk summaries, topic
+    summary, and keyword sets). Embeddings + chunk text are kept."""
+    from app.builds import recompute_enrich_status
+    dim = f"wiki:{topic}"
+    with connect() as conn:
+        touched = conn.execute(
+            "UPDATE chunks SET ai_summary = '' WHERE dimension = ?", (dim,)
+        ).rowcount
+        conn.execute(
+            "UPDATE tag_segments SET summary = '', keywords_json = '[]' "
+            "WHERE tag = ?", (dim,),
+        )
+        build_ids = [
+            r["build_id"] for r in conn.execute(
+                "SELECT DISTINCT build_id FROM chunks WHERE dimension = ?", (dim,)
+            ).fetchall()
+        ]
+        conn.commit()
+    if touched == 0:
+        raise HTTPException(status_code=404, detail=f"no chunks found for wiki topic: {topic}")
+    for bid in build_ids:
+        try:
+            recompute_enrich_status(bid)
+        except Exception:
+            pass
+    return {
+        "topic": topic,
+        "chunks_cleared": touched,
+        "builds_flipped": build_ids,
+    }
+
+
+@app.get("/wiki/groups")
+def api_wiki_groups() -> dict:
+    """List wiki topics bucketed by group (derived from source path:
+    `sn/source/<group>/<topic>/`). Topics stored directly at `sn/source/<topic>/`
+    report group = '' (ungrouped)."""
+    src_root = Path(settings.wiki_sources_dir).resolve()
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT topic_name, tag, summary, source_file FROM tag_segments "
+            "WHERE tag LIKE 'wiki:%' ORDER BY topic_name"
+        ).fetchall()
+    groups: dict[str, list[dict]] = {}
+    for r in rows:
+        sf = r["source_file"] or ""
+        group = ""
+        try:
+            rel = Path(sf).resolve().relative_to(src_root)
+            parts = rel.parts
+            if len(parts) >= 2 and parts[0] != rel.stem:
+                group = parts[0]
+        except Exception:
+            pass
+        groups.setdefault(group, []).append({
+            "topic_name": r["topic_name"],
+            "tag": r["tag"],
+            "summary": (r["summary"] or "")[:240],
+            "source_file": sf,
+        })
+    return {
+        "groups": [
+            {"name": g, "topic_count": len(v), "topics": v}
+            for g, v in sorted(groups.items(), key=lambda kv: (kv[0] == "", kv[0]))
+        ]
+    }
+
+
+@app.post("/wiki/suggest-groups")
+def api_wiki_suggest_groups() -> dict:
+    """Cluster wiki topics by centroid cosine similarity and propose a
+    grouping. Returns a plan that the MCP caller can review/edit before
+    applying via /wiki/reorganize."""
+    with connect() as conn:
+        topics = conn.execute(
+            "SELECT topic_name, tag, summary, keywords_json, centroid_json "
+            "FROM tag_segments WHERE tag LIKE 'wiki:%' "
+            "AND centroid_json != '' AND centroid_json IS NOT NULL"
+        ).fetchall()
+    if not topics:
+        return {"groups": [], "note": "no topics with centroids — run ingest first"}
+
+    try:
+        import numpy as np
+    except ImportError:
+        raise HTTPException(status_code=500, detail="numpy required")
+
+    names: list[str] = []
+    vecs: list[list[float]] = []
+    summaries: list[str] = []
+    for t in topics:
+        try:
+            v = json.loads(t["centroid_json"])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not v:
+            continue
+        names.append(t["topic_name"])
+        vecs.append(v)
+        summaries.append((t["summary"] or "")[:200])
+    if not vecs:
+        return {"groups": [], "note": "no usable centroids"}
+
+    arr = np.asarray(vecs, dtype=np.float32)
+    norms = np.linalg.norm(arr, axis=1)
+    norms[norms < 1e-9] = 1.0
+    normed = arr / norms[:, None]
+    sim = normed @ normed.T  # cosine matrix
+
+    # Simple greedy agglomerative clustering: take highest unclustered
+    # similarity pair, form a seed group, attach topics with avg-link sim >= threshold.
+    threshold = 0.72
+    n = len(names)
+    assigned = [-1] * n
+    cluster_id = 0
+    for i in range(n):
+        if assigned[i] >= 0:
+            continue
+        assigned[i] = cluster_id
+        members = [i]
+        for j in range(i + 1, n):
+            if assigned[j] >= 0:
+                continue
+            avg = float(sim[j, members].mean())
+            if avg >= threshold:
+                assigned[j] = cluster_id
+                members.append(j)
+        cluster_id += 1
+
+    # Build group proposals — name each group by shared keyword prefix of its
+    # topics' names (simple heuristic; human can rename in the plan).
+    groups: list[dict] = []
+    for cid in range(cluster_id):
+        member_idxs = [i for i, a in enumerate(assigned) if a == cid]
+        if not member_idxs:
+            continue
+        member_names = [names[i] for i in member_idxs]
+        # Name heuristic: common substring ≥ 2 chars across topic names, but
+        # capped so single-member clusters don't end up with a 60-char name.
+        shared = _common_substring(member_names)
+        if len(member_names) == 1 or not shared:
+            # Use first 12 chars of the first topic name as a stub the user
+            # can rename in the plan before applying.
+            name_suggestion = member_names[0][:12]
+        else:
+            name_suggestion = shared[:24]
+        groups.append({
+            "name": name_suggestion,
+            "topic_names": member_names,
+            "avg_cohesion": round(
+                float(sim[np.ix_(member_idxs, member_idxs)].mean()), 3,
+            ),
+        })
+    groups.sort(key=lambda g: -len(g["topic_names"]))
+    return {
+        "groups": groups,
+        "threshold": threshold,
+        "total_topics": n,
+        "note": "Review and edit topic_names per group before calling /wiki/reorganize.",
+    }
+
+
+def _common_substring(strings: list[str], min_len: int = 2) -> str:
+    """Longest common substring across given strings; empty if none meets min_len."""
+    if not strings:
+        return ""
+    shortest = min(strings, key=len)
+    for length in range(len(shortest), min_len - 1, -1):
+        for start in range(0, len(shortest) - length + 1):
+            candidate = shortest[start:start + length]
+            if all(candidate in s for s in strings):
+                return candidate
+    return ""
+
+
+class WikiReorganizeRequest(BaseModel):
+    # [{ "name": "回传", "topic_names": ["回传自查SOP", ...] }, ...]
+    groups: list[dict]
+    # Dry-run returns the planned moves without touching the filesystem.
+    dry_run: bool = False
+
+
+@app.post("/wiki/reorganize")
+def api_wiki_reorganize(req: WikiReorganizeRequest) -> dict:
+    """Apply a grouping plan: physically move each topic's folder under its
+    group's parent dir AND update DB `source_file` paths so retrieval/search
+    keep working. Missing groups/topics are skipped with a warning — never
+    destructive to files that aren't mentioned."""
+    import re as _re
+    import shutil as _sh
+
+    src_root = Path(settings.wiki_sources_dir).resolve()
+    if not src_root.exists():
+        raise HTTPException(status_code=500, detail=f"wiki root missing: {src_root}")
+
+    with connect() as conn:
+        topic_rows = conn.execute(
+            "SELECT topic_name, tag, source_file FROM tag_segments WHERE tag LIKE 'wiki:%'"
+        ).fetchall()
+    topic_to_src: dict[str, str] = {r["topic_name"]: r["source_file"] for r in topic_rows if r["topic_name"]}
+
+    moves: list[dict] = []
+    warnings: list[str] = []
+
+    for group in req.groups or []:
+        raw_name = (group.get("name") or "").strip()
+        if not raw_name:
+            warnings.append("skipping group with empty name")
+            continue
+        group_slug = _re.sub(r"[^\w\s\u4e00-\u9fff-]", "_", raw_name)[:80]
+        group_dir = src_root / group_slug
+
+        for topic_name in group.get("topic_names", []) or []:
+            sf = topic_to_src.get(topic_name)
+            if not sf:
+                warnings.append(f"topic not found in DB: {topic_name}")
+                continue
+            src_path = Path(sf)
+            if src_path.is_file():
+                src_path = src_path.parent
+            src_path = src_path.resolve()
+            if not src_path.exists():
+                warnings.append(f"source dir missing: {src_path}")
+                continue
+            # Avoid the `<group>/<group>/` nested-twin case — if the topic
+            # folder's name equals the group slug, strip one layer.
+            inner_name = src_path.name
+            if inner_name == group_slug:
+                # Move contents of src_path into group_dir instead.
+                moves.append({
+                    "topic_name": topic_name,
+                    "from": str(src_path),
+                    "to": str(group_dir),
+                    "group": raw_name,
+                    "merge_contents": True,
+                })
+                continue
+            dest_path = group_dir / inner_name
+            if src_path == dest_path.resolve():
+                continue  # already in place
+            moves.append({
+                "topic_name": topic_name,
+                "from": str(src_path),
+                "to": str(dest_path),
+                "group": raw_name,
+            })
+
+    if req.dry_run:
+        return {"dry_run": True, "moves": moves, "warnings": warnings}
+
+    applied: list[dict] = []
+    errors: list[dict] = []
+    with connect() as conn:
+        for mv in moves:
+            src = Path(mv["from"])
+            dest = Path(mv["to"])
+            try:
+                if mv.get("merge_contents"):
+                    # <group>/<group>/ collision: move each child of src
+                    # directly into the group dir, then remove empty src.
+                    dest.mkdir(parents=True, exist_ok=True)
+                    for child in src.iterdir():
+                        target = dest / child.name
+                        if target.exists():
+                            errors.append({**mv, "error": f"child exists: {target}"})
+                            continue
+                        _sh.move(str(child), str(target))
+                    try:
+                        src.rmdir()
+                    except OSError:
+                        pass
+                    # Rewrite DB paths: src → dest (no trailing slash issues;
+                    # REPLACE handles sub-paths).
+                    src_prefix = str(src)
+                    dest_prefix = str(dest)
+                    conn.execute(
+                        "UPDATE chunks SET source_file = REPLACE(source_file, ?, ?) "
+                        "WHERE source_file LIKE ?",
+                        (src_prefix, dest_prefix, src_prefix + "%"),
+                    )
+                    conn.execute(
+                        "UPDATE tag_segments SET source_file = REPLACE(source_file, ?, ?) "
+                        "WHERE source_file LIKE ?",
+                        (src_prefix, dest_prefix, src_prefix + "%"),
+                    )
+                    applied.append(mv)
+                    continue
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                if dest.exists():
+                    errors.append({**mv, "error": "destination already exists"})
+                    continue
+                _sh.move(str(src), str(dest))
+                src_prefix = str(src)
+                dest_prefix = str(dest)
+                conn.execute(
+                    "UPDATE chunks SET source_file = REPLACE(source_file, ?, ?) "
+                    "WHERE source_file LIKE ?",
+                    (src_prefix, dest_prefix, src_prefix + "%"),
+                )
+                conn.execute(
+                    "UPDATE tag_segments SET source_file = REPLACE(source_file, ?, ?) "
+                    "WHERE source_file LIKE ?",
+                    (src_prefix, dest_prefix, src_prefix + "%"),
+                )
+                applied.append(mv)
+            except Exception as e:
+                errors.append({**mv, "error": str(e)})
+        conn.commit()
+
+    # Piggyback cleanup hints: after the reorg, surface unambiguous orphan
+    # files so the caller can follow up with a targeted dedupe call.
+    # Only delete-worthy entries (identical / near_dup / subset) are included;
+    # review/import classes stay silent to keep this short and actionable.
+    cleanup: list[dict] = []
+    try:
+        from app.wiki_dedup import cleanup_hints as _cleanup_hints
+        cleanup = _cleanup_hints(max_items=20)
+    except Exception:
+        pass
+
+    return {
+        "dry_run": False,
+        "applied": applied,
+        "errors": errors,
+        "warnings": warnings,
+        "cleanup_hints": cleanup,
+    }
+
+
+@app.post("/wiki/unnest-doubles")
+def api_wiki_unnest_doubles(dry_run: bool = Query(False)) -> dict:
+    """Fix `<group>/<same-name>/*` double-nested leftovers from older
+    reorganize runs. Walks wiki_sources_dir, finds any dir whose sole child
+    dir has the same name, lifts that child's contents one level up, and
+    updates DB paths.
+
+    Idempotent: runs on nothing when the tree is already clean.
+    """
+    import shutil as _sh
+
+    src_root = Path(settings.wiki_sources_dir).resolve()
+    if not src_root.exists():
+        raise HTTPException(status_code=500, detail=f"wiki root missing: {src_root}")
+
+    plan: list[dict] = []
+    # Look at each top-level group dir
+    for group in src_root.iterdir():
+        if not group.is_dir() or group.name.startswith("."):
+            continue
+        # Does the group contain exactly one child dir with the same name?
+        children = [c for c in group.iterdir() if not c.name.startswith(".")]
+        inner_same = [c for c in children if c.is_dir() and c.name == group.name]
+        if not inner_same:
+            continue
+        # Only merge if the inner is the ONLY substantive child, otherwise
+        # we might conflate intentional co-location.
+        if len(children) > 1:
+            non_empty = [c for c in children if c.name != group.name]
+            if non_empty:
+                continue
+        inner = inner_same[0]
+        lifts: list[dict] = []
+        for item in inner.iterdir():
+            target = group / item.name
+            if target.exists():
+                lifts.append({"item": str(item), "target": str(target), "error": "target exists"})
+                continue
+            lifts.append({"item": str(item), "target": str(target)})
+        plan.append({"inner": str(inner), "group": str(group), "lifts": lifts})
+
+    if dry_run:
+        return {"dry_run": True, "plan": plan}
+
+    applied: list[dict] = []
+    errors: list[dict] = []
+    with connect() as conn:
+        for p in plan:
+            inner = Path(p["inner"])
+            group = Path(p["group"])
+            ok = True
+            for lift in p["lifts"]:
+                if lift.get("error"):
+                    errors.append(lift)
+                    ok = False
+                    continue
+                try:
+                    _sh.move(lift["item"], lift["target"])
+                except Exception as e:
+                    errors.append({**lift, "error": str(e)})
+                    ok = False
+            if ok:
+                # Remove inner (now empty) and update any DB paths that still
+                # reference the nested location.
+                try:
+                    for leftover in inner.iterdir():
+                        if leftover.name.startswith("."):
+                            leftover.unlink(missing_ok=True)
+                    inner.rmdir()
+                except OSError as e:
+                    errors.append({"inner": str(inner), "error": f"rmdir: {e}"})
+                    continue
+                conn.execute(
+                    "UPDATE chunks SET source_file = REPLACE(source_file, ?, ?) "
+                    "WHERE source_file LIKE ?",
+                    (str(inner), str(group), str(inner) + "%"),
+                )
+                conn.execute(
+                    "UPDATE tag_segments SET source_file = REPLACE(source_file, ?, ?) "
+                    "WHERE source_file LIKE ?",
+                    (str(inner), str(group), str(inner) + "%"),
+                )
+                applied.append({"lifted": p["inner"], "into": p["group"], "items": len(p["lifts"])})
+        conn.commit()
+    return {"dry_run": False, "applied": applied, "errors": errors}
+
+
+@app.get("/wiki/duplicates")
+def api_wiki_duplicates() -> dict:
+    """Scan wiki_sources_dir for orphan .md/.txt files + classify against
+    imported topics. Suggested actions: delete (identical/near-dup/subset),
+    review (similar), import (distinct), skip (unreadable)."""
+    from app.wiki_dedup import find_duplicate_wiki_sources
+    return {"candidates": find_duplicate_wiki_sources()}
+
+
+class DedupActionsRequest(BaseModel):
+    actions: list[dict]  # [{path, action, ...}]
+    dry_run: bool = True
+
+
+@app.post("/wiki/dedupe")
+def api_wiki_dedupe(req: DedupActionsRequest) -> dict:
+    from app.wiki_dedup import apply_dedup_actions
+    return apply_dedup_actions(req.actions, dry_run=req.dry_run)
+
+
+class WikiFlattenRequest(BaseModel):
+    # When empty, process every wiki topic. Otherwise only the named ones.
+    topic_names: list[str] = []
+    dry_run: bool = False
+
+
+@app.post("/wiki/flatten")
+def api_wiki_flatten(req: WikiFlattenRequest) -> dict:
+    """Collapse single-.md topic dirs into a group-level file.
+
+    For each eligible topic whose folder contains exactly ONE .md file and
+    no other meaningful assets: move the .md to the parent (group) dir and
+    remove the empty folder. Updates DB paths so retrieval keeps working.
+
+    Topics with multiple .md files, PDFs, images, or nested subdirs are
+    skipped — their subdir is the logical boundary for related assets.
+    """
+    import shutil as _sh
+
+    with connect() as conn:
+        where = ""
+        params: list = []
+        if req.topic_names:
+            ph = ",".join("?" for _ in req.topic_names)
+            where = f" AND topic_name IN ({ph})"
+            params = list(req.topic_names)
+        rows = conn.execute(
+            f"SELECT topic_name, source_file FROM tag_segments "
+            f"WHERE tag LIKE 'wiki:%'{where}",
+            params,
+        ).fetchall()
+
+    plan: list[dict] = []
+    skipped: list[dict] = []
+    for r in rows:
+        topic = r["topic_name"]
+        sf = Path(r["source_file"]) if r["source_file"] else None
+        if not sf or not sf.exists():
+            skipped.append({"topic": topic, "reason": "path missing"})
+            continue
+        topic_dir = sf if sf.is_dir() else sf.parent
+        if not topic_dir.exists() or not topic_dir.is_dir():
+            skipped.append({"topic": topic, "reason": "not a folder"})
+            continue
+
+        # Eligibility: exactly one .md, nothing else interesting.
+        children = [p for p in topic_dir.iterdir() if not p.name.startswith(".")]
+        md_files = [p for p in children if p.suffix.lower() == ".md"]
+        non_md = [p for p in children if p.suffix.lower() != ".md"]
+        if len(md_files) != 1:
+            skipped.append({
+                "topic": topic,
+                "reason": f"has {len(md_files)} .md files (need exactly 1)",
+            })
+            continue
+        if non_md:
+            skipped.append({
+                "topic": topic,
+                "reason": f"has non-md assets: {[p.name for p in non_md]}",
+            })
+            continue
+
+        md = md_files[0]
+        # Target: group_dir/<topic_name>.md — preserve topic name in filename
+        # so it's self-describing at the flat level.
+        import re as _re
+        safe = _re.sub(r"[^\w\s\u4e00-\u9fff-]", "_", topic)[:80]
+        dest = topic_dir.parent / f"{safe}.md"
+        if dest.exists() and dest.resolve() != md.resolve():
+            skipped.append({
+                "topic": topic,
+                "reason": f"destination already exists: {dest}",
+            })
+            continue
+        plan.append({
+            "topic": topic,
+            "from_md": str(md),
+            "from_dir": str(topic_dir),
+            "to_md": str(dest),
+        })
+
+    if req.dry_run:
+        return {"dry_run": True, "plan": plan, "skipped": skipped}
+
+    applied: list[dict] = []
+    errors: list[dict] = []
+    with connect() as conn:
+        for p in plan:
+            try:
+                src_md = Path(p["from_md"])
+                src_dir = Path(p["from_dir"])
+                dest_md = Path(p["to_md"])
+                if src_md.resolve() != dest_md.resolve():
+                    _sh.move(str(src_md), str(dest_md))
+                # Remove emptied dir
+                try:
+                    src_dir.rmdir()
+                except OSError:
+                    # Dir still had hidden files (.DS_Store etc); clean
+                    # them out and retry once.
+                    for f in src_dir.iterdir():
+                        if f.name.startswith("."):
+                            f.unlink(missing_ok=True)
+                    try:
+                        src_dir.rmdir()
+                    except OSError:
+                        pass
+                # Update DB: anything pointing into src_dir → dest_md
+                conn.execute(
+                    "UPDATE chunks SET source_file = REPLACE(source_file, ?, ?) "
+                    "WHERE source_file LIKE ?",
+                    (str(src_md), str(dest_md), str(src_md) + "%"),
+                )
+                # tag_segments pointed at the DIR, not the .md. Retarget to
+                # the flat .md so read_wiki_source + preview still work.
+                conn.execute(
+                    "UPDATE tag_segments SET source_file = ? "
+                    "WHERE source_file = ? AND tag LIKE 'wiki:%'",
+                    (str(dest_md), str(src_dir)),
+                )
+                applied.append(p)
+            except Exception as e:
+                errors.append({**p, "error": str(e)})
+        conn.commit()
+    return {
+        "dry_run": False,
+        "applied": applied,
+        "skipped": skipped,
+        "errors": errors,
+    }
+
+
 @app.get("/wiki-sources")
 def api_wiki_sources() -> dict:
     """List all distinct source .md files from wiki chunks for the Sources panel."""

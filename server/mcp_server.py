@@ -911,6 +911,384 @@ def process_pending_ocr(limit: int = 20) -> str:
     return f"Processed {data.get('processed', 0)} ({data.get('failed', 0)} failed)."
 
 
+# ── Tool: Wiki optimization + grouping (P0) ──
+#
+# Default mindset: PREFER UPDATING AN EXISTING WIKI OVER CREATING A NEW ONE.
+# When the user says "优化一下 X 相关的 wiki", the flow is:
+#   1. find_wiki_topics(query) — resolve natural language to candidate topics
+#   2. read_wiki_source(topic_name) — pull the current .md
+#   3. [optional] rewrite content → update_wiki_doc(topic_name, content)
+#      OR just redistill_wiki(topic_name) to re-run enrichment without
+#      touching the .md. Both reuse the same folder + topic slug, so the
+#      wiki graph / cross-references don't break.
+
+@mcp.tool()
+def find_wiki_topics(query: str, top_k: int = 5) -> str:
+    """Resolve natural-language query to existing wiki topic candidates.
+
+    Ranks by centroid cosine (semantic) + lexical name/summary/keyword match.
+    Use this BEFORE considering import_wiki_doc — if a good match exists,
+    prefer update_wiki_doc or redistill_wiki to avoid creating duplicates.
+
+    Args:
+        query: natural-language description (Chinese/English ok).
+        top_k: max candidates to return (default 5).
+    """
+    if not query or not query.strip():
+        return "ERROR: query is required."
+    data = _api("GET", "/wiki/find", params={"q": query.strip(), "top_k": top_k})
+    if "error" in data:
+        return data["error"]
+    cands = data.get("candidates", [])
+    if not cands:
+        return f"No existing wiki topic matches {query!r}. You may need to import_wiki_doc()."
+    lines = [f"Candidates for {query!r} (top {len(cands)}):"]
+    for c in cands:
+        lines.append(
+            f"- {c['topic_name']}  score={c['score']} (sem={c['sem']} lex={c['lex']})"
+            + (f"  [group: {c['group']}]" if c.get("group") else "")
+        )
+        if c.get("summary"):
+            lines.append(f"  {c['summary'][:180]}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def read_wiki_source(topic_name: str) -> str:
+    """Return the raw markdown of an existing wiki topic so you can review
+    and optionally propose a rewrite."""
+    if not topic_name or not topic_name.strip():
+        return "ERROR: topic_name is required."
+    data = _api("GET", "/wiki/source", params={"topic": topic_name.strip()})
+    if "error" in data:
+        return data["error"]
+    return (
+        f"# {data.get('topic_name', topic_name)}\n"
+        f"# path: {data.get('md_path', '?')}\n"
+        f"# length: {data.get('length', 0)} chars\n\n"
+        + (data.get("content") or "")
+    )
+
+
+@mcp.tool()
+def update_wiki_doc(topic_name: str, content: str, delegate_enrich: bool = True) -> str:
+    """Overwrite an existing wiki topic's .md AND rebuild its index.
+
+    Use this when you've produced an improved version of a topic's content
+    (cleaner structure, fixed typos, new sections). Reuses the same folder
+    so the topic slug, cross-references, and wiki graph edges stay stable.
+
+    Follow-up path (same as import_wiki_doc):
+      - delegate_enrich=True (default): build is parked awaiting_enrich;
+        run submit_enrichments(kind='wiki_chunks') to fill in per-chunk
+        summaries, then kind='wiki_topic' for the topic-level summary.
+
+    Args:
+        topic_name: exact name of an existing wiki topic (from
+            find_wiki_topics or list_wiki_topics).
+        content: the full replacement markdown.
+        delegate_enrich: True = MCP caller enriches; False = backend uses
+            its configured provider.
+    """
+    topic_name = (topic_name or "").strip()
+    content = (content or "").strip()
+    if not topic_name or not content:
+        return "ERROR: topic_name + non-empty content required."
+    data = _api("POST", "/wiki/update", json={
+        "topic_name": topic_name,
+        "content": content,
+        "delegate_enrich": bool(delegate_enrich),
+    }, timeout=300)
+    if "error" in data:
+        return f"Update failed: {data['error']}"
+    inserted = data.get("inserted", 0)
+    msg = data.get("message", "")
+    lines = [f"Wiki '{topic_name}' rewritten: {inserted} chunks re-indexed."]
+    if msg:
+        lines.append(f"- {msg}")
+    if delegate_enrich:
+        lines.append(
+            "Next: call `list_pending_enrichments(kind='wiki_chunks')` and "
+            "`submit_enrichments(...)` to re-enrich the new chunks."
+        )
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def redistill_wiki(topic_name: str) -> str:
+    """Re-run enrichment for an existing wiki WITHOUT changing its .md.
+
+    Clears per-chunk summaries + the topic-level summary + keyword set and
+    flips the build to awaiting_enrich. Embeddings and chunk text are kept,
+    so this is cheap — use it when the original content is fine but you
+    want better classifications/summaries (e.g. after adding new meta-memory
+    vocabulary rules, or switching to a stronger Claude model).
+    """
+    topic_name = (topic_name or "").strip()
+    if not topic_name:
+        return "ERROR: topic_name is required."
+    data = _api("POST", "/wiki/redistill", params={"topic": topic_name}, timeout=30)
+    if "error" in data:
+        return f"Redistill failed: {data['error']}"
+    return (
+        f"Cleared enrichment for '{topic_name}': {data.get('chunks_cleared', 0)} chunks now "
+        f"awaiting summaries across build(s) {data.get('builds_flipped', [])}. "
+        "Call `list_pending_enrichments(kind='wiki_chunks')` to find the work, then "
+        "`submit_enrichments(kind='wiki_chunks', items=[...])`."
+    )
+
+
+@mcp.tool()
+def list_wiki_groups() -> str:
+    """Show wiki topics organized by group. Groups come from the on-disk
+    folder layout (`sn/source/<group>/<topic>/`); topics stored directly
+    under `sn/source/<topic>/` report group = '(ungrouped)'."""
+    data = _api("GET", "/wiki/groups")
+    if "error" in data:
+        return data["error"]
+    groups = data.get("groups", [])
+    if not groups:
+        return "No wiki topics yet."
+    lines = ["Wiki groups:"]
+    for g in groups:
+        label = g["name"] or "(ungrouped)"
+        lines.append(f"\n▸ {label}  ({g['topic_count']} topics)")
+        for t in g["topics"]:
+            lines.append(f"  - {t['topic_name']}")
+            if t.get("summary"):
+                lines.append(f"    {t['summary'][:160]}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def suggest_wiki_groups() -> str:
+    """Propose a grouping for existing wiki topics based on centroid
+    similarity clustering. Returns a reviewable plan; apply via
+    `wiki_reorganize(groups=...)` after editing as needed.
+    """
+    data = _api("POST", "/wiki/suggest-groups", timeout=60)
+    if "error" in data:
+        return data["error"]
+    groups = data.get("groups", [])
+    if not groups:
+        return data.get("note", "No grouping proposal available.")
+    lines = [
+        f"Proposed groups ({len(groups)} clusters, cohesion threshold "
+        f"{data.get('threshold', '?')}):",
+    ]
+    for g in groups:
+        lines.append(
+            f"\n▸ '{g['name']}'  ({len(g['topic_names'])} topics, cohesion {g['avg_cohesion']})"
+        )
+        for n in g["topic_names"]:
+            lines.append(f"  - {n}")
+    lines.append(
+        "\nReview + edit, then call `wiki_reorganize(groups=<plan>)` "
+        "(pass `dry_run=True` first to see the move list)."
+    )
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def find_duplicate_wiki_sources() -> str:
+    """Scan `sn/source/**/*.md|.txt` for files NOT referenced by any chunk
+    in the DB (orphans drifted in across re-imports) and classify each
+    against the imported topics.
+
+    Classes:
+      - identical  — byte-level match → safe to delete
+      - near_dup   — normalized text ≥95% match → safe to delete
+      - subset     — ≥85% of lines already live in an imported topic → delete
+      - similar    — 70-95% but not containment → review manually
+      - distinct   — no strong match → candidate for import_wiki_doc
+      - no_baseline — nothing to compare against
+
+    Review the list, then call `dedupe_wiki_sources(actions=[...])` with
+    the actions you want applied.
+    """
+    data = _api("GET", "/wiki/duplicates", timeout=60)
+    if "error" in data:
+        return data["error"]
+    cands = data.get("candidates", [])
+    if not cands:
+        return "No orphan .md/.txt files under wiki_sources_dir. Clean."
+    # Sort: delete > review > import
+    order = {"delete": 0, "review": 1, "import": 2, "skip": 3, "keep": 4}
+    cands.sort(key=lambda c: (order.get(c.get("suggested_action", ""), 9), c.get("path", "")))
+    lines = [f"Orphan wiki sources ({len(cands)} found):"]
+    for c in cands:
+        action = c.get("suggested_action", "?")
+        mtype = c.get("match_type", "?")
+        sim = c.get("similarity")
+        sim_str = f"  sim={sim}" if sim is not None else ""
+        lines.append(f"\n[{action.upper()}]  {c.get('path')}")
+        lines.append(f"  type={mtype}{sim_str}  size={c.get('size', '?')}B")
+        if c.get("match_topic"):
+            lines.append(f"  best match: '{c['match_topic']}'")
+            if c.get("match_path"):
+                lines.append(f"    {c['match_path']}")
+    lines.append(
+        "\nTo apply: dedupe_wiki_sources(actions=[{path: <p>, action: "
+        "'delete' | 'keep' | 'import'}, ...], dry_run=True/False)"
+    )
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def dedupe_wiki_sources(actions: list[dict], dry_run: bool = True) -> str:
+    """Apply a list of dedup actions to orphan wiki source files.
+
+    Each item: `{path: str, action: 'delete' | 'keep' | 'import'}`
+      - delete — unlink the file; prune emptied parent dirs under wiki_sources_dir
+      - keep   — no-op; explicit acknowledgement for audit
+      - import — not yet wired; use `import_wiki_doc(local_path=..., topic_name=...)`
+                 directly for distinct orphans
+
+    Args:
+        actions: list of per-file action dicts.
+        dry_run: True (default) returns the plan without touching the filesystem.
+    """
+    if not actions:
+        return "ERROR: actions list required."
+    data = _api("POST", "/wiki/dedupe", json={
+        "actions": actions,
+        "dry_run": bool(dry_run),
+    }, timeout=60)
+    if "error" in data:
+        return data["error"]
+    lines = []
+    if data.get("dry_run"):
+        lines.append(f"Dry-run: {len(data.get('applied', []))} actions would succeed.")
+    else:
+        lines.append(f"Applied {len(data.get('applied', []))} actions.")
+    for a in data.get("applied", []):
+        hint = a.get("would") or a.get("noted") or "done"
+        lines.append(f"  ✓ {a.get('action')}: {a.get('path')}  [{hint}]")
+    for e in data.get("errors", []):
+        lines.append(f"  ✗ {e.get('action', '?')}: {e.get('path', '?')} — {e.get('error')}")
+    for s in data.get("skipped", []):
+        lines.append(f"  — {s.get('action', '?')}: {s.get('path', '?')} — {s.get('reason')}")
+    if data.get("dry_run"):
+        lines.append("\nRun with dry_run=False to execute.")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def flatten_wiki_layout(topic_names: Optional[list[str]] = None, dry_run: bool = True) -> str:
+    """Collapse single-.md topic subdirectories into group-level files.
+
+    Typical flow: after `wiki_reorganize(...)`, most topics land as
+    `<group>/<topic>/<topic>.md` — the extra `<topic>/` layer is redundant
+    when there's only one .md and no other assets. This tool collapses
+    eligible topics to `<group>/<topic>.md` and removes the empty dir.
+
+    Skipped automatically (never destructive):
+      - Topics with multiple .md files
+      - Topics with PDFs, images, or any non-.md assets
+      - Destinations that would collide with an existing file
+
+    Args:
+        topic_names: restrict to these; None = process every wiki topic.
+        dry_run: True (default) returns the plan without touching anything.
+    """
+    data = _api("POST", "/wiki/flatten", json={
+        "topic_names": topic_names or [],
+        "dry_run": bool(dry_run),
+    }, timeout=60)
+    if "error" in data:
+        return f"Flatten failed: {data['error']}"
+
+    if data.get("dry_run"):
+        plan = data.get("plan", [])
+        skipped = data.get("skipped", [])
+        lines = [f"Dry-run: {len(plan)} topics can be flattened, {len(skipped)} skipped."]
+        for p in plan:
+            lines.append(f"  '{p['topic']}'")
+            lines.append(f"    {p['from_md']}")
+            lines.append(f"    → {p['to_md']}")
+        if skipped:
+            lines.append("\nSkipped:")
+            for s in skipped:
+                lines.append(f"  '{s['topic']}': {s['reason']}")
+        lines.append("\nRun with dry_run=False to execute.")
+        return "\n".join(lines)
+
+    applied = data.get("applied", [])
+    skipped = data.get("skipped", [])
+    errors = data.get("errors", [])
+    lines = [f"Flattened {len(applied)} topics. {len(errors)} errors, {len(skipped)} skipped."]
+    for p in applied:
+        lines.append(f"  ✓ '{p['topic']}' → {p['to_md']}")
+    for e in errors:
+        lines.append(f"  ✗ '{e['topic']}': {e.get('error', 'unknown')}")
+    for s in skipped:
+        lines.append(f"  — '{s['topic']}': {s['reason']}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def wiki_reorganize(groups: list[dict], dry_run: bool = False) -> str:
+    """Apply a wiki-grouping plan: physically moves each topic folder under
+    its group's parent dir in iCloud, and updates DB paths so retrieval
+    keeps working transparently.
+
+    Args:
+        groups: list of `{name: str, topic_names: [str, ...]}` entries.
+            Topics not mentioned are left alone. Groups whose name matches
+            an existing top-level dir merge into it.
+        dry_run: when True, returns the planned moves without touching
+            filesystem or DB. ALWAYS recommended on the first call.
+    """
+    if not groups:
+        return "ERROR: groups list is required."
+    data = _api("POST", "/wiki/reorganize", json={
+        "groups": groups,
+        "dry_run": bool(dry_run),
+    }, timeout=120)
+    if "error" in data:
+        return f"Reorganize failed: {data['error']}"
+
+    if data.get("dry_run"):
+        moves = data.get("moves", [])
+        warnings = data.get("warnings", [])
+        lines = [f"Dry-run: {len(moves)} moves planned."]
+        for m in moves:
+            lines.append(f"  '{m['topic_name']}' → group '{m['group']}'")
+            lines.append(f"    {m['from']}\n    → {m['to']}")
+        for w in warnings:
+            lines.append(f"  ⚠ {w}")
+        lines.append("\nRun again with dry_run=False to execute.")
+        return "\n".join(lines)
+
+    applied = data.get("applied", [])
+    errors = data.get("errors", [])
+    warnings = data.get("warnings", [])
+    cleanup = data.get("cleanup_hints", [])
+    lines = [f"Applied {len(applied)} moves. {len(errors)} errors, {len(warnings)} warnings."]
+    for m in applied:
+        lines.append(f"  ✓ '{m['topic_name']}' → '{m['group']}'")
+    for e in errors:
+        lines.append(f"  ✗ '{e['topic_name']}': {e.get('error', 'unknown')}")
+    for w in warnings:
+        lines.append(f"  ⚠ {w}")
+    if cleanup:
+        lines.append(
+            f"\n💡 {len(cleanup)} orphan file(s) look like duplicates of imported topics:"
+        )
+        for c in cleanup[:10]:
+            lines.append(
+                f"  - {c['path']}  "
+                f"[{c.get('match_type')}→{c.get('match_topic', '?')}"
+                f"  sim={c.get('similarity')}]"
+            )
+        if len(cleanup) > 10:
+            lines.append(f"  ... and {len(cleanup) - 10} more")
+        lines.append(
+            "  Call `find_duplicate_wiki_sources()` for full list + `dedupe_wiki_sources(...)` to clean up."
+        )
+    return "\n".join(lines)
+
+
 # ── Tool: Import wiki document ──
 
 @mcp.tool()
@@ -921,7 +1299,14 @@ def import_wiki_doc(
     local_path: Optional[str] = None,
     delegate_enrich: bool = True,
 ) -> str:
-    """Import a document as a wiki topic into SmartNote's knowledge base.
+    """Import a document as a NEW wiki topic into SmartNote's knowledge base.
+
+    ⚠ Before calling this, check whether the user means to OPTIMIZE an
+    existing topic rather than create a new one. Call `find_wiki_topics(query)`
+    first; if a good match exists, prefer `update_wiki_doc(topic_name, ...)`
+    (overwrite+reindex) or `redistill_wiki(topic_name)` (re-enrich without
+    changing content). This keeps the wiki graph stable and avoids
+    duplicates.
 
     Provide the document in ONE of three ways (pick one):
     1. content — pass the full markdown text directly (best for generated or small docs)
