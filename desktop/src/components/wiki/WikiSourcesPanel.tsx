@@ -1,26 +1,46 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronDown, RefreshCw, FileText } from "lucide-react";
+import {
+  ChevronDown,
+  RefreshCw,
+  FileText,
+  BookOpen,
+  FileSearch,
+  Code,
+  Archive,
+} from "lucide-react";
 import { cn } from "@/lib/cn";
 import * as api from "@/lib/api";
+import type { WikiCategory } from "@/lib/api";
 
 /**
- * Source panel — lists every wiki document grouped by its immediate parent
- * folder under `sn/source/`. Each group header is collapsible.
- *
- * Design choices (Linear/Notion quiet hierarchy):
- * - No icons on file rows; group header carries the whole visual weight.
- * - Expand state persisted to localStorage so reloads survive.
- * - Alphabetical sort on groups AND files — stable scanning.
+ * Source panel — lists every wiki document grouped by its real
+ * WikiCategory (research / codebase / docs / reference). Filesystem
+ * folder layout is not used for grouping: the server-stored category
+ * from tag_segments drives the hierarchy so the UI matches what the
+ * Wiki page shows.
  */
 
-const STORAGE_KEY = "wiki-sources-collapsed";
+const STORAGE_KEY = "wiki-sources-collapsed-cat";
+
+const CATEGORY_META: Record<
+  WikiCategory,
+  { label: string; icon: typeof BookOpen }
+> = {
+  research: { label: "Research", icon: FileSearch },
+  codebase: { label: "Codebase", icon: Code },
+  docs: { label: "Docs", icon: BookOpen },
+  reference: { label: "Reference", icon: Archive },
+};
+const CATEGORY_ORDER: WikiCategory[] = ["research", "codebase", "docs", "reference"];
 
 type Props = {
   onSelectSource: (absolutePath: string) => void;
 };
 
 type Group = {
-  name: string;     // "" for root-level orphans
+  key: WikiCategory;
+  label: string;
+  icon: typeof BookOpen;
   files: api.WikiSource[];
 };
 
@@ -42,41 +62,25 @@ function stripExt(name: string): string {
   return name.replace(/\.(md|txt|markdown)$/i, "");
 }
 
-function groupByFolder(sources: api.WikiSource[], baseDir: string): Group[] {
-  const buckets: Record<string, api.WikiSource[]> = {};
-  const rootFiles: api.WikiSource[] = [];
-
+function groupByCategory(sources: api.WikiSource[]): Group[] {
+  const buckets: Partial<Record<WikiCategory, api.WikiSource[]>> = {};
   for (const s of sources) {
-    const rel = s.rel_path ?? stripBase(s.path, baseDir);
-    const segs = rel.split("/").filter(Boolean);
-    if (segs.length <= 1) {
-      rootFiles.push(s);
-    } else {
-      (buckets[segs[0]] ||= []).push(s);
-    }
+    const cat = (s.category || "reference") as WikiCategory;
+    (buckets[cat] ||= []).push(s);
   }
-
   const cmp = (a: api.WikiSource, b: api.WikiSource) => a.name.localeCompare(b.name);
-  const folderGroups = Object.entries(buckets)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([name, files]) => ({ name, files: files.sort(cmp) }));
-
-  // Root files go into an unnamed group shown at the top, if any.
-  const result: Group[] = [];
-  if (rootFiles.length > 0) result.push({ name: "", files: rootFiles.sort(cmp) });
-  result.push(...folderGroups);
-  return result;
-}
-
-function stripBase(path: string, baseDir: string): string {
-  if (!baseDir) return path;
-  const b = baseDir.endsWith("/") ? baseDir : baseDir + "/";
-  return path.startsWith(b) ? path.slice(b.length) : path;
+  return CATEGORY_ORDER
+    .filter((k) => (buckets[k]?.length ?? 0) > 0)
+    .map((k) => ({
+      key: k,
+      label: CATEGORY_META[k].label,
+      icon: CATEGORY_META[k].icon,
+      files: [...(buckets[k] as api.WikiSource[])].sort(cmp),
+    }));
 }
 
 export function WikiSourcesPanel({ onSelectSource }: Props) {
   const [sources, setSources] = useState<api.WikiSource[]>([]);
-  const [baseDir, setBaseDir] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => loadCollapsed());
@@ -87,7 +91,6 @@ export function WikiSourcesPanel({ onSelectSource }: Props) {
     api.fetchWikiSources()
       .then((d) => {
         setSources(d.sources);
-        setBaseDir(d.base_dir || "");
         setLoading(false);
       })
       .catch((e) => {
@@ -99,13 +102,13 @@ export function WikiSourcesPanel({ onSelectSource }: Props) {
   useEffect(() => { load(); }, [load]);
   useEffect(() => { saveCollapsed(collapsed); }, [collapsed]);
 
-  const groups = useMemo(() => groupByFolder(sources, baseDir), [sources, baseDir]);
+  const groups = useMemo(() => groupByCategory(sources), [sources]);
 
-  const toggle = useCallback((name: string) => {
+  const toggle = useCallback((key: string) => {
     setCollapsed((prev) => {
       const next = new Set(prev);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   }, []);
@@ -130,10 +133,12 @@ export function WikiSourcesPanel({ onSelectSource }: Props) {
 
       {totalFiles > 0 && (
         <p className="proto-dashboard-lead">
+          <strong>SN</strong>
+          <span className="proto-dashboard-lead-sep">·</span>
           <strong>{totalFiles}</strong> {totalFiles === 1 ? "document" : "documents"}
           <span className="proto-dashboard-lead-sep">·</span>
-          <strong>{groups.filter((g) => g.name !== "").length}</strong>{" "}
-          {groups.filter((g) => g.name !== "").length === 1 ? "category" : "categories"}
+          <strong>{groups.length}</strong>{" "}
+          {groups.length === 1 ? "category" : "categories"}
         </p>
       )}
 
@@ -147,28 +152,28 @@ export function WikiSourcesPanel({ onSelectSource }: Props) {
 
       <div className="proto-source-groups">
         {groups.map((g) => {
-          const isCollapsed = g.name !== "" && collapsed.has(g.name);
+          const Icon = g.icon;
+          const isCollapsed = collapsed.has(g.key);
           return (
-            <section key={g.name || "__root__"} className="proto-source-group">
-              {g.name !== "" && (
-                <button
-                  type="button"
-                  onClick={() => toggle(g.name)}
-                  className="proto-source-group-header"
-                  aria-expanded={!isCollapsed}
-                >
-                  <ChevronDown
-                    size={13}
-                    strokeWidth={2.2}
-                    className={cn(
-                      "proto-source-group-chevron",
-                      isCollapsed && "proto-source-group-chevron-collapsed",
-                    )}
-                  />
-                  <span className="proto-source-group-name">{g.name}</span>
-                  <span className="proto-source-group-count">{g.files.length}</span>
-                </button>
-              )}
+            <section key={g.key} className="proto-source-group">
+              <button
+                type="button"
+                onClick={() => toggle(g.key)}
+                className="proto-source-group-header"
+                aria-expanded={!isCollapsed}
+              >
+                <ChevronDown
+                  size={13}
+                  strokeWidth={2.2}
+                  className={cn(
+                    "proto-source-group-chevron",
+                    isCollapsed && "proto-source-group-chevron-collapsed",
+                  )}
+                />
+                <Icon size={13} strokeWidth={2} className="proto-source-row-icon" />
+                <span className="proto-source-group-name">{g.label}</span>
+                <span className="proto-source-group-count">{g.files.length}</span>
+              </button>
               {!isCollapsed && (
                 <ul className="proto-source-list">
                   {g.files.map((f) => (
