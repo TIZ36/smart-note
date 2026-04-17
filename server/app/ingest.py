@@ -30,6 +30,43 @@ def _find_build_for_source(raw_file: str) -> str | None:
             (raw_file,),
         ).fetchone()
     return r["id"] if r else None
+
+
+def _copy_build_data(old_id: str, new_id: str, source_file: str) -> None:
+    """Copy chunks and tag_segments from old_id to new_id for source_file.
+
+    This is the copy-on-write step for incremental ingest: the old build is
+    preserved as a clean snapshot while the new build inherits all its data
+    before incremental changes are applied.
+    """
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO chunks
+              (build_id, source_file, source_ref, text, text_segmented,
+               dimension, project_slug, embedding_json, keywords_json,
+               entities_json, ai_summary, content_hash, note_ts)
+            SELECT ?, source_file, source_ref, text, text_segmented,
+               dimension, project_slug, embedding_json, keywords_json,
+               entities_json, ai_summary, content_hash, note_ts
+            FROM chunks WHERE build_id = ? AND source_file = ?
+            """,
+            (new_id, old_id, source_file),
+        )
+        conn.execute(
+            """
+            INSERT INTO tag_segments
+              (build_id, source_file, tag, topic_name, line_start, line_end,
+               summary, keywords_json, entities_json, is_credential, centroid_json)
+            SELECT ?, source_file, tag, topic_name, line_start, line_end,
+               summary, keywords_json, entities_json, is_credential, centroid_json
+            FROM tag_segments WHERE build_id = ? AND source_file = ?
+            """,
+            (new_id, old_id, source_file),
+        )
+        conn.commit()
+
+
 from app.embed import embed_texts
 from app.tokenizer import segment
 from app.ai_enrich import classify_lines
@@ -284,11 +321,16 @@ def ingest_raw(raw_path: str, note_path: str, reset: bool = False, ai_delegate: 
                     sys.stderr.flush()
         except Exception:
             pass
-        build_id = create_build(str(raw_file))
+        build_id = create_build(str(raw_file), kind="full")
         _progress("parse", 0, 0, f"New build {build_id}")
     else:
-        build_id = _find_build_for_source(str(raw_file)) or create_build(str(raw_file))
-        _progress("parse", 0, 0, f"Appending to build {build_id}")
+        old_build_id = _find_build_for_source(str(raw_file))
+        build_id = create_build(str(raw_file), kind="incremental")
+        if old_build_id:
+            _progress("parse", 0, 0, f"Branching {old_build_id} → {build_id}")
+            _copy_build_data(old_build_id, build_id, str(raw_file))
+        else:
+            _progress("parse", 0, 0, f"New build {build_id}")
 
     if reset:
         _progress("parse", 0, 0, "Creating snapshot before rebuild...")

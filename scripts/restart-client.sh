@@ -9,16 +9,30 @@ echo "=== SmartNote Client Restart ==="
 
 MODE="${1:-dev}"
 
-# 1. Install/update npm dependencies
+# 1. Install/update npm deps (hash-skip on package.json + package-lock.json)
 echo "[1/3] Checking dependencies..."
-if [ ! -d "node_modules" ]; then
-    echo "  Installing..."
-    npm install
-elif [ package.json -nt node_modules/.package-lock.json ] 2>/dev/null; then
-    echo "  Updating..."
-    npm install
+PKG_HASH_FILE="node_modules/.pkg.sha"
+if [ -f "package-lock.json" ]; then
+    CURRENT_PKG_HASH=$(shasum -a 256 package.json package-lock.json | shasum -a 256 | awk '{print $1}')
 else
-    echo "  Dependencies up to date"
+    CURRENT_PKG_HASH=$(shasum -a 256 package.json | awk '{print $1}')
+fi
+STORED_PKG_HASH=$(cat "$PKG_HASH_FILE" 2>/dev/null || echo "")
+
+if [ ! -d "node_modules" ]; then
+    echo "  Installing (first time, 60-120s)..."
+    npm install
+    echo "$CURRENT_PKG_HASH" > "$PKG_HASH_FILE"
+elif [ "$CURRENT_PKG_HASH" != "$STORED_PKG_HASH" ]; then
+    echo "  Updating..."
+    if [ -f "package-lock.json" ]; then
+        npm ci
+    else
+        npm install
+    fi
+    echo "$CURRENT_PKG_HASH" > "$PKG_HASH_FILE"
+else
+    echo "  Dependencies up to date (hash match)"
 fi
 
 # 2. Kill old client processes

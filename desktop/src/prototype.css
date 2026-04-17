@@ -765,30 +765,38 @@
   letter-spacing: 0.02em;
 }
 
+.proto-nav-subitem {
+  padding-left: 34px;
+  font-size: 12.5px;
+  color: var(--color-text-muted);
+}
+
+.proto-nav-subitem svg {
+  width: 13px;
+  height: 13px;
+}
+
+.proto-nav-section-start {
+  margin-top: 18px;
+}
+
 
 .proto-sidebar-footer {
   padding: 8px 12px 12px;
 }
 
-.proto-sidebar-status {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 12px;
-  font-size: 11px;
-  color: var(--color-text-muted);
-}
-
 .proto-status-dot {
-  width: 5px;
-  height: 5px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: var(--color-success);
   flex-shrink: 0;
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-success) 18%, transparent);
 }
 
 .proto-status-dot-offline {
   background: var(--color-danger);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-danger) 18%, transparent);
 }
 
 .proto-nav-badge {
@@ -2082,6 +2090,26 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   font-weight: 500;
 }
 
+.proto-version-kind {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 5px;
+  border-radius: 3px;
+  letter-spacing: 0.02em;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.proto-version-kind-full {
+  color: var(--color-text-muted);
+  background: color-mix(in oklab, var(--color-text-muted) 10%, var(--color-bg-primary));
+}
+
+.proto-version-kind-incremental {
+  color: var(--color-accent);
+  background: color-mix(in oklab, var(--color-accent) 10%, var(--color-bg-primary));
+}
+
 /* Build attribution / enrich status badges —
    Quiet by default (muted text). Color is reserved for states that need
    attention: 'awaiting' (warning), 'stuck' (danger). Attribution
@@ -2184,6 +2212,24 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   letter-spacing: 0.01em;
 }
 
+.proto-section-label-count {
+  margin-left: 8px;
+  font-weight: 400;
+  color: var(--color-text-muted);
+  opacity: 0.65;
+  font-variant-numeric: tabular-nums;
+}
+
+.proto-code {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.92em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--color-bg-hover);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+}
+
 /* ── Dashboard panel ─────────────────────────────────────────── */
 .proto-dashboard {
   flex: 1;
@@ -2213,6 +2259,33 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   color: var(--color-danger);
   font-size: 13px;
   margin: 0 0 24px;
+}
+
+/* System health chips — at-a-glance gateway + embedding status.
+   Relocated from sidebar footer; lives above the dashboard lead. */
+.proto-dashboard-health {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 20px;
+}
+.proto-health-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  font-size: 12px;
+  background: var(--color-bg-hover);
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.proto-health-chip .proto-health-label {
+  letter-spacing: 0.01em;
+}
+.proto-health-chip strong {
+  color: var(--color-text-primary);
+  font-weight: 500;
 }
 
 /* Narrative lead: one prose-ish line of context. Replaces the 8-tile
@@ -2381,8 +2454,8 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 
 /* ── Source panel (Wiki → Source) ────────────────────────────
    Grouped list of wiki documents. Group headers are collapsible;
-   each folder under sn/source/ becomes one category. Typographic
-   hierarchy only — no badges, no color-coding. */
+   each group is one WikiCategory (research/codebase/docs/reference).
+   Typographic hierarchy only — no badges, no color-coding. */
 .proto-source-groups {
   display: flex;
   flex-direction: column;
@@ -2494,7 +2567,7 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   font-size: 12px;
   color: var(--color-text-muted);
   margin: 6px 0 0;
-  max-width: 560px;
+  max-width: 62ch;
   line-height: 1.5;
 }
 
@@ -2551,6 +2624,7 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 .proto-meta-add-scope {
   flex: 1;
   min-width: 0;
+  max-width: 180px;
 }
 
 .proto-meta-add-select:focus,
@@ -2611,32 +2685,32 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 
 .proto-meta-kind-rule {
   color: var(--color-accent);
-  border-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
-  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+  border-color: color-mix(in oklab, var(--color-accent) 30%, transparent);
+  background: color-mix(in oklab, var(--color-accent) 10%, transparent);
 }
 
 .proto-meta-kind-vocab {
-  color: #4a8f5f;
-  border-color: color-mix(in srgb, #4a8f5f 30%, transparent);
-  background: color-mix(in srgb, #4a8f5f 8%, transparent);
+  color: var(--color-success);
+  border-color: color-mix(in oklab, var(--color-success) 30%, transparent);
+  background: color-mix(in oklab, var(--color-success) 10%, transparent);
 }
 
 .proto-meta-kind-alias {
-  color: #7a5cb0;
-  border-color: color-mix(in srgb, #7a5cb0 30%, transparent);
-  background: color-mix(in srgb, #7a5cb0 8%, transparent);
+  color: var(--color-wiki);
+  border-color: color-mix(in oklab, var(--color-wiki) 30%, transparent);
+  background: color-mix(in oklab, var(--color-wiki) 10%, transparent);
 }
 
 .proto-meta-kind-preference {
-  color: #b07a3f;
-  border-color: color-mix(in srgb, #b07a3f 30%, transparent);
-  background: color-mix(in srgb, #b07a3f 8%, transparent);
+  color: var(--color-warning);
+  border-color: color-mix(in oklab, var(--color-warning) 30%, transparent);
+  background: color-mix(in oklab, var(--color-warning) 10%, transparent);
 }
 
 .proto-meta-kind-gotcha {
   color: var(--color-danger);
-  border-color: color-mix(in srgb, var(--color-danger) 30%, transparent);
-  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+  border-color: color-mix(in oklab, var(--color-danger) 30%, transparent);
+  background: color-mix(in oklab, var(--color-danger) 10%, transparent);
 }
 
 .proto-meta-scope {
@@ -2678,7 +2752,12 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 
 .proto-meta-delete:hover:not(:disabled) {
   color: var(--color-danger);
-  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+  background: color-mix(in oklab, var(--color-danger) 10%, transparent);
+}
+
+.proto-meta-delete:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
 }
 
 .proto-meta-delete:disabled {
@@ -4216,4 +4295,2028 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 .proto-source-skeleton {
   height: 36px;
   background: var(--color-bg-primary);
+}
+
+/* ── Insights page ───────────────────────────────────────────────
+   Merges the old Dashboard + Meta-memory. Emphasis on action items
+   over vanity stats. Resolve buttons land concretely; advisory items
+   explain the "why" so users understand what they're being shown. */
+
+.proto-insight-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-proto);
+  margin-bottom: 28px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  flex-wrap: wrap;
+}
+.proto-insight-status-sep {
+  color: var(--color-text-muted);
+  opacity: 0.5;
+}
+.proto-insight-status-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.proto-insight-status-item strong {
+  color: var(--color-text-primary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Action group — collapsible card with header + body. Warn variant
+   nudges attention to conflicts without screaming. */
+.proto-insight-group {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-proto);
+  margin-bottom: 12px;
+  background: var(--color-bg-surface);
+  overflow: hidden;
+}
+.proto-insight-group--warn {
+  border-color: color-mix(in oklab, var(--color-warning, #d97706) 40%, var(--color-border));
+}
+.proto-insight-group-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 16px;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+  color: var(--color-text-primary);
+  transition: background 0.12s;
+}
+.proto-insight-group-header:hover {
+  background: color-mix(in oklab, var(--color-accent) 4%, transparent);
+}
+.proto-insight-group-icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 20px;
+  color: var(--color-text-secondary);
+}
+.proto-insight-group--warn .proto-insight-group-icon {
+  color: var(--color-warning, #d97706);
+}
+.proto-insight-group-head-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.proto-insight-group-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+.proto-insight-group-subtitle {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+.proto-insight-group-chev {
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+.proto-insight-group-body {
+  padding: 4px 16px 16px 52px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-primary);
+}
+
+.proto-insight-why,
+.proto-insight-action-hint {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+  margin: 14px 0 10px;
+}
+.proto-insight-why strong {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+.proto-insight-action-hint {
+  color: var(--color-text-muted);
+}
+
+.proto-insight-items {
+  list-style: none;
+  padding: 0;
+  margin: 10px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Compact informational row — used for splits, gaps, enrich list */
+.proto-insight-row-compact {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 12px;
+  border-bottom: 1px dashed color-mix(in oklab, var(--color-border) 60%, transparent);
+  color: var(--color-text-secondary);
+}
+.proto-insight-row-compact:last-child {
+  border-bottom: 0;
+}
+.proto-insight-row-primary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-primary);
+}
+.proto-insight-row-trailing {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+.proto-insight-row-more {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+/* Conflict row — side-by-side + inline preview + 3 resolve buttons */
+.proto-insight-conflict {
+  list-style: none;
+  padding: 14px;
+  margin-bottom: 10px;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-proto);
+}
+.proto-insight-conflict:last-child {
+  margin-bottom: 0;
+}
+.proto-insight-conflict-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+.proto-insight-conflict-loc {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.proto-insight-preview-toggle {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: var(--color-accent);
+  cursor: pointer;
+  font-size: 11px;
+}
+.proto-insight-preview-toggle:hover {
+  text-decoration: underline;
+}
+.proto-insight-preview {
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-proto);
+  padding: 10px 12px;
+  margin: 0 0 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--color-text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.proto-insight-conflict-sides {
+  display: flex;
+  gap: 14px;
+  align-items: stretch;
+  margin-bottom: 14px;
+}
+.proto-insight-side {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.proto-insight-side-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+}
+.proto-insight-side-body {
+  font-size: 12px;
+  color: var(--color-text-primary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.proto-insight-side-summary {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  margin: 4px 0 0;
+  line-height: 1.5;
+}
+.proto-insight-side-divider {
+  width: 1px;
+  background: var(--color-border);
+  align-self: stretch;
+}
+
+.proto-insight-conflict-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Meta-memory footer controls */
+.proto-insight-meta-footer {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+/* Stats collapsed section */
+.proto-insight-stats-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: 0;
+  padding: 6px 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.proto-insight-stats-toggle:hover {
+  color: var(--color-text-secondary);
+}
+.proto-insight-stats-body {
+  margin-top: 12px;
+  padding: 14px;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-proto);
+}
+
+/* ── Workflows panel ────────────────────────────────────────────
+   Read-only skill templates. No node editing, no flow construction. The
+   visualization is a linear chain (most workflows are) with simple
+   connectors. Trigger creates a pending run that Claude picks up via MCP. */
+
+.proto-workflow-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.proto-workflow-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-proto);
+  background: var(--color-bg-surface);
+  overflow: hidden;
+}
+
+.proto-workflow-card-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 16px;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+  color: var(--color-text-primary);
+  transition: background 0.12s;
+}
+.proto-workflow-card-header:hover {
+  background: color-mix(in oklab, var(--color-accent) 4%, transparent);
+}
+.proto-workflow-card-chev {
+  color: var(--color-text-muted);
+  padding-top: 3px;
+  flex-shrink: 0;
+}
+.proto-workflow-card-head-text {
+  flex: 1;
+  min-width: 0;
+}
+.proto-workflow-card-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.proto-workflow-card-title code {
+  font-weight: 600;
+  font-size: 13px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+}
+.proto-workflow-meta {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  text-transform: lowercase;
+  overflow-wrap: anywhere;
+}
+.proto-workflow-card-desc {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+.proto-workflow-card-run-count {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  padding-top: 3px;
+}
+
+.proto-workflow-card-body {
+  /* Slimmer than the default 16px — the stepper inside already carries
+     its own internal rhythm; extra padding here was wasted air. */
+  padding: 12px 14px 14px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-primary);
+}
+
+/* ── Step flow (stepper, not card grid) ───────────────────────
+   The expanded skill used to render each step as a bordered card with
+   generous padding, which piled into a tall sparse column. We switched
+   to a left-rail stepper: one thin accent line threads through all
+   step numbers, dashed separators mark boundaries, no per-step box. */
+
+.proto-workflow-flow {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 2px 0 14px;
+  /* Room on the left for the number column + vertical rail. */
+  padding: 4px 0 4px 30px;
+}
+
+/* Rail connecting all step numbers — subtle accent tint, shortened
+   slightly at top/bottom so it doesn't crash into the first/last
+   number badge. */
+.proto-workflow-flow::before {
+  content: "";
+  position: absolute;
+  left: 13px;
+  top: 14px;
+  bottom: 14px;
+  width: 1px;
+  background: color-mix(in oklab, var(--color-accent) 28%, var(--color-border));
+  border-radius: 1px;
+}
+
+.proto-workflow-node-wrap {
+  position: relative;
+  padding: 10px 0;
+}
+.proto-workflow-node-wrap + .proto-workflow-node-wrap {
+  border-top: 1px dashed color-mix(in oklab, var(--color-border) 55%, transparent);
+}
+
+/* No per-step container chrome — the rail + dashed dividers do the
+   grouping work. This alone halves vertical footprint for long lists. */
+.proto-workflow-node {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
+.proto-workflow-node-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+/* Number sits on the rail (absolute in the reserved 30px left padding). */
+.proto-workflow-node-idx {
+  position: absolute;
+  left: 3px;
+  top: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  color: var(--color-bg-primary);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  /* Ring so the number "cuts" the rail cleanly rather than sitting on top. */
+  box-shadow: 0 0 0 3px var(--color-bg-primary);
+}
+
+.proto-workflow-node-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--color-text-primary);
+  flex: 1 1 auto;
+  min-width: 0;
+  /* Truncate long step names so one row never exceeds one line. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.proto-workflow-node-tag {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--color-accent);
+  font-family: var(--font-mono);
+}
+
+.proto-workflow-node-desc {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  line-height: 1.55;
+  margin: 4px 0 0;
+  /* CJK-safe wrapping without forcing mid-character breaks. */
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.proto-workflow-node-hints {
+  display: flex;
+  gap: 5px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+.proto-workflow-node-hints code {
+  font-size: 10px;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
+
+/* Connector span in the JSX is now redundant — the rail handles it. */
+.proto-workflow-connector { display: none; }
+
+/* Trigger bar */
+.proto-workflow-trigger {
+  padding: 12px;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-proto);
+  margin-bottom: 16px;
+}
+.proto-workflow-trigger-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.proto-workflow-trigger-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+.proto-workflow-trigger-input {
+  width: 60px;
+  padding: 4px 6px;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-proto);
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-align: right;
+}
+
+.proto-workflow-bundle-preview {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-proto);
+}
+.proto-workflow-bundle-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+.proto-workflow-bundle-head > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Status badges */
+.proto-workflow-status {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  border: 1px solid transparent;
+}
+.proto-workflow-status--pending_exec {
+  color: var(--color-warning, #d97706);
+  border-color: color-mix(in oklab, var(--color-warning, #d97706) 40%, transparent);
+  background: color-mix(in oklab, var(--color-warning, #d97706) 8%, transparent);
+}
+.proto-workflow-status--completed {
+  color: var(--color-accent);
+  border-color: color-mix(in oklab, var(--color-accent) 40%, transparent);
+  background: color-mix(in oklab, var(--color-accent) 8%, transparent);
+}
+.proto-workflow-status--skipped {
+  color: var(--color-text-muted);
+  border-color: var(--color-border);
+}
+
+/* Recent runs */
+.proto-workflow-runs {
+  margin-top: 18px;
+}
+.proto-workflow-runs-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+}
+.proto-workflow-run-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 6px 0;
+  font-size: 12px;
+  border-bottom: 1px dashed color-mix(in oklab, var(--color-border) 60%, transparent);
+}
+.proto-workflow-run-row:last-child {
+  border-bottom: 0;
+}
+.proto-workflow-run-id {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+  min-width: 32px;
+}
+.proto-workflow-run-slice {
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.proto-workflow-run-summary {
+  color: var(--color-text-secondary);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.proto-workflow-icon-ok { color: var(--color-accent); }
+.proto-workflow-icon-skip { color: var(--color-text-muted); }
+.proto-workflow-icon-pending { color: var(--color-warning, #d97706); }
+
+/* ── Per-line meta widget (ts gutter on the right) ───────────────
+   Rendered inside CodeMirror as an inline widget at each line end, floated
+   right so it doesn't compete with content for horizontal space. Dimmed
+   by default; brightens on hover so it stays out of the way while reading. */
+.cm-line-meta {
+  float: right;
+  margin-left: 14px;
+  padding-right: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-text-muted);
+  opacity: 0.5;
+  transition: opacity 0.12s;
+  user-select: none;
+  pointer-events: auto;
+}
+.cm-line:hover .cm-line-meta {
+  opacity: 0.9;
+}
+.cm-line-meta-ts {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+/* .cm-line-meta-bookmark removed — bookmarks now render in the left
+   gutter via .cm-bookmark-marker. Kept here as a breadcrumb: the class
+   name is no longer emitted by LineMetaWidget. */
+.cm-line-meta-highlight {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+
+/* ── Pack badge + diff panel ───────────────────────────────────
+   Floating chip bottom-right of the note editor. Expands to a panel
+   with one row per pending pack; each row is collapsible to reveal
+   per-line diff. Whole diff row is click-to-jump.
+
+   Motion: short ease-out-quart, honors prefers-reduced-motion. */
+
+.proto-note-editor-area {
+  position: relative;   /* positioning context for the floating badge */
+}
+
+.proto-pack-badge-wrap {
+  position: absolute;
+  right: 20px;
+  bottom: 20px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  pointer-events: none;
+}
+.proto-pack-badge-wrap > * { pointer-events: auto; }
+
+/* Badge itself ------------------------------------------------- */
+.proto-pack-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  box-shadow: 0 6px 18px -10px rgba(0, 0, 0, 0.45);
+  transition: transform 140ms cubic-bezier(0.25, 1, 0.5, 1),
+              border-color 140ms,
+              color 140ms;
+}
+.proto-pack-badge:hover {
+  transform: translateY(-1px);
+  color: var(--color-text-primary);
+  border-color: color-mix(in oklab, var(--color-accent) 35%, var(--color-border));
+}
+.proto-pack-badge:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-accent) 25%, transparent);
+}
+.proto-pack-badge-active {
+  border-color: color-mix(in oklab, var(--color-warning, #d97706) 45%, var(--color-border));
+  color: var(--color-text-primary);
+}
+/* When the panel is open, tie the badge visually to the panel via an
+   accent ring — so users don't lose track of which badge is tethered. */
+.proto-pack-badge-wrap-open .proto-pack-badge {
+  border-color: var(--color-accent);
+  color: var(--color-text-primary);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-accent) 22%, transparent);
+}
+.proto-pack-badge-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  padding: 1px 7px;
+  background: var(--color-accent);
+  color: var(--color-bg-primary);
+  border-radius: 999px;
+  line-height: 1.4;
+}
+.proto-pack-badge-active .proto-pack-badge-count {
+  background: var(--color-warning, #d97706);
+}
+
+/* Expanded panel ---------------------------------------------- */
+.proto-pack-panel {
+  width: 420px;
+  max-width: calc(100vw - 40px);
+  max-height: min(520px, calc(100vh - 120px));
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-proto);
+  box-shadow: 0 18px 42px -18px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+  transform-origin: bottom right;
+}
+
+.proto-pack-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 12px 8px 16px;
+}
+.proto-pack-panel-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--color-text-primary);
+  letter-spacing: -0.002em;
+}
+.proto-pack-panel-title > svg {
+  color: var(--color-text-muted);
+}
+.proto-pack-panel-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: background 120ms, color 120ms;
+}
+.proto-pack-panel-close:hover {
+  background: color-mix(in oklab, var(--color-text-primary) 8%, transparent);
+  color: var(--color-text-primary);
+}
+
+.proto-pack-panel-why {
+  margin: 0 16px 12px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--color-text-muted);
+  max-width: 52ch;  /* cap at ~52ch for readable body-text line length */
+}
+
+.proto-pack-panel-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 2px 12px 12px;
+  /* Subtle scroll-mask so the list fades into the panel chrome at the
+     edges when content overflows. Single-layer, portable. */
+  mask-image: linear-gradient(to bottom,
+    transparent 0,
+    #000 12px,
+    #000 calc(100% - 12px),
+    transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom,
+    transparent 0,
+    #000 12px,
+    #000 calc(100% - 12px),
+    transparent 100%);
+  /* Stable reserved space — no layout shift when loading → list renders. */
+  min-height: 56px;
+}
+.proto-pack-panel-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 4px 8px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+/* Pack list + item -------------------------------------------- */
+.proto-pack-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.proto-pack-item {
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-proto);
+  padding: 8px 10px;
+  transition: border-color 120ms;
+}
+.proto-pack-item-expanded {
+  border-color: color-mix(in oklab, var(--color-accent) 25%, var(--color-border));
+}
+
+.proto-pack-item-head {
+  display: grid;
+  grid-template-columns: 14px auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  padding: 2px 0;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.proto-pack-item-head:disabled { cursor: default; }
+.proto-pack-item-head:not(:disabled):hover .proto-pack-item-chev {
+  color: var(--color-text-secondary);
+}
+.proto-pack-item-head:not(:disabled):hover .proto-pack-item-kind {
+  color: var(--color-text-primary);
+}
+.proto-pack-item-head:focus-visible {
+  outline: none;
+  background: color-mix(in oklab, var(--color-accent) 5%, transparent);
+  border-radius: 6px;
+}
+.proto-pack-item-chev {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--color-text-muted);
+}
+.proto-pack-item-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text-primary);
+}
+.proto-pack-item-kind > svg { color: var(--color-text-muted); }
+.proto-pack-item-stats {
+  display: inline-flex;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  justify-self: end;
+}
+.proto-pack-item-added { color: var(--color-accent); }
+.proto-pack-item-removed { color: var(--color-warning, #d97706); }
+.proto-pack-item-time {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 52px;
+  text-align: right;
+}
+
+.proto-pack-item-note {
+  margin: 4px 0 0 24px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proto-pack-item-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.proto-btn-xs {
+  font-size: 10px;
+  padding: 4px 9px;
+  gap: 4px;
+  border-radius: 5px;
+}
+
+/* Changes list within an expanded pack ------------------------- */
+.proto-pack-changes {
+  list-style: none;
+  margin: 8px 0 2px 22px;   /* indent under the chevron column */
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-left: 1px solid color-mix(in oklab, var(--color-accent) 18%, var(--color-border));
+  padding-left: 10px;
+}
+
+.proto-pack-change-row {
+  display: flex;
+}
+.proto-pack-change-body {
+  display: grid;
+  grid-template-columns: 18px 56px auto 1fr 14px;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  transition: background 120ms;
+}
+.proto-pack-change-body:hover {
+  background: color-mix(in oklab, var(--color-accent) 7%, transparent);
+}
+.proto-pack-change-body:hover .proto-pack-change-jump-icon {
+  color: var(--color-accent);
+  transform: translate(1px, -1px);
+}
+.proto-pack-change-body:focus-visible {
+  outline: none;
+  background: color-mix(in oklab, var(--color-accent) 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-accent) 35%, transparent);
+}
+
+.proto-pack-change-op {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+.proto-pack-change-op--insert {
+  color: var(--color-accent);
+  background: color-mix(in oklab, var(--color-accent) 12%, transparent);
+}
+.proto-pack-change-op--delete {
+  color: var(--color-warning, #d97706);
+  background: color-mix(in oklab, var(--color-warning, #d97706) 12%, transparent);
+}
+.proto-pack-change-op--replace {
+  color: var(--color-text-secondary);
+  background: color-mix(in oklab, var(--color-text-secondary) 10%, transparent);
+}
+
+.proto-pack-change-line {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.proto-pack-change-chars {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.proto-pack-change-preview {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.proto-pack-change-jump-icon {
+  color: var(--color-text-muted);
+  opacity: 0.75;
+  transition: color 120ms, transform 140ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.proto-pack-change-more {
+  padding: 4px 8px;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--color-text-muted);
+}
+
+.proto-pack-panel-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 16px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-surface);
+}
+
+/* Reduced motion: strip transforms and transitions. Framer Motion's
+   motion components still run, but the CSS-driven affordances settle
+   down to instant state changes. */
+@media (prefers-reduced-motion: reduce) {
+  .proto-pack-badge,
+  .proto-pack-panel-close,
+  .proto-pack-change-body,
+  .proto-pack-change-jump-icon,
+  .proto-pack-item {
+    transition: none !important;
+  }
+  .proto-pack-badge:hover { transform: none; }
+  .proto-pack-change-body:hover .proto-pack-change-jump-icon { transform: none; }
+}
+
+/* ── Reorganize dialog ──────────────────────────────────────────
+   Modal with before/after split-view. Destructive action — visible
+   warning + prominent confirm. */
+
+.proto-reorg-backdrop {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in oklab, var(--color-bg-primary) 70%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 32px;
+}
+
+.proto-reorg-dialog {
+  width: min(960px, 100%);
+  max-height: min(760px, calc(100vh - 64px));
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: calc(var(--radius-proto) * 1.4);
+  box-shadow: 0 30px 70px -24px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+
+.proto-reorg-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--color-border);
+}
+.proto-reorg-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--color-text-primary);
+}
+.proto-reorg-title > svg {
+  color: var(--color-accent);
+}
+.proto-reorg-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: background 120ms, color 120ms;
+}
+.proto-reorg-close:hover {
+  background: color-mix(in oklab, var(--color-text-primary) 8%, transparent);
+  color: var(--color-text-primary);
+}
+.proto-reorg-close:disabled { cursor: not-allowed; opacity: 0.5; }
+
+.proto-reorg-why {
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--color-text-secondary);
+  background: color-mix(in oklab, var(--color-accent) 3%, transparent);
+  border-bottom: 1px solid var(--color-border);
+}
+.proto-reorg-why p { margin: 0; }
+.proto-reorg-why-note {
+  color: var(--color-text-muted);
+}
+.proto-reorg-why-note strong {
+  color: var(--color-warning, #d97706);
+}
+
+.proto-reorg-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 18px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+.proto-reorg-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 18px;
+  background: color-mix(in oklab, var(--color-warning, #d97706) 8%, transparent);
+  color: var(--color-warning, #d97706);
+  font-size: 12px;
+  border-bottom: 1px solid color-mix(in oklab, var(--color-warning, #d97706) 25%, var(--color-border));
+}
+.proto-reorg-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+  background: color-mix(in oklab, var(--color-warning, #d97706) 6%, transparent);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.proto-reorg-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--color-border);
+}
+.proto-reorg-summary-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+.proto-reorg-summary-label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+  color: var(--color-text-muted);
+}
+.proto-reorg-summary-value {
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.proto-reorg-diff {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  min-height: 240px;
+  overflow: hidden;
+}
+.proto-reorg-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid var(--color-border);
+}
+.proto-reorg-pane:last-child { border-right: 0; }
+.proto-reorg-pane-head {
+  padding: 8px 12px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+  background: var(--color-bg-primary);
+  border-bottom: 1px solid var(--color-border);
+}
+.proto-reorg-pane-body {
+  flex: 1 1 auto;
+  overflow: auto;
+  margin: 0;
+  padding: 8px 0;
+  background: var(--color-bg-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--color-text-secondary);
+}
+.proto-reorg-line {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  gap: 8px;
+  padding: 0 12px;
+}
+.proto-reorg-line-no {
+  color: var(--color-text-muted);
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  user-select: none;
+}
+.proto-reorg-line-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--color-text-secondary);
+}
+.proto-reorg-line-heading .proto-reorg-line-text {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.proto-reorg-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--color-border);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .proto-reorg-close { transition: none !important; }
+}
+
+/* ── Bookmarks button (sibling of pack badge) ──────────────────
+   Shares the floating-bottom-right positioning via the stack wrapper. */
+
+.proto-note-floating-stack {
+  position: absolute;
+  right: 20px;
+  bottom: 20px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  pointer-events: none;
+}
+.proto-note-floating-stack > * { pointer-events: auto; position: static; }
+/* Override the absolute positioning of children when stacked. */
+.proto-note-floating-stack .proto-pack-badge-wrap,
+.proto-note-floating-stack .proto-bookmarks-wrap {
+  position: relative;
+  right: 0;
+  bottom: 0;
+}
+
+.proto-bookmarks-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+.proto-bookmarks-wrap > * { pointer-events: auto; }
+
+.proto-bookmarks-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  box-shadow: 0 6px 18px -10px rgba(0, 0, 0, 0.45);
+  transition: transform 140ms cubic-bezier(0.25, 1, 0.5, 1),
+              border-color 140ms, color 140ms;
+}
+.proto-bookmarks-badge:hover {
+  transform: translateY(-1px);
+  color: var(--color-text-primary);
+  border-color: color-mix(in oklab, var(--color-accent) 35%, var(--color-border));
+}
+.proto-bookmarks-badge:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-accent) 25%, transparent);
+}
+.proto-bookmarks-wrap-open .proto-bookmarks-badge {
+  border-color: var(--color-accent);
+  color: var(--color-text-primary);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-accent) 22%, transparent);
+}
+.proto-bookmarks-badge-active { color: var(--color-text-primary); }
+.proto-bookmarks-badge-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  padding: 1px 7px;
+  background: var(--color-accent);
+  color: var(--color-bg-primary);
+  border-radius: 999px;
+  line-height: 1.4;
+}
+
+.proto-bookmarks-panel {
+  width: 360px;
+  max-width: calc(100vw - 40px);
+  max-height: min(480px, calc(100vh - 120px));
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-proto);
+  box-shadow: 0 18px 42px -18px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+  transform-origin: bottom right;
+}
+.proto-bookmarks-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 12px 8px 16px;
+}
+.proto-bookmarks-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+.proto-bookmarks-title > svg { color: var(--color-accent); }
+.proto-bookmarks-why {
+  margin: 0 16px 12px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--color-text-muted);
+  max-width: 52ch;
+}
+.proto-bookmarks-why .proto-kbd {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 1px 5px;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  color: var(--color-text-primary);
+}
+
+.proto-bookmarks-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 12px 12px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  mask-image: linear-gradient(to bottom,
+    transparent 0,
+    #000 12px,
+    #000 calc(100% - 12px),
+    transparent 100%);
+}
+.proto-bookmarks-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 4px;
+}
+.proto-bookmarks-jump {
+  display: grid;
+  grid-template-columns: 44px 1fr 14px;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 10px;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  transition: background 120ms;
+}
+.proto-bookmarks-jump:hover {
+  background: color-mix(in oklab, var(--color-accent) 7%, transparent);
+}
+.proto-bookmarks-jump:hover .proto-bookmarks-jump-icon {
+  color: var(--color-accent);
+  transform: translate(1px, -1px);
+}
+.proto-bookmarks-jump:focus-visible {
+  outline: none;
+  background: color-mix(in oklab, var(--color-accent) 10%, transparent);
+}
+.proto-bookmarks-line-no {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.proto-bookmarks-preview {
+  color: var(--color-text-primary);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.proto-bookmarks-jump-icon {
+  color: var(--color-text-muted);
+  opacity: 0.7;
+  transition: color 120ms, transform 140ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+.proto-bookmarks-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: color 120ms, background 120ms;
+}
+.proto-bookmarks-remove:hover {
+  color: var(--color-warning, #d97706);
+  background: color-mix(in oklab, var(--color-warning, #d97706) 10%, transparent);
+}
+
+/* ── Left bookmark gutter (IDE breakpoint-column convention) ────
+   A narrow column to the left of the line-number gutter. Each marked
+   line shows a ★ glyph in the accent color; hover reveals the full
+   bookmark label via native tooltip. Non-editable; the click-to-jump
+   affordance stays in the floating bottom-right panel. */
+
+.cm-gutter-bookmark {
+  width: 22px;
+  background: var(--color-bg-primary);
+  /* Attach visually to the line-number gutter next to it — no own border. */
+  border-right: 0;
+  padding-left: 4px;
+}
+
+/* Filled bookmark icon at medium size. Dimmed at rest so it reads as a
+   subtle marker, brightens on hover to confirm interactivity. Pure
+   decoration — clicks don't bind here; the floating panel owns the jump. */
+.cm-bookmark-marker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--color-accent);
+  opacity: 0.9;
+  cursor: default;
+  transition: opacity 120ms, transform 140ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+.cm-bookmark-marker > svg { width: 14px; height: 14px; display: block; }
+.cm-bookmark-marker:hover {
+  opacity: 1;
+  transform: scale(1.08);
+}
+
+/* Invisible spacer, same box size as the marker so adding/removing
+   bookmarks never shifts the line-number column horizontally. */
+.cm-bookmark-spacer {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+}
+
+/* ── Missing shared token — used by BookmarksButton hints ─────── */
+.proto-kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.3;
+  color: var(--color-text-primary);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  vertical-align: baseline;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cm-bookmark-marker { transition: none !important; }
+  .cm-bookmark-marker:hover { transform: none; }
+}
+
+/* ── Skills catalog (two-column master/detail) ─────────────────
+   Designed for 100+ templates. Left: dense scrollable list with
+   search + filter. Right: detail pane with inline text editing. */
+
+.proto-skills-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 28px 28px 0;
+  gap: 16px;
+}
+
+.proto-skills-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+.proto-skills-subtitle {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--color-text-muted);
+  max-width: 68ch;
+}
+.proto-skills-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Toolbar: search + filter row -------------------------------- */
+.proto-skills-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.proto-skills-search {
+  flex: 1 1 260px;
+  max-width: 360px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-proto);
+  color: var(--color-text-muted);
+  transition: border-color 120ms, background 120ms;
+}
+.proto-skills-search:focus-within {
+  border-color: var(--color-accent);
+  background: var(--color-bg-primary);
+}
+.proto-skills-search-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+.proto-skills-search-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+.proto-skills-search-clear:hover { color: var(--color-text-primary); }
+
+.proto-skills-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.proto-skills-filter-icon { color: var(--color-text-muted); }
+.proto-skills-clear {
+  background: transparent;
+  border: 0;
+  padding: 4px 8px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.proto-skills-clear:hover {
+  color: var(--color-text-primary);
+  background: color-mix(in oklab, var(--color-accent) 5%, transparent);
+}
+
+/* Generic segmented control (reused inside toolbar) ------------ */
+.proto-segmented {
+  display: inline-flex;
+  padding: 2px;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: calc(var(--radius-proto) + 2px);
+}
+.proto-segmented-option {
+  padding: 4px 10px;
+  background: transparent;
+  border: 0;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: var(--radius-proto);
+  transition: background 120ms, color 120ms;
+}
+.proto-segmented-option:hover { color: var(--color-text-primary); }
+.proto-segmented-option-active {
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-accent) 18%, var(--color-border));
+}
+
+/* Body: two-column layout ------------------------------------- */
+.proto-skills-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) 1fr;
+  gap: 20px;
+  border-top: 1px solid var(--color-border);
+  padding-top: 14px;
+}
+
+.proto-skills-list {
+  overflow-y: auto;
+  padding-right: 4px;
+  padding-bottom: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  /* Gentle fade at bottom for long lists. */
+  mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 24px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 24px), transparent 100%);
+}
+
+.proto-skills-row {
+  display: grid;
+  grid-template-rows: auto auto;
+  gap: 2px;
+  padding: 9px 12px;
+  background: transparent;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-radius: 0 var(--radius-proto) var(--radius-proto) 0;
+  color: var(--color-text-primary);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  transition: background 100ms, border-color 100ms;
+}
+.proto-skills-row:hover {
+  background: color-mix(in oklab, var(--color-accent) 4%, transparent);
+}
+.proto-skills-row-active {
+  background: color-mix(in oklab, var(--color-accent) 8%, transparent);
+  border-left-color: var(--color-accent);
+}
+.proto-skills-row:focus-visible {
+  outline: none;
+  background: color-mix(in oklab, var(--color-accent) 10%, transparent);
+}
+.proto-skills-row-name {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.proto-skills-row-meta {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proto-skills-empty {
+  padding: 20px 12px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  line-height: 1.6;
+}
+
+.proto-skills-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.proto-skills-skeleton-row {
+  height: 46px;
+  background: color-mix(in oklab, var(--color-text-muted) 8%, transparent);
+  border-radius: var(--radius-proto);
+  animation: protoShimmer 1.2s ease-in-out infinite;
+}
+@keyframes protoShimmer {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 0.7; }
+}
+
+/* Detail pane ------------------------------------------------- */
+.proto-skills-detail {
+  overflow-y: auto;
+  padding: 4px 4px 40px 4px;
+  min-width: 0;
+}
+.proto-skill-detail-inner {
+  max-width: 760px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.proto-skills-detail-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.proto-skill-detail-head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--color-border);
+}
+.proto-skill-detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+.proto-skill-detail-sep { opacity: 0.5; }
+
+/* Steps list: keep the rail aesthetic from the earlier polish */
+.proto-skill-steps {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 4px 0 4px 32px;
+}
+.proto-skill-steps::before {
+  content: "";
+  position: absolute;
+  left: 13px;
+  top: 16px;
+  bottom: 16px;
+  width: 1px;
+  background: color-mix(in oklab, var(--color-accent) 28%, var(--color-border));
+  border-radius: 1px;
+}
+
+.proto-skill-step {
+  position: relative;
+  display: flex;
+  gap: 10px;
+  padding: 10px 0;
+}
+.proto-skill-step + .proto-skill-step {
+  border-top: 1px dashed color-mix(in oklab, var(--color-border) 55%, transparent);
+}
+.proto-skill-step-idx {
+  position: absolute;
+  left: -29px;
+  top: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  color: var(--color-bg-primary);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 0 0 3px var(--color-bg-primary);
+}
+.proto-skill-step-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.proto-skill-step-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+/* Inline tag + chips ------------------------------------------ */
+.proto-skill-tag,
+.proto-skill-tag-empty {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--color-accent);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms;
+}
+.proto-skill-tag:hover {
+  background: color-mix(in oklab, var(--color-accent) 10%, transparent);
+}
+.proto-skill-tag-empty {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text-muted);
+  border-style: dashed;
+  border-color: var(--color-border);
+}
+.proto-skill-tag-empty:hover {
+  color: var(--color-accent);
+  border-color: color-mix(in oklab, var(--color-accent) 35%, var(--color-border));
+}
+.proto-skill-tag-input {
+  padding: 1px 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  background: var(--color-bg-primary);
+  color: var(--color-accent);
+  border: 1px solid var(--color-accent);
+  border-radius: 4px;
+  outline: none;
+  width: 80px;
+}
+
+.proto-skill-hints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 4px;
+}
+.proto-skill-hint-chip {
+  display: inline-flex;
+  align-items: center;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  transition: border-color 120ms;
+}
+.proto-skill-hint-chip:hover { border-color: color-mix(in oklab, var(--color-accent) 30%, var(--color-border)); }
+.proto-skill-hint-chip-label {
+  padding: 2px 7px;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.proto-skill-hint-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  background: transparent;
+  border: 0;
+  border-left: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+.proto-skill-hint-chip-remove:hover {
+  color: var(--color-warning, #d97706);
+  background: color-mix(in oklab, var(--color-warning, #d97706) 8%, transparent);
+}
+.proto-skill-hint-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: transparent;
+  border: 1px dashed var(--color-border);
+  border-radius: 4px;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  cursor: pointer;
+  transition: border-color 120ms, color 120ms;
+}
+.proto-skill-hint-add:hover {
+  color: var(--color-accent);
+  border-color: color-mix(in oklab, var(--color-accent) 40%, var(--color-border));
+}
+.proto-skill-hint-input {
+  padding: 2px 7px;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-accent);
+  border-radius: 4px;
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  outline: none;
+  width: 120px;
+}
+
+/* Inline text editor ------------------------------------------ */
+.proto-inline-text {
+  position: relative;
+  margin: 0;
+  border-radius: 4px;
+  padding: 1px 4px;
+  color: var(--color-text-primary);
+  transition: background 120ms, box-shadow 180ms;
+  word-break: normal;
+  overflow-wrap: break-word;
+}
+.proto-inline-text[role="button"] {
+  cursor: text;
+}
+.proto-inline-text[role="button"]:hover {
+  background: color-mix(in oklab, var(--color-accent) 5%, transparent);
+}
+.proto-inline-text-placeholder {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+.proto-inline-text-saved {
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-accent) 45%, transparent);
+}
+.proto-inline-text-error {
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-warning, #d97706) 45%, transparent);
+}
+
+.proto-inline-text-name { font-size: 15px; font-weight: 600; font-family: var(--font-mono); }
+.proto-inline-text-description { font-size: 12px; color: var(--color-text-secondary); line-height: 1.6; }
+.proto-inline-text-step-name { font-size: 13px; font-weight: 600; display: inline-block; flex: 1 1 auto; min-width: 0; }
+.proto-inline-text-step-desc { font-size: 12px; color: var(--color-text-secondary); line-height: 1.55; }
+
+.proto-inline-text-editing {
+  background: var(--color-bg-primary);
+  box-shadow: 0 0 0 1px var(--color-accent);
+  padding: 4px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.proto-inline-text-input {
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: inherit;
+  font: inherit;
+  width: 100%;
+  resize: vertical;
+  font-family: inherit;
+}
+.proto-inline-text-hint {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+}
+.proto-inline-text-indicator {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  color: var(--color-text-muted);
+}
+.proto-inline-text-error-msg {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--color-warning, #d97706);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .proto-skills-row, .proto-skills-search, .proto-segmented-option,
+  .proto-skill-tag, .proto-skill-hint-chip, .proto-inline-text {
+    transition: none !important;
+  }
+  .proto-skills-skeleton-row { animation: none; opacity: 0.4; }
 }

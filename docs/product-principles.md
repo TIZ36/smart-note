@@ -1,167 +1,97 @@
-# 产品设计原则（v0.1）
+# Product Principles
 
-更新时间：2026-04-08
+Design rules that govern SmartNote. Each principle has a tier (P0 / P1 / P2), a reason, and what it forbids.
 
-## 使用说明
+## P0 — non-negotiable
 
-- 目标：边设计边开发，持续沉淀可执行的产品原则。
-- 结构：每条原则都应包含「为什么 / 必做 / 禁止 / 验收指标」。
-- 分级：
-  - P0：不可妥协
-  - P1：默认遵循
-  - P2：有条件遵循
+### P0-1 · Single source of truth
+- **Principle:** `raw.md` is the only original truth. `note.md`, tags, vectors, wiki — all derived.
+- **Must:** Preserve raw verbatim. Every derived artifact carries a `source_ref` back to raw.
+- **Must not:** Rewrite raw from AI output. Persist any derived view as if it were authoritative.
 
-## P0（不可妥协）
+### P0-2 · Reversible and auditable
+- **Principle:** Every AI-driven change is versioned and rollback-able.
+- **Must:** Snapshot before rewrite (`versioning.py`). Log the prompt, model, and diff.
+- **Must not:** Overwrite `note.md` without a snapshot. Run rewrite without an A/B preview.
 
-### P0-1 单一事实源（Source of Truth）
+### P0-3 · Local-first, iCloud as pure sync
+- **Principle:** All core capabilities run offline. iCloud moves files, nothing else.
+- **Must:** Work with cloud unreachable. Store state on disk, not in cloud services.
+- **Must not:** Make iCloud a dependency for search, ingest, or answer.
 
-- 原则：`raw` 永远是原始输入真相，`note.md` 与索引都属于派生层。
-- 必做：
-  - 保留 `raw` 原始内容，不在生成流程中覆盖或重写。
-  - 所有派生结果都记录来源片段引用。
-- 禁止：
-  - 将 AI 生成内容直接回写并覆盖 `raw`。
+### P0-4 · Incremental, not rebuild
+- **Principle:** Process new/changed segments only. Full rebuild is an explicit user action.
+- **Must:** Track cursor + content hash per segment. Additive updates preserve existing tags.
+- **Must not:** Silently full-rebuild on every ingest.
 
-### P0-2 可逆与可审计
+### P0-5 · Capture speed beats everything
+- **Principle:** The fastest path from "I thought of it" to "it's saved" wins.
+- **Must:** Global hotkey appends clipboard to raw in a single keystroke (`⌃⇧N`).
+- **Must not:** Require multiple clicks, dialogs, or mode switches to save an idea.
 
-- 原则：所有 AI 增量生成必须可追溯、可回滚。
-- 必做：
-  - 保留每次增量 patch 记录。
-  - 支持“回滚最近一次生成”。
-- 禁止：
-  - 无日志、无版本地直接改写 `note.md`。
+## P1 — default
 
-### P0-3 本地优先，iCloud 负责同步
+### P1-1 · Evidence before conclusion
+- **Principle:** Answers cite before they claim.
+- **Must:** Every AI answer includes at least one `source_ref`. UI surfaces the cited chunk.
+- **Must not:** Show a confident answer with no sources.
 
-- 原则：核心能力本地可运行；iCloud 仅做文件同步。
-- 必做：
-  - 本地监听、解析、归类、索引与检索可独立完成。
-  - 同步异常时保证本地可继续工作。
-- 禁止：
-  - 把关键业务逻辑绑定到云端可用性上。
+### P1-2 · Hybrid retrieval over single-path
+- **Principle:** Six recall paths with adaptive fusion. No path is the single source of rank.
+- **Must:** FTS + vector + n-gram + substring + keyword + tag metadata, combined.
+- **Must not:** Ship a feature whose retrieval is single-path without justification.
 
-### P0-4 增量优先，不重写历史
+### P1-3 · Pluggable capability
+- **Principle:** Embedding, LLM, and MCP servers are all swap-in/swap-out.
+- **Must:** Settings expose provider choice. Mock/FTS-only mode must work without any external service.
+- **Must not:** Hard-code a specific provider or MCP server.
 
-- 原则：默认只处理新增/变更片段，不做全量重生成。
-- 必做：
-  - 使用游标与哈希定位新内容。
-  - 支持把新增信息补充到既有分类，而非只追加末尾。
-- 禁止：
-  - 每次触发都全量重写 `note.md`。
+### P1-4 · Open formats, no lock-in
+- **Principle:** Markdown + SQLite. Nothing proprietary.
+- **Must:** Every artifact viewable in a plain editor. Export path always available.
+- **Must not:** Invent a custom binary format when Markdown works.
 
-### P0-5 快速捕获第一
+### P1-5 · Explainable automation
+- **Principle:** Every auto-decision (tag, classification, dedup, reorg) has a shown reason.
+- **Must:** Surface the signal that drove the decision (keyword hit, similarity score, rule name).
+- **Must not:** Ship opaque "AI said so" automation.
 
-- 原则：记录入口必须足够快，优先降低“记不下来”的风险。
-- 必做：
-  - 支持全局快捷键将剪贴板内容追加到 `raw`。
-  - 从触发到落盘过程可见、可确认。
-- 禁止：
-  - 需要多步交互才能完成一次快速记录。
+### P1-6 · Closed feedback loop
+- **Principle:** Retrieval learns from use. Upvotes are training data.
+- **Must:** Log query → answer → feedback. Feed signal into adaptive weights and memory.
+- **Must not:** Throw away user feedback after showing the UI response.
 
-## P1（默认遵循）
+### P1-7 · Organize by attribute, not file
+- **Principle:** Dimensions (todo, work, learn, …) are tag metadata on segments, not separate files.
+- **Must:** Filtering composes (tag + topic + free-text) without materializing per-dimension files.
+- **Must not:** Duplicate content across view files to implement filtering.
 
-### P1-1 结构化输出优先于内容堆叠
+## P2 — conditional
 
-- 原则：`note.md` 要有清晰分类、可读结构和可复用片段。
-- 必做：
-  - 支持文字、Mermaid、图片引用。
-  - 归档到已有主题时保留上下文关联。
-  - 从 `raw` 自动识别主题维度并生成对应视图。
+### P2-1 · Progressive intelligence
+- Ship rule + lightweight model first. Add multi-agent orchestration only after the simpler pipeline is stable.
 
-### P1-2 检索优先于生成
+### P2-2 · macOS first, CLI second, iOS later
+- macOS desktop is the primary product. MCP exposes the same capabilities to CLI clients. iOS comes post-commercialization.
 
-- 原则：AI 回答先给证据，再给结论。
-- 必做：
-  - 搜索结果附来源 chunk 或文件定位。
-  - 支持混合检索（关键词 + 向量）。
+### P2-3 · Accuracy via graph + learning-to-rank, not large-model fine-tuning
+- Knowledge graph + rerank learning from `+1` signals before any generation-model fine-tune. Fine-tuning is last, not first.
 
-### P1-3 能力可插拔
+### P2-4 · Graph always links back to text
+- Entity/relation answers must cite the segment they came from. No detached graph claims.
 
-- 原则：Embedding、LLM、MCP 都应可切换、可开关、可测试。
-- 必做：
-  - 本地 embedding 优先，API 作为兜底。
-  - MCP 提供单独测试页和状态开关。
+## North-star metrics
 
-### P1-4 开放格式，不锁定
+| Dimension | Metric |
+|-----------|--------|
+| Capture | Hotkey success rate, write latency |
+| Organize | Incremental-ingest latency, manual-correction rate |
+| Retrieval | Top-3 hit rate, evidence-cited answer rate |
+| Trust | `source_ref` coverage, rollback availability, misclassification rate |
+| Extensibility | MCP server uptime, skill parse success |
 
-- 原则：尽量基于标准文件格式（txt/md/rtf）构建能力。
-- 必做：
-  - 产物可在普通编辑器中直接查看和编辑。
-  - 保持导入导出路径清晰。
+## Convention
 
-### P1-5 自动化必须可解释
-
-- 原则：每次自动归类都需要能解释归类依据。
-- 必做：
-  - 记录分类理由（关键词、语义相似度、规则命中）。
-  - 支持用户手动修正并反馈学习。
-
-### P1-6 检索与回答必须形成闭环记忆
-
-- 原则：知识库不能只有向量召回，必须记录查询、回答与反馈并参与后续优化。
-- 必做：
-  - 记录每次查询文本、召回证据、最终回答。
-  - 记录用户反馈（如 `+1`）并用于后续排序优化。
-  - 维护 `knpath.md`（知识路径）与 memory 机制，沉淀高价值问答路径。
-- 禁止：
-  - 仅保存 embedding，不保留行为与反馈数据。
-
-### P1-7 输入无约束，输出按维度组织
-
-- 原则：允许用户把待办、工作笔记、需求详情混贴到 `raw`，系统负责整理为可读维度。
-- 必做：
-  - 生成 `note.md` 时按维度归档（如 `Todo`、`需求列表`、`项目经验`）。
-  - 支持主题维度配置为独立视图，并可置顶常用视图。
-  - 每条内容保留来源片段引用，支持从视图回跳到原文。
-- 禁止：
-  - 仅按时间顺序堆叠，不做维度抽取与归档。
-
-## P2（有条件遵循）
-
-### P2-1 渐进智能
-
-- 原则：先做稳定可控，再做复杂自动化。
-- 必做：
-  - 先规则+轻量模型，再引入多代理编排。
-
-### P2-2 多端节奏清晰
-
-- 原则：优先做 macOS 生产端，再扩 CLI 与 iOS。
-- 必做：
-  - macOS 作为主入口。
-  - 通过 MCP Studio 对外暴露能力给 CLI。
-  - iOS 在商业化后支持消费与轻编辑场景。
-
-### P2-3 准确性增强采用“图谱+学习”渐进路线
-
-- 原则：回答准确性可以引入知识图谱与再训练，但必须分阶段实施，优先低成本高收益路径。
-- 必做：
-  - 先完成 `FTS + Vector + Memory` 闭环，再引入知识图谱检索路径。
-  - 图谱结果必须回链到文本证据，避免脱离原文推理。
-  - 再训练优先做 rerank/偏好学习（基于 `+1`、点击、停留等反馈），不在 MVP 直接做大模型微调。
-- 禁止：
-  - 在缺少反馈闭环与评估指标时直接进行高成本模型训练。
-  - 仅依赖图谱结论输出答案而不附证据来源。
-
-### P2-4 证据优先于结论
-
-- 原则：涉及推理类回答时，必须“先证据路径，后结论生成”。
-- 必做：
-  - 对外展示最小可解释链路（实体/关系/来源片段）。
-  - 回答中至少包含一条来源引用（文件或 chunk）。
-- 禁止：
-  - 无来源引用的确定性表述。
-
-## 北极星指标（草案）
-
-- 捕获效率：快捷键写入成功率、写入延迟。
-- 整理效率：增量生成耗时、手动修订比例。
-- 检索质量：Top3 命中率、带证据回答占比。
-- 信任度：可追溯率、回滚可用率、误归类率。
-- 扩展性：MCP 可用率、Skill 解析成功率。
-
-## 迭代约定
-
-- 每个里程碑至少补充 3 条新原则或修订项。
-- 每条原则必须配一个真实案例（问题、决策、结果）。
-- 原则文档版本按 `v0.x` 递进，保留变更记录。
+- Principle ids (`P0-1`, etc.) are stable and citable in PRs and code comments.
+- Each milestone should touch at least 3 principles (add, revise, or retire).
+- When a principle's "must not" gets violated intentionally, document why in the PR, not in this file.

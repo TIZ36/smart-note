@@ -28,6 +28,8 @@ from app.rewrite import (
     record_validation,
 )
 from app.versioning import list_versions, restore_version, create_snapshot, delete_version
+from app import skill
+from app import packs
 
 
 app = FastAPI(title="SmartNote Gateway")
@@ -1440,6 +1442,11 @@ class EnrichBulkRequest(BaseModel):
     # avoids the overhead of the MCP caller (e.g. Claude) generating a huge
     # JSON payload token-by-token for large batches.
     items_file: str = ""
+    # Self-reported name of the AI/tool that produced this enrichment.
+    # Examples: "claude-code", "cursor", "opencode", "gemini-cli".
+    # Written to builds.completed_by as "mcp:<enriched_by>" so the UI can
+    # display which agent did the work. Defaults to "delegate" (generic).
+    enriched_by: str = "delegate"
 
 
 @app.post("/enrich-bulk")
@@ -1526,19 +1533,27 @@ def api_enrich_bulk(req: EnrichBulkRequest) -> dict:
                     if not tag or line_end < line_start:
                         raise ValueError("tag + line_start<=line_end required")
 
-                    # C1: conflict detection — any existing segment whose
-                    # range OVERLAPS the incoming range AND has a different
-                    # tag is a conflict. Checks full overlap semantics (not
-                    # just exact-range match):
-                    #   existing.start <= incoming.end AND existing.end >= incoming.start
+                    # Resolve the build_id for this submission (most recent
+                    # chunk for this file) — needed both for conflict scope
+                    # and for inserting the tag_segment under the right build.
+                    b_row = conn.execute(
+                        "SELECT build_id FROM chunks WHERE source_file = ? ORDER BY id DESC LIMIT 1",
+                        (source_file,),
+                    ).fetchone()
+                    build_id = (b_row["build_id"] if b_row else "") or active
+
+                    # C1: conflict detection — scoped to the CURRENT build.
+                    # Cross-build conflicts are irrelevant: old builds are
+                    # read-only history; only within-build overlaps of a
+                    # different tag indicate a real ambiguity.
                     overlap = conn.execute(
                         "SELECT id, tag, topic_name, build_id, line_start, line_end "
                         "FROM tag_segments "
-                        "WHERE source_file = ? "
+                        "WHERE source_file = ? AND build_id = ? "
                         "AND line_start <= ? AND line_end >= ? "
                         "AND tag != ? AND tag NOT LIKE 'wiki:%' "
                         "LIMIT 1",
-                        (source_file, line_end, line_start, tag),
+                        (source_file, build_id, line_end, line_start, tag),
                     ).fetchone()
                     if overlap:
                         conn.execute(
@@ -1548,7 +1563,7 @@ def api_enrich_bulk(req: EnrichBulkRequest) -> dict:
                             "incoming_topic, incoming_summary, incoming_payload_json) "
                             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                             (
-                                overlap["build_id"] or active,
+                                build_id,
                                 source_file, line_start, line_end,
                                 overlap["tag"], overlap["topic_name"] or "",
                                 tag, it.get("topic_name", "") or "",
@@ -1563,12 +1578,6 @@ def api_enrich_bulk(req: EnrichBulkRequest) -> dict:
                         conn.commit()
                         # Skip applying — wait for human resolution
                         continue
-                    # Find the chunks' build_id (prefer the most recent one for this file)
-                    b_row = conn.execute(
-                        "SELECT build_id FROM chunks WHERE source_file = ? ORDER BY id DESC LIMIT 1",
-                        (source_file,),
-                    ).fetchone()
-                    build_id = (b_row["build_id"] if b_row else "") or active
                     kws = it.get("keywords") or []
                     ents = it.get("entities") or []
                     conn.execute(
@@ -1766,16 +1775,17 @@ def api_enrich_bulk(req: EnrichBulkRequest) -> dict:
             pass
 
     # Recompute enrich_status for all touched builds
+    enriched_by = (getattr(req, "enriched_by", None) or "delegate").strip() or "delegate"
     build_status: dict[str, str] = {}
     for bid in touched_builds:
         try:
-            build_status[bid] = recompute_enrich_status(bid)
+            build_status[bid] = recompute_enrich_status(bid, enriched_by=enriched_by)
         except Exception:
             pass
 
     all_done = bool(build_status) and all(v == "completed" for v in build_status.values())
     if all_done:
-        _emit("done", applied, f"Claude completed {kind}: {applied} applied")
+        _emit("done", applied, f"{enriched_by} completed {kind}: {applied} applied")
     return {
         "kind": kind,
         "applied": applied,
@@ -3641,3 +3651,392 @@ def api_tag_source_lines(tag_name: str, segment_id: int = Query(...)) -> dict:
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Skills (reusable recipes read by Claude/Cursor/OpenCode) ──────
+# Notes record meaningful skills. SmartNote stores the recipe and packages the
+# time-sliced note context so any CLI can execute and report back.
+
+class SkillSaveRequest(BaseModel):
+    name: str
+    description: str = ""
+    nodes: list[dict]
+    kind: str = "periodic"
+    period_hint: str = "weekly"
+    source_segment_ids: list[int] | None = None
+
+
+@app.get("/skills")
+def api_skills_list() -> dict:
+    return {"templates": skill.list_templates()}
+
+
+@app.get("/skills/{name}")
+def api_skill_get(name: str) -> dict:
+    try:
+        return skill.get_template(name)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="skill not found")
+
+
+@app.post("/skills")
+def api_skill_save(req: SkillSaveRequest) -> dict:
+    try:
+        return skill.save_template(
+            name=req.name,
+            description=req.description,
+            nodes=req.nodes,
+            kind=req.kind,
+            period_hint=req.period_hint,
+            source_segment_ids=req.source_segment_ids,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/skills/{template_id}")
+def api_skill_delete(template_id: int) -> dict:
+    deleted = skill.delete_template(template_id)
+    return {"deleted": deleted}
+
+
+class SkillNodePatch(BaseModel):
+    index: int
+    name: str | None = None
+    description: str | None = None
+    trigger_hints: list[str] | None = None
+    expected_tag: str | None = None
+
+
+class SkillPatchRequest(BaseModel):
+    # Text-only field updates. Structural changes (add/remove/reorder nodes)
+    # go through POST /skills with the full nodes array.
+    description: str | None = None
+    new_name: str | None = None
+    kind: str | None = None
+    period_hint: str | None = None
+    nodes: list[SkillNodePatch] | None = None
+
+
+@app.patch("/skills/{name}")
+def api_skill_patch(name: str, req: SkillPatchRequest) -> dict:
+    try:
+        node_patches = None
+        if req.nodes is not None:
+            node_patches = [
+                {k: v for k, v in p.model_dump().items() if v is not None or k == "index"}
+                for p in req.nodes
+            ]
+        return skill.patch_template(
+            name,
+            description=req.description,
+            new_name=req.new_name,
+            kind=req.kind,
+            period_hint=req.period_hint,
+            node_patches=node_patches,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="skill not found")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class SkillRunRequest(BaseModel):
+    slice_days: int = 7
+    triggered_by: str = "ui"
+
+
+@app.post("/skills/{name}/run")
+def api_skill_run(name: str, req: SkillRunRequest) -> dict:
+    """Create a pending run. Returns the bundle (template + sliced notes)
+    that the CLI will read to execute. Does NOT execute anything server-side."""
+    try:
+        return skill.trigger_run(name, slice_days=req.slice_days, triggered_by=req.triggered_by)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="skill not found")
+
+
+class SkillRunResultRequest(BaseModel):
+    status: str  # 'completed' | 'skipped'
+    result_summary: str = ""
+    steps: list[dict] | None = None
+
+
+@app.post("/skill-runs/{run_id}/result")
+def api_skill_run_result(run_id: int, req: SkillRunResultRequest) -> dict:
+    try:
+        return skill.record_run_result(
+            run_id=run_id,
+            status=req.status,
+            result_summary=req.result_summary,
+            steps=req.steps,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="run not found")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/skill-runs")
+def api_skill_runs_list(
+    template_id: int | None = None,
+    status: str | None = None,
+    limit: int = 30,
+) -> dict:
+    return {"runs": skill.list_runs(template_id=template_id, status=status, limit=limit)}
+
+
+@app.get("/skill-runs/{run_id}")
+def api_skill_run_get(run_id: int) -> dict:
+    try:
+        return skill.get_run(run_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="run not found")
+
+
+@app.get("/skill-runs/{run_id}/bundle")
+def api_skill_run_bundle(run_id: int) -> dict:
+    """Re-materialize the (template + sliced notes) bundle for a pending run —
+    used when a CLI resumes a run it didn't create."""
+    try:
+        return skill.get_run_bundle(run_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="run not found")
+
+
+# ── Pack-aware note save/load + per-line metadata ────────────────
+# Each save creates a pending ingest pack; each load detects external
+# edits and creates an external pack if the file changed outside SmartNote.
+# Every save also stamps per-line ts/hash so the note gutter can render it.
+
+class NoteSaveRequest(BaseModel):
+    raw_path: str
+    content: str
+    note: str = ""
+
+
+@app.post("/note/save")
+def api_note_save(req: NoteSaveRequest) -> dict:
+    """Write file + create pending ingest pack + stamp per-line metadata."""
+    try:
+        return packs.on_save(req.raw_path, req.content, note=req.note)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/note/load")
+def api_note_load(raw_path: str = Query(...)) -> dict:
+    """Read file content. If on-disk md5 differs from the stored baseline,
+    create an 'external' ingest pack so the user sees the change in the
+    pending queue."""
+    try:
+        return packs.on_load(raw_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/note/line-meta")
+def api_note_line_meta(raw_path: str = Query(...)) -> dict:
+    return {"lines": packs.list_line_meta(raw_path)}
+
+
+class LineMarkRequest(BaseModel):
+    raw_path: str
+    line_hash: str
+    bookmark: str | None = None
+    highlight_color: str | None = None
+    highlight_note: str | None = None
+    # Best-effort hints so an upsert can populate a useful row when the line
+    # isn't tracked yet (file never saved through /note/save). ts stays NULL.
+    line_preview: str | None = None
+    line_no: int | None = None
+
+
+@app.post("/note/line-mark")
+def api_note_line_mark(req: LineMarkRequest) -> dict:
+    return packs.set_line_mark(
+        file_path=req.raw_path,
+        line_hash=req.line_hash,
+        bookmark=req.bookmark,
+        highlight_color=req.highlight_color,
+        highlight_note=req.highlight_note,
+        line_preview=req.line_preview,
+        line_no=req.line_no,
+    )
+
+
+# ── Pack queue ───────────────────────────────────────────────────
+
+@app.get("/packs")
+def api_packs_list(
+    raw_path: str | None = None,
+    status: str = "pending",
+    limit: int = 50,
+) -> dict:
+    items = packs.list_packs(raw_path=raw_path, status=status, limit=limit)
+    return {
+        "packs": items,
+        "pending_count": packs.pending_count(raw_path=raw_path),
+    }
+
+
+@app.post("/packs/{pack_id}/apply")
+def api_pack_apply(pack_id: int) -> dict:
+    """Trigger ingest for the pack's raw file + mark this pack applied.
+    Returns {pack, build_id, applied_siblings_count}."""
+    try:
+        pack = packs.get_pack(pack_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="pack not found")
+    if pack["status"] != "pending":
+        return {"pack": pack, "build_id": None, "applied_siblings_count": 0}
+
+    # Trigger the ingest against the pack's file. Use prefs.notePath as the
+    # derived note.md target (existing convention).
+    from app.ingest import ingest_raw
+    prefs = api_prefs()
+    note_path = prefs.get("notePath") or str(Path(pack["raw_path"]).with_name("note.md"))
+    try:
+        result = ingest_raw(pack["raw_path"], note_path, reset=False, ai_delegate=False)
+        build_id = result.get("build_id")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"ingest failed: {e}")
+
+    # Mark this pack + all other pending siblings for the same file as applied
+    # under the same build.
+    applied_count = packs.apply_all_for_path(pack["raw_path"], build_id=build_id)
+    packs.update_file_state(
+        pack["raw_path"],
+        Path(pack["raw_path"]).read_text(encoding="utf-8"),
+        last_build_id=build_id,
+    )
+    return {
+        "pack": packs.get_pack(pack_id),
+        "build_id": build_id,
+        "applied_siblings_count": applied_count,
+    }
+
+
+class PacksApplyAllRequest(BaseModel):
+    raw_path: str
+
+
+@app.post("/packs/apply-all")
+def api_packs_apply_all(req: PacksApplyAllRequest) -> dict:
+    """Apply every pending pack for a raw file with a single ingest run."""
+    pending = packs.list_packs(raw_path=req.raw_path, status="pending", limit=500)
+    if not pending:
+        return {"applied": 0, "build_id": None}
+
+    from app.ingest import ingest_raw
+    prefs = api_prefs()
+    note_path = prefs.get("notePath") or str(Path(req.raw_path).with_name("note.md"))
+    try:
+        result = ingest_raw(req.raw_path, note_path, reset=False, ai_delegate=False)
+        build_id = result.get("build_id")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"ingest failed: {e}")
+
+    count = packs.apply_all_for_path(req.raw_path, build_id=build_id)
+    packs.update_file_state(
+        req.raw_path,
+        Path(req.raw_path).read_text(encoding="utf-8"),
+        last_build_id=build_id,
+    )
+    return {"applied": count, "build_id": build_id}
+
+
+@app.post("/packs/{pack_id}/discard")
+def api_pack_discard(pack_id: int) -> dict:
+    try:
+        return packs.discard_pack(pack_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="pack not found")
+
+
+class PacksMergeRequest(BaseModel):
+    pack_ids: list[int]
+
+
+@app.post("/packs/merge")
+def api_packs_merge(req: PacksMergeRequest) -> dict:
+    try:
+        return packs.merge_packs(req.pack_ids)
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ── Reorganize note by tag ──────────────────────────────────────
+# Produces a candidate reorganized markdown (grouped by tag). User reviews
+# the diff and approves; approval writes the file, snapshots it, and does
+# a full reset-ingest. This is destructive — always show the diff first.
+
+class ReorganizeRequest(BaseModel):
+    raw_path: str
+
+
+@app.post("/note/reorganize-preview")
+def api_note_reorganize_preview(req: ReorganizeRequest) -> dict:
+    from app import reorganize as _reorganize
+    try:
+        return _reorganize.build_candidate(req.raw_path)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class ReorganizeApproveRequest(BaseModel):
+    raw_path: str
+    candidate: str    # the content the user approved (sent back verbatim)
+    note_path: str | None = None
+
+
+@app.post("/note/reorganize-approve")
+def api_note_reorganize_approve(req: ReorganizeApproveRequest) -> dict:
+    """Commit a reorganized note: snapshot → write → reset ingest.
+
+    After this runs, ALL existing chunks for raw_path are wiped and
+    re-generated from the new content. Pending ingest packs for this
+    file are marked applied (they're meaningless against fresh chunks)."""
+    p = Path(req.raw_path)
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="raw_path does not exist")
+
+    # note_path defaults to same directory + note.md (convention)
+    note_path = req.note_path or str(p.with_name("note.md"))
+
+    # 1. Snapshot so this is reversible.
+    try:
+        snap = create_snapshot(note_path, reason="reorganize-by-tag",
+                               extra_meta={"raw_path": req.raw_path})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"snapshot failed: {e}")
+
+    # 2. Write the candidate to raw_path. This is the point of no return
+    #    without a snapshot restore.
+    try:
+        p.write_text(req.candidate, encoding="utf-8")
+        packs.update_file_state(req.raw_path, req.candidate)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"write failed: {e}")
+
+    # 3. Full reset ingest — old chunks wiped, new chunks generated.
+    try:
+        from app.ingest import ingest_raw
+        result = ingest_raw(req.raw_path, note_path, reset=True, ai_delegate=False)
+        build_id = result.get("build_id")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"ingest failed: {e}")
+
+    # 4. Close out all pending packs for this file — they referenced the
+    #    pre-reorganization content and no longer mean anything.
+    applied = packs.apply_all_for_path(req.raw_path, build_id=build_id)
+
+    return {
+        "raw_path": req.raw_path,
+        "build_id": build_id,
+        "snapshot": snap,
+        "packs_closed": applied,
+        "bytes_written": len(req.candidate.encode("utf-8")),
+    }

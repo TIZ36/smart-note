@@ -8,7 +8,7 @@ from datetime import datetime
 from app.db import connect
 
 
-def create_build(source_file: str) -> str:
+def create_build(source_file: str, kind: str = "full") -> str:
     """Create a new build, snapshot current tag config, return build ID."""
     from app.tags import get_tags_with_desc
 
@@ -17,8 +17,8 @@ def create_build(source_file: str) -> str:
 
     with connect() as conn:
         conn.execute(
-            "INSERT INTO builds(id, source_file, tags_config_json) VALUES(?, ?, ?)",
-            (build_id, source_file, json.dumps(tags_config, ensure_ascii=False)),
+            "INSERT INTO builds(id, source_file, tags_config_json, ingest_kind) VALUES(?, ?, ?, ?)",
+            (build_id, source_file, json.dumps(tags_config, ensure_ascii=False), kind),
         )
         conn.commit()
     return build_id
@@ -107,7 +107,7 @@ def finalize_build(
         conn.commit()
 
 
-def recompute_enrich_status(build_id: str) -> str:
+def recompute_enrich_status(build_id: str, enriched_by: str = "delegate") -> str:
     """Recompute the enrich_status of a build based on pending signals.
 
     Also refreshes `segment_count` and flips `completed_by` to 'mcp:delegate'
@@ -156,7 +156,7 @@ def recompute_enrich_status(build_id: str) -> str:
         # awaiting) and now something has been filled in, credit the MCP caller.
         new_completed_by = prior_completed_by
         if status == "completed" and not prior_completed_by:
-            new_completed_by = "mcp:delegate"
+            new_completed_by = f"mcp:{enriched_by}"
 
         # Clear / set awaiting_since alongside status
         awaiting_sql = (
@@ -191,6 +191,7 @@ def list_builds(include_wiki: bool = False) -> list[dict]:
                         ELSE CAST(
                           (julianday('now') - julianday(awaiting_since)) * 86400
                           AS INTEGER) END AS awaiting_for_seconds,
+                   ingest_kind,
                    created_at
             FROM builds
         """
@@ -212,6 +213,7 @@ def list_builds(include_wiki: bool = False) -> list[dict]:
             "completed_by": r["completed_by"] if "completed_by" in r.keys() else "",
             "awaiting_since": r["awaiting_since"] if "awaiting_since" in r.keys() else None,
             "awaiting_for_seconds": r["awaiting_for_seconds"] if "awaiting_for_seconds" in r.keys() else None,
+            "ingest_kind": r["ingest_kind"] if "ingest_kind" in r.keys() else "full",
             "created_at": r["created_at"],
         }
         for r in rows

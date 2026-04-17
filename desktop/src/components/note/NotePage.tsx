@@ -1,11 +1,14 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Database, Tag, FolderOpen } from "lucide-react";
-import { NoteEditor } from "../editor/NoteEditor";
+import { Database, Tag, FolderOpen, Shuffle } from "lucide-react";
+import { NoteEditor, type LineMeta } from "../editor/NoteEditor";
 import { NoteSegments } from "./NoteSegments";
 import { IngestDialog } from "./IngestDialog";
+import { PackBadge } from "./PackBadge";
+import { ReorganizeDialog } from "./ReorganizeDialog";
+import { BookmarksButton } from "./BookmarksButton";
 import { cn } from "@/lib/cn";
-import { pickRawFile, saveRawPathForHotkey, writeFile } from "@/lib/electron";
+import { pickRawFile, saveRawPathForHotkey } from "@/lib/electron";
 import * as api from "@/lib/api";
 import type { IngestStep } from "@/App";
 
@@ -25,11 +28,101 @@ type Props = {
 
 export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIngestComplete, ingestBusy, ingestSteps, ingestResult, buildVersion, tags, onTagsChanged }: Props) {
   const [showIngest, setShowIngest] = useState(false);
+  const [showReorganize, setShowReorganize] = useState(false);
   const [activeBuild, setActiveBuild] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [scrollTarget, setScrollTarget] = useState<{ start: number; end: number } | null>(null);
   const [showTags, setShowTags] = useState(() => localStorage.getItem("smartnote-show-tags") !== "false");
   const [recentDone, setRecentDone] = useState(false);
+  const [lineMetaRows, setLineMetaRows] = useState<api.NoteLineMeta[]>([]);
+  const [pendingPacks, setPendingPacks] = useState<number>(0);
+  const [packsRefreshKey, setPacksRefreshKey] = useState(0);
+
+  // Build the line-number → meta map the editor reads. Deriving (not storing)
+  // keeps the mapping in sync with whichever meta list arrived most recently.
+  const lineMeta = useMemo<LineMeta>(() => {
+    const m: LineMeta = new Map();
+    for (const row of lineMetaRows) {
+      if (row.line_no_last > 0) {
+        m.set(row.line_no_last, {
+          ts: row.ts,
+          bookmark: row.bookmark || undefined,
+          highlight: row.highlight_color || undefined,
+        });
+      }
+    }
+    return m;
+  }, [lineMetaRows]);
+
+  const bookmarks = useMemo(
+    () => lineMetaRows.filter((r) => r.bookmark && r.line_no_last > 0),
+    [lineMetaRows]
+  );
+
+  // Fetch line meta + pending pack count for the current file. Called on
+  // mount, after save, and after apply/discard.
+  const refreshNoteState = useCallback(async () => {
+    if (!rawPath) return;
+    try {
+      const [meta, packs] = await Promise.all([
+        api.fetchNoteLineMeta(rawPath),
+        api.fetchPacks(rawPath, "pending"),
+      ]);
+      setLineMetaRows(meta.lines);
+      setPendingPacks(packs.pending_count);
+    } catch {
+      /* offline / gateway down — silent */
+    }
+  }, [rawPath]);
+
+  // Toggle: if line is already bookmarked (hash match), clear; else set.
+  // We send the line content + number so the backend can upsert a row for
+  // files that haven't been saved through /note/save yet.
+  const handleToggleBookmark = useCallback(async (lineNo: number, lineText: string) => {
+    if (!rawPath) return;
+    const trimmed = lineText.trim();
+    if (!trimmed) return;  // skip blank lines — they have no identity
+    try {
+      const hash = await api.lineHash(lineText);
+      const existing = lineMetaRows.find((r) => r.line_hash === hash);
+      const isBookmarked = Boolean(existing?.bookmark);
+      await api.setLineMark(rawPath, hash, {
+        bookmark: isBookmarked ? "" : trimmed.slice(0, 80),
+        line_preview: trimmed,
+        line_no: lineNo,
+      });
+      refreshNoteState();
+    } catch (e) {
+      console.warn("bookmark toggle failed:", e);
+    }
+  }, [rawPath, lineMetaRows, refreshNoteState]);
+
+  const handleRemoveBookmark = useCallback(async (hash: string) => {
+    if (!rawPath) return;
+    try {
+      await api.setLineMark(rawPath, hash, { bookmark: "" });
+      refreshNoteState();
+    } catch { /* silent */ }
+  }, [rawPath, refreshNoteState]);
+
+  useEffect(() => { refreshNoteState(); }, [refreshNoteState, packsRefreshKey]);
+
+  // External-edit detection: poll /note/load every 20s. If the file was
+  // changed outside SmartNote, the backend creates an 'external' pack which
+  // the badge will then surface.
+  useEffect(() => {
+    if (!rawPath) return;
+    // Initial load: ensures baseline md5 is recorded for this session.
+    api.loadNote(rawPath).then(() => refreshNoteState()).catch(() => {});
+    const id = setInterval(() => {
+      api.loadNote(rawPath).then((r) => {
+        if (r.external_pack_created) {
+          setPacksRefreshKey((k) => k + 1);
+        }
+      }).catch(() => {});
+    }, 20_000);
+    return () => clearInterval(id);
+  }, [rawPath, refreshNoteState]);
 
   useEffect(() => {
     api.fetchBuilds().then((d) => {
@@ -67,10 +160,16 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
   }
 
   const handleSave = useCallback(async (content: string) => {
+    // Route through the gateway so the backend creates a pending ingest
+    // pack + stamps per-line ts. The backend also writes the file — we no
+    // longer go through Electron's writeFile here.
     try {
-      await writeFile(rawPath, content);
-    } catch {}
-  }, [rawPath]);
+      await api.saveNote(rawPath, content);
+      refreshNoteState();
+    } catch {
+      /* silent — dirty flag stays true if the backend is unreachable */
+    }
+  }, [rawPath, refreshNoteState]);
 
   if (!rawPath) {
     return (
@@ -135,6 +234,14 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
           </button>
           <button
             type="button"
+            onClick={() => setShowReorganize(true)}
+            className="proto-note-header-icon-btn"
+            title="Reorganize note by tag — destructive rewrite with snapshot"
+          >
+            <Shuffle size={14} strokeWidth={2} />
+          </button>
+          <button
+            type="button"
             onClick={() => setShowIngest(true)}
             className="proto-note-header-icon-btn"
             title="Ingest"
@@ -169,7 +276,29 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
           )}
         </AnimatePresence>
         <div className="proto-note-editor-area">
-          <NoteEditor filePath={rawPath} onSave={handleSave} onDirty={setDirty} scrollToRange={scrollTarget} />
+          <NoteEditor
+            filePath={rawPath}
+            onSave={handleSave}
+            onDirty={setDirty}
+            scrollToRange={scrollTarget}
+            lineMeta={lineMeta}
+            onToggleBookmark={handleToggleBookmark}
+          />
+          {rawPath && (
+            <div className="proto-note-floating-stack">
+              <BookmarksButton
+                bookmarks={bookmarks}
+                onJumpToLine={(line) => setScrollTarget({ start: line, end: line })}
+                onRemove={handleRemoveBookmark}
+              />
+              <PackBadge
+                rawPath={rawPath}
+                pendingCount={pendingPacks}
+                onChanged={() => setPacksRefreshKey((k) => k + 1)}
+                onJumpToLine={(line) => setScrollTarget({ start: line, end: line })}
+              />
+            </div>
+          )}
         </div>
       </div>
 
@@ -184,6 +313,17 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
           onIngestComplete={onIngestComplete}
         />
       )}
+
+      <ReorganizeDialog
+        rawPath={rawPath}
+        notePath={notePath}
+        open={showReorganize}
+        onClose={() => setShowReorganize(false)}
+        onApproved={() => {
+          refreshNoteState();
+          onIngestComplete();
+        }}
+      />
     </div>
   );
 }

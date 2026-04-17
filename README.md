@@ -195,9 +195,13 @@ Custom tags can be added, reordered, and color-coded.
 │   │   ├── hooks/              React hooks
 │   │   └── lib/                API client, types
 │   └── public/                 Icons
-├── embedding/                  Docker embedding service
+├── local_embedding/            Docker embedding service
 ├── scripts/                    Startup & maintenance
+├── sample/                     First-run onboarding note
 ├── docs/                       Design documents
+├── claude-skill.md             Claude Code MCP guide
+├── cursor-skill.md             Cursor MCP guide
+├── opencode-skill.md           OpenCode MCP guide
 └── docker-compose.yml
 ```
 
@@ -206,10 +210,21 @@ Custom tags can be added, reordered, and color-coded.
 | Script | What it does |
 |--------|-------------|
 | `scripts/restart-all.sh` | Start everything (`--with-docker` for embedding) |
-| `scripts/restart-server.sh` | Backend: venv → deps → DB migrate → serve |
-| `scripts/restart-client.sh` | Desktop: npm install → Electron |
-| `scripts/restart-docker.sh` | Docker embedding service |
+| `scripts/restart-server.sh` | Backend: venv → deps (hash-skipped) → DB migrate → serve |
+| `scripts/restart-client.sh` | Desktop: npm (hash-skipped) → Electron |
+| `scripts/restart-docker.sh` | Docker embedding service (model pre-baked into image) |
+| `scripts/install-pdf-support.sh` | Optional PDF / OCR deps (~250 MB extra) |
 | `scripts/clean-data.sh` | Reset all data (DB, views, versions) |
+
+### Dependency tiers
+
+| Tier | Weight | Installed by | When needed |
+|------|--------|--------------|-------------|
+| Core (`requirements.txt`) | ~80 MB | `restart-server.sh` | Always — FastAPI, numpy, jieba, MCP |
+| Optional (`requirements-optional.txt`) | ~250 MB | `install-pdf-support.sh` | PDF import, URL → Markdown, OCR |
+| Embedding model | ~90 MB model + ~2 GB torch | Docker image (baked at build) | Local vector embeddings |
+
+Restart scripts skip `pip install` / `npm install` when `requirements.txt` / `package-lock.json` hashes are unchanged — typical hot restart is 1–2 seconds end-to-end.
 
 ## Tech Stack
 
@@ -231,6 +246,53 @@ Contributions are welcome. Please open an issue first to discuss what you'd like
 ./scripts/restart-server.sh     # backend on :8787
 ./scripts/restart-client.sh     # Electron + Vite HMR on :1420
 ```
+
+## Roadmap
+
+Phased by "stabilize first, then extend, then scale." Each phase is ~2–4 weeks of focused work.
+
+### Phase 1 · Foundations (P0)
+
+Lock down what's already designed before adding more.
+
+- **Retrieval golden-set tests** — ~50 curated queries with expected evidence ids; pytest measures Recall@3 / MRR; CI gate
+- **Structured logging with `request_id`** — per-query path scores, selected evidence, latency breakdown streamed as JSONL alongside `query_logs` / `answer_logs`
+- **Read/write SQLite split** — `/search` on read-only connection, `/ingest` and `/feedback` on write connection; connection pool sized for concurrency
+- **Async feedback processing** — `/feedback` only writes `feedback_logs`; a background worker handles memory distillation and adaptive-weight updates
+- **Normalize `query_profile` keys** — lowercase + strip punctuation + jieba-normalize before keying; merge near-duplicate profiles
+
+### Phase 2 · Retrieval Intelligence (P1)
+
+Put the feedback signal to real work.
+
+- **Learned reranker** — treat `+1` / click history as preference pairs; train a small cross-encoder (or LoRA-tune `bge-reranker`) to replace the LLM rerank call
+- **Memory as a 7th recall path** — graduate memory from boost layer to full recall participant; its weight also enters adaptive fusion
+- **Knowledge-graph retrieval path** — entities + relations are already extracted; add "entity → neighborhood expansion → back-link to text evidence" as a recall path
+- **Cross-query generalization** — cluster `query_profiles` by embedding; share learned weights across the cluster to warm-start new queries
+
+### Phase 3 · Agentic & Skill (P1)
+
+Shift from passive KB to proactive assistant.
+
+- **Skill Inspector** — parse external MCP server schemas, diff versions, surface dependency topology
+- **Proactive suggestions** — dashboard surfaces signals from `search_misses`, `knowledge_gaps`, `split_suggestions` ("you've asked about X three times but it isn't in your KB — import?")
+- **Scheduled redistill** — periodic scan of `wiki_topics`; auto-trigger `redistill_wiki` when sources have changed; backfill entities during idle windows
+
+### Phase 4 · Multi-Device & Collaboration (P2)
+
+Single-user desktop → multi-device and small teams.
+
+- **CLI client** — reuses the MCP server tool surface; `smartnote search/ask/ingest` for terminal-native users
+- **iOS consumer client** — read + capture only; writes via iCloud file drop, reads via HTTPS gateway
+- **Multi-user backend** — SQLite → PostgreSQL + pgvector; per-user auth and isolation; shared embedding/LLM workers
+- **Managed gateway** — move LLM routing, fallback, cost tracking, and token accounting into a hosted gateway layer
+
+### Phase 5 · Commercialization (P2+)
+
+- North-star metrics pipeline with retention and usage analytics
+- Topic subscriptions — newsletter-style periodic digests of new evidence on watched topics
+- Third-party MCP skill marketplace
+- Enterprise tier — RBAC, audit logs, SSO
 
 ## License
 

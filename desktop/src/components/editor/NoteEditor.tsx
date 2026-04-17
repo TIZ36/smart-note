@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection, Decoration, type DecorationSet } from "@codemirror/view";
-import { EditorState, StateField, StateEffect } from "@codemirror/state";
+import { EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection, Decoration, WidgetType, gutter, GutterMarker, type DecorationSet } from "@codemirror/view";
+import { EditorState, StateField, StateEffect, RangeSetBuilder, RangeSet } from "@codemirror/state";
 import { markdown } from "@codemirror/lang-markdown";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
@@ -8,12 +8,176 @@ import { readFileFull } from "@/lib/electron";
 
 type LineRange = { start: number; end: number };
 
+/** Per-line metadata rendered to the right of each line. Keyed by 1-based line number. */
+export type LineMeta = Map<number, { ts?: string | null; bookmark?: string; highlight?: string }>;
+
 type Props = {
   filePath: string;
   onSave: (content: string) => void;
   onDirty?: (dirty: boolean) => void;
   scrollToRange?: LineRange | null;
+  lineMeta?: LineMeta;
+  /** Cmd+B toggles a bookmark on the active line. Parent handles storage. */
+  onToggleBookmark?: (lineNo: number, lineText: string) => void;
 };
+
+/* Right-aligned inline widget that surfaces per-line metadata — ts label
+   plus an optional highlight color dot. Bookmarks live in a dedicated
+   left gutter (see `bookmarkGutter` below) rather than here, so the star
+   doesn't compete with the timestamp for the same sliver of space. */
+class LineMetaWidget extends WidgetType {
+  constructor(readonly label: string, readonly highlight?: string) { super(); }
+  eq(other: LineMetaWidget) {
+    return other.label === this.label && other.highlight === this.highlight;
+  }
+  toDOM() {
+    const wrap = document.createElement("span");
+    wrap.className = "cm-line-meta";
+    if (this.highlight) {
+      const h = document.createElement("span");
+      h.className = "cm-line-meta-highlight";
+      h.style.background = this.highlight;
+      wrap.appendChild(h);
+    }
+    if (this.label) {
+      const ts = document.createElement("span");
+      ts.className = "cm-line-meta-ts";
+      ts.textContent = this.label;
+      wrap.appendChild(ts);
+    }
+    return wrap;
+  }
+  ignoreEvent() { return true; }
+}
+
+/* Bookmark marker in the left gutter — IDE "breakpoint column" convention.
+   Uses the lucide Bookmark glyph (filled) at medium size. Hover reveals
+   the bookmark label via tooltip. Never editable — click-to-jump lives
+   in the floating panel. */
+const BOOKMARK_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" ' +
+  'fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" ' +
+  'stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/>' +
+  "</svg>";
+
+class BookmarkGutterMarker extends GutterMarker {
+  constructor(readonly label: string) { super(); }
+  eq(other: GutterMarker): boolean {
+    return other instanceof BookmarkGutterMarker && other.label === this.label;
+  }
+  toDOM() {
+    const el = document.createElement("span");
+    el.className = "cm-bookmark-marker";
+    el.innerHTML = BOOKMARK_SVG;
+    el.title = this.label || "Bookmarked";
+    el.setAttribute("aria-label", `Bookmarked: ${this.label || "(no label)"}`);
+    return el;
+  }
+}
+
+/* Invisible spacer — reserves the gutter column width even when no
+   bookmarks exist, so line numbers don't jiggle left/right as the user
+   toggles bookmarks. Sized identically to the real marker. */
+class BookmarkSpacerMarker extends GutterMarker {
+  eq(other: GutterMarker): boolean { return other instanceof BookmarkSpacerMarker; }
+  toDOM() {
+    const el = document.createElement("span");
+    el.className = "cm-bookmark-spacer";
+    return el;
+  }
+}
+
+const setLineMetaEffect = StateEffect.define<LineMeta | null>();
+
+/* StateField derived from the same setLineMetaEffect the right-side widget
+   consumes — single source of truth, two presentations (right widget for
+   ts/highlight, left gutter for bookmark). */
+const bookmarkLinesField = StateField.define<Map<number, string>>({
+  create: () => new Map(),
+  update(value, tr) {
+    for (const e of tr.effects) {
+      if (e.is(setLineMetaEffect)) {
+        if (!e.value) return new Map();
+        const m = new Map<number, string>();
+        for (const [lineNo, meta] of e.value) {
+          if (meta.bookmark) m.set(lineNo, meta.bookmark);
+        }
+        return m;
+      }
+    }
+    return value;
+  },
+});
+
+const bookmarkGutterExt = gutter({
+  class: "cm-gutter-bookmark",
+  markers(view) {
+    const map = view.state.field(bookmarkLinesField);
+    if (map.size === 0) return RangeSet.empty;
+    const builder = new RangeSetBuilder<GutterMarker>();
+    const totalLines = view.state.doc.lines;
+    const sorted = Array.from(map.entries()).sort(([a], [b]) => a - b);
+    for (const [lineNo, label] of sorted) {
+      if (lineNo < 1 || lineNo > totalLines) continue;
+      const line = view.state.doc.line(lineNo);
+      builder.add(line.from, line.from, new BookmarkGutterMarker(label));
+    }
+    return builder.finish();
+  },
+  initialSpacer: () => new BookmarkSpacerMarker(),
+});
+const lineMetaField = StateField.define<DecorationSet>({
+  create() { return Decoration.none; },
+  update(deco, tr) {
+    let meta: LineMeta | null | undefined;
+    for (const e of tr.effects) {
+      if (e.is(setLineMetaEffect)) meta = e.value;
+    }
+    if (meta === undefined) {
+      // Not updated this tx; only re-map on doc change to keep widgets aligned.
+      return tr.docChanged ? deco.map(tr.changes) : deco;
+    }
+    if (!meta || meta.size === 0) return Decoration.none;
+    const decos = [];
+    const totalLines = tr.state.doc.lines;
+    for (const [lineNo, m] of meta) {
+      if (lineNo < 1 || lineNo > totalLines) continue;
+      const line = tr.state.doc.line(lineNo);
+      const label = formatLineTs(m.ts);
+      // Bookmarks render in the left gutter — the right-side widget only
+      // carries ts + optional highlight dot so it stays narrow.
+      if (!label && !m.highlight) continue;
+      decos.push(
+        Decoration.widget({
+          widget: new LineMetaWidget(label, m.highlight),
+          side: 1,
+        }).range(line.to)
+      );
+    }
+    return Decoration.set(decos, true);
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
+function formatLineTs(ts?: string | null): string {
+  if (!ts) return "";
+  try {
+    const d = new Date(ts.replace(" ", "T") + "Z");
+    if (isNaN(d.getTime())) return "";
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    const ss = String(d.getSeconds()).padStart(2, "0");
+    if (sameDay) return `${hh}:${mm}:${ss}`;
+    const mo = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${mo}-${dd} ${hh}:${mm}:${ss}`;
+  } catch {
+    return "";
+  }
+}
 
 /* Highlight effect for scroll-to-range (multiple lines) */
 const setHighlightRange = StateEffect.define<LineRange | null>();
@@ -109,7 +273,9 @@ const editorTheme = EditorView.theme({
   },
 });
 
-export function NoteEditor({ filePath, onSave, onDirty, scrollToRange }: Props) {
+export function NoteEditor({ filePath, onSave, onDirty, scrollToRange, lineMeta, onToggleBookmark }: Props) {
+  const onToggleBookmarkRef = useRef(onToggleBookmark);
+  onToggleBookmarkRef.current = onToggleBookmark;
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [loading, setLoading] = useState(true);
@@ -152,10 +318,22 @@ export function NoteEditor({ filePath, onSave, onDirty, scrollToRange }: Props) 
         viewRef.current.destroy();
       }
 
-      const saveKeymap = keymap.of([{
-        key: "Mod-s",
-        run: () => { handleSave(); return true; },
-      }]);
+      const saveKeymap = keymap.of([
+        { key: "Mod-s", run: () => { handleSave(); return true; } },
+        // Cmd+B (or Ctrl+B) toggles a bookmark on the line under the cursor.
+        // Parent owns the storage logic; we just surface "line at cursor".
+        {
+          key: "Mod-b",
+          run: (view) => {
+            const cb = onToggleBookmarkRef.current;
+            if (!cb) return false;
+            const pos = view.state.selection.main.head;
+            const line = view.state.doc.lineAt(pos);
+            cb(line.number, line.text);
+            return true;
+          },
+        },
+      ]);
 
       const updateListener = EditorView.updateListener.of((update) => {
         if (update.docChanged) {
@@ -170,6 +348,10 @@ export function NoteEditor({ filePath, onSave, onDirty, scrollToRange }: Props) 
       const state = EditorState.create({
         doc: content,
         extensions: [
+          // Order matters for gutter placement: bookmark column lives to
+          // the LEFT of line numbers, mirroring IDE breakpoint gutters.
+          bookmarkLinesField,
+          bookmarkGutterExt,
           lineNumbers(),
           highlightActiveLine(),
           drawSelection(),
@@ -181,6 +363,7 @@ export function NoteEditor({ filePath, onSave, onDirty, scrollToRange }: Props) 
           updateListener,
           editorTheme,
           highlightRangeField,
+          lineMetaField,
           EditorView.lineWrapping,
         ],
       });
@@ -245,6 +428,13 @@ export function NoteEditor({ filePath, onSave, onDirty, scrollToRange }: Props) 
 
     return () => clearInterval(id);
   }, [filePath]);
+
+  // Push line meta into the editor whenever the prop changes.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({ effects: setLineMetaEffect.of(lineMeta ?? null) });
+  }, [lineMeta]);
 
   // Scroll to a line range when requested
   useEffect(() => {

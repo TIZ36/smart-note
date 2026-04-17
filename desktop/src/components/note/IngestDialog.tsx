@@ -68,10 +68,10 @@ export function IngestDialog({ rawPath, notePath, ingestBusy, ingestSteps, inges
           <div className="proto-btn-group" style={{ marginBottom: 20 }}>
             <button type="button" onClick={() => handleIngest(false)} disabled={ingestBusy || !rawPath} className="proto-btn proto-btn-primary" style={{ flex: 1, justifyContent: "center" }}>
               {ingestBusy ? <Loader2 size={14} className="animate-spin" /> : null}
-              Ingest (incremental)
+              Accumu
             </button>
             <button type="button" onClick={() => handleIngest(true)} disabled={ingestBusy || !rawPath} className="proto-btn proto-btn-secondary" style={{ flex: 1, justifyContent: "center" }}>
-              Rebuild all
+              Ingest All
             </button>
           </div>
 
@@ -110,6 +110,12 @@ export function IngestDialog({ rawPath, notePath, ingestBusy, ingestSteps, inges
                   <div className="flex-1 min-w-0">
                     <div className="proto-version-id">
                       {b.id}
+                      <span className={cn(
+                        "proto-version-kind",
+                        b.ingest_kind === "incremental" ? "proto-version-kind-incremental" : "proto-version-kind-full",
+                      )}>
+                        {b.ingest_kind === "incremental" ? "accumu" : "all"}
+                      </span>
                       <BuildAttributionBadge enrichStatus={b.enrich_status} completedBy={b.completed_by} awaitingForSeconds={b.awaiting_for_seconds} />
                     </div>
                     <div className="proto-version-meta">

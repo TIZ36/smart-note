@@ -1,8 +1,10 @@
 services:
   local-embed:
     build:
-      context: ./embedding
+      context: ./local_embedding
       dockerfile: Dockerfile
+      args:
+        MODEL_NAME: sentence-transformers/all-MiniLM-L6-v2
     ports:
       - "8009:8009"
     environment:

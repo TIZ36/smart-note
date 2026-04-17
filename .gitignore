@@ -15,7 +15,6 @@ desktop/release/
 # ── Data (user-specific, not committed) ──
 server/data/
 data/
-sample/note.md
 sample/views/
 sample/.state.json
 sample/candidates/

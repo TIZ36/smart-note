@@ -326,6 +326,8 @@ export type BuildInfo = {
   awaiting_since: string | null;
   // Seconds elapsed since awaiting_since; null when not awaiting.
   awaiting_for_seconds: number | null;
+  // 'full' (rebuild all) | 'incremental' (accumu)
+  ingest_kind: string;
   created_at: string;
 };
 
@@ -412,6 +414,353 @@ export async function addMetaMemory(params: { text: string; kind?: string; scope
 export async function deleteMetaMemory(id: number): Promise<{ deleted: number }> {
   const res = await fetch(`${BASE}/meta-memory/${id}`, { method: "DELETE" });
   if (!res.ok) throw new Error(`delete meta-memory: ${res.status}`);
+  return res.json();
+}
+
+// Conflicts — ingest re-classified lines a different way than before. User
+// has to pick a side so the segment's tag is no longer split-brain.
+export type Conflict = {
+  id: number;
+  build_id: string;
+  source_file: string;
+  line_start: number;
+  line_end: number;
+  existing_tag: string;
+  existing_topic: string | null;
+  incoming_tag: string;
+  incoming_topic: string | null;
+  incoming_summary: string | null;
+  status: string;
+  created_at: string;
+};
+
+export type ConflictChoice = "keep_existing" | "accept_incoming" | "dismiss";
+
+export async function fetchConflicts(): Promise<{ conflicts: Conflict[] }> {
+  const res = await fetch(`${BASE}/conflicts?status=pending`);
+  if (!res.ok) throw new Error(`conflicts: ${res.status}`);
+  return res.json();
+}
+
+export async function resolveConflict(conflictId: number, choice: ConflictChoice): Promise<{ resolved: number; choice: string }> {
+  const res = await fetch(`${BASE}/conflicts/resolve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ conflict_id: conflictId, choice }),
+  });
+  if (!res.ok) throw new Error(`resolve conflict: ${res.status}`);
+  return res.json();
+}
+
+// Enrich queue — delegate-mode ingests with classifications pending.
+// If it sits here too long, segments stay invisible to tag filters.
+export type EnrichQueueSummary = {
+  kind: string;
+  note_segments?: { pending_builds: number; builds: { build_id: string; source_file: string; chunks: number }[] };
+  wiki_chunks?: { pending_chunks: number };
+  wiki_topic?: { pending_topics: number };
+  doc_format?: { pending_docs: number };
+};
+
+export async function fetchEnrichQueue(): Promise<EnrichQueueSummary> {
+  const res = await fetch(`${BASE}/enrich-queue?kind=summary`);
+  if (!res.ok) throw new Error(`enrich-queue: ${res.status}`);
+  return res.json();
+}
+
+// Skills — reusable recipes from notes, read and executed by any CLI
+// (Claude Code, Cursor, OpenCode). SmartNote stores the recipe; it does not
+// execute. The UI shows them read-only; new ones come from upload_skill.
+export type SkillNode = {
+  name: string;
+  description?: string;
+  trigger_hints?: string[];
+  expected_tag?: string;
+};
+
+export type SkillTemplate = {
+  id: number;
+  name: string;
+  description: string;
+  kind: "periodic" | "sequence";
+  period_hint: "daily" | "weekly" | "monthly" | "ad_hoc";
+  nodes: SkillNode[];
+  source_segment_ids: number[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type SkillRunStep = {
+  name: string;
+  status?: string;
+  evidence_chunk_ids?: number[];
+  notes?: string;
+};
+
+export type SkillRun = {
+  id: number;
+  template_id: number;
+  slice_start_ts: string;
+  slice_end_ts: string;
+  status: "pending_exec" | "completed" | "skipped";
+  result_summary: string;
+  steps: SkillRunStep[];
+  triggered_by: string;
+  started_at: string;
+  finished_at: string | null;
+};
+
+export type SkillRunBundle = {
+  run: SkillRun;
+  bundle: {
+    template: SkillTemplate;
+    slice: {
+      slice_start_ts: string;
+      slice_end_ts: string;
+      chunk_count: number;
+      chunks: { id: number; source_ref: string; text: string; note_ts: string }[];
+    };
+  };
+};
+
+export async function fetchSkills(): Promise<{ templates: SkillTemplate[] }> {
+  const res = await fetch(`${BASE}/skills`);
+  if (!res.ok) throw new Error(`skills: ${res.status}`);
+  return res.json();
+}
+
+export async function runSkill(name: string, sliceDays = 7): Promise<SkillRunBundle> {
+  const res = await fetch(`${BASE}/skills/${encodeURIComponent(name)}/run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ slice_days: sliceDays, triggered_by: "ui" }),
+  });
+  if (!res.ok) throw new Error(`run skill: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchSkillRuns(templateId?: number): Promise<{ runs: SkillRun[] }> {
+  const url = templateId
+    ? `${BASE}/skill-runs?template_id=${templateId}&limit=20`
+    : `${BASE}/skill-runs?limit=20`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`skill runs: ${res.status}`);
+  return res.json();
+}
+
+export async function deleteSkill(templateId: number): Promise<void> {
+  await fetch(`${BASE}/skills/${templateId}`, { method: "DELETE" });
+}
+
+// Partial field update. Only text fields can be changed — structural
+// changes (add/remove/reorder nodes) must go through the full POST.
+export type SkillNodePatch = {
+  index: number;
+  name?: string;
+  description?: string;
+  trigger_hints?: string[];
+  expected_tag?: string;
+};
+
+export type SkillPatchBody = {
+  description?: string;
+  new_name?: string;
+  kind?: "periodic" | "sequence";
+  period_hint?: "daily" | "weekly" | "monthly" | "ad_hoc";
+  nodes?: SkillNodePatch[];
+};
+
+export async function patchSkill(name: string, body: SkillPatchBody): Promise<SkillTemplate> {
+  const res = await fetch(`${BASE}/skills/${encodeURIComponent(name)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `skill patch: ${res.status}`);
+  }
+  return res.json();
+}
+
+// Ingest packs — each save or external edit creates a pending pack,
+// surfaced in the bottom-right badge until the user applies or discards.
+export type PackChange = {
+  op: "insert" | "delete" | "replace";
+  line: number;           // 1-based line number in the NEW file (jump target)
+  range: [number, number]; // [start, end] inclusive; end < start means pure delete at `line`
+  chars_added: number;
+  chars_removed: number;
+  chars: number;           // signed delta = added - removed
+  preview: string;
+};
+
+export type IngestPack = {
+  id: number;
+  raw_path: string;
+  kind: "in_app" | "external";
+  diff_patch: string;
+  before_md5: string;
+  after_md5: string;
+  lines_added: number;
+  lines_removed: number;
+  byte_delta: number;
+  note: string;
+  status: "pending" | "applied" | "discarded" | "merged";
+  merged_into: number | null;
+  applied_build_id: string | null;
+  changes: PackChange[];
+  created_at: string;
+  applied_at: string | null;
+};
+
+export type NoteLineMeta = {
+  line_no_last: number;
+  line_hash: string;
+  line_preview: string;
+  ts: string | null;
+  bookmark: string;
+  highlight_color: string;
+  highlight_note: string;
+  updated_at: string;
+};
+
+export type NoteFileState = {
+  file_path: string;
+  md5: string;
+  mtime: number | null;
+  line_count: number;
+  byte_size: number;
+};
+
+export async function saveNote(rawPath: string, content: string, note = ""): Promise<{ pack: IngestPack; file_state: NoteFileState; lines_stamped: number }> {
+  const res = await fetch(`${BASE}/note/save`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ raw_path: rawPath, content, note }),
+  });
+  if (!res.ok) throw new Error(`save note: ${res.status}`);
+  return res.json();
+}
+
+export async function loadNote(rawPath: string): Promise<{ exists: boolean; content: string; file_state: NoteFileState | null; external_pack_created: boolean; external_pack: IngestPack | null }> {
+  const res = await fetch(`${BASE}/note/load?raw_path=${encodeURIComponent(rawPath)}`);
+  if (!res.ok) throw new Error(`load note: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchNoteLineMeta(rawPath: string): Promise<{ lines: NoteLineMeta[] }> {
+  const res = await fetch(`${BASE}/note/line-meta?raw_path=${encodeURIComponent(rawPath)}`);
+  if (!res.ok) throw new Error(`line-meta: ${res.status}`);
+  return res.json();
+}
+
+// Compute the canonical line_hash the backend uses. Must match
+// server/app/packs.py::_line_hash — sha256 of trimmed line, first 16 hex.
+export async function lineHash(line: string): Promise<string> {
+  const trimmed = line.trim();
+  const buf = new TextEncoder().encode(trimmed);
+  const digest = await crypto.subtle.digest("SHA-256", buf);
+  return Array.from(new Uint8Array(digest).slice(0, 8))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+export async function setLineMark(
+  rawPath: string,
+  lineHashValue: string,
+  marks: {
+    bookmark?: string;
+    highlight_color?: string;
+    highlight_note?: string;
+    line_preview?: string;
+    line_no?: number;
+  }
+): Promise<NoteLineMeta> {
+  const res = await fetch(`${BASE}/note/line-mark`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ raw_path: rawPath, line_hash: lineHashValue, ...marks }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `line-mark: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchPacks(rawPath?: string, status: "pending" | "applied" | "discarded" | "all" = "pending"): Promise<{ packs: IngestPack[]; pending_count: number }> {
+  const q = new URLSearchParams({ status, ...(rawPath ? { raw_path: rawPath } : {}) });
+  const res = await fetch(`${BASE}/packs?${q.toString()}`);
+  if (!res.ok) throw new Error(`packs: ${res.status}`);
+  return res.json();
+}
+
+export async function applyPack(packId: number): Promise<{ pack: IngestPack; build_id: string | null; applied_siblings_count: number }> {
+  const res = await fetch(`${BASE}/packs/${packId}/apply`, { method: "POST" });
+  if (!res.ok) throw new Error(`apply pack: ${res.status}`);
+  return res.json();
+}
+
+export async function applyAllPacks(rawPath: string): Promise<{ applied: number; build_id: string | null }> {
+  const res = await fetch(`${BASE}/packs/apply-all`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ raw_path: rawPath }),
+  });
+  if (!res.ok) throw new Error(`apply-all: ${res.status}`);
+  return res.json();
+}
+
+export async function discardPack(packId: number): Promise<IngestPack> {
+  const res = await fetch(`${BASE}/packs/${packId}/discard`, { method: "POST" });
+  if (!res.ok) throw new Error(`discard pack: ${res.status}`);
+  return res.json();
+}
+
+export async function mergePacks(packIds: number[]): Promise<IngestPack> {
+  const res = await fetch(`${BASE}/packs/merge`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pack_ids: packIds }),
+  });
+  if (!res.ok) throw new Error(`merge packs: ${res.status}`);
+  return res.json();
+}
+
+// Reorganize by tag — destructive rewrite of raw.md into tag-grouped
+// sections. Preview first, approve commits with snapshot + reset ingest.
+export type ReorganizePreview = {
+  raw_path: string;
+  before: string;
+  candidate: string;
+  line_count_before: number;
+  line_count_after: number;
+  tags_used: string[];
+  unclassified_lines: number;
+  warning: string;
+};
+
+export async function previewReorganize(rawPath: string): Promise<ReorganizePreview> {
+  const res = await fetch(`${BASE}/note/reorganize-preview`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ raw_path: rawPath }),
+  });
+  if (!res.ok) throw new Error(`reorganize preview: ${res.status}`);
+  return res.json();
+}
+
+export async function approveReorganize(rawPath: string, candidate: string, notePath?: string): Promise<{ raw_path: string; build_id: string | null; snapshot: { id: string; path: string }; packs_closed: number; bytes_written: number }> {
+  const res = await fetch(`${BASE}/note/reorganize-approve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ raw_path: rawPath, candidate, ...(notePath ? { note_path: notePath } : {}) }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `reorganize approve: ${res.status}`);
+  }
   return res.json();
 }
 

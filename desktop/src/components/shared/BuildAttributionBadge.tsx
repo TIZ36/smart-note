@@ -35,10 +35,12 @@ export function BuildAttributionBadge({ enrichStatus, completedBy, awaitingForSe
       </span>
     );
   }
-  if (completedBy === "mcp:delegate") {
+  if (completedBy.startsWith("mcp:")) {
+    const agent = completedBy.slice("mcp:".length) || "delegate";
+    const label = agent === "delegate" ? "by ai" : `by ${agent}`;
     return (
-      <span className="proto-build-badge proto-build-badge--attribution-prominent" aria-label="Enriched by Claude">
-        by claude
+      <span className="proto-build-badge proto-build-badge--attribution-prominent" aria-label={`Enriched by ${agent}`}>
+        {label}
       </span>
     );
   }

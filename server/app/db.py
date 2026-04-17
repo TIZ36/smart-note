@@ -21,11 +21,13 @@ CREATE TABLE IF NOT EXISTS chunks (
   entities_json TEXT NOT NULL DEFAULT '[]',
   ai_summary TEXT NOT NULL DEFAULT '',
   content_hash TEXT NOT NULL DEFAULT '',
+  note_ts TEXT,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_chunks_dimension ON chunks(dimension);
 CREATE INDEX IF NOT EXISTS idx_chunks_project_slug ON chunks(project_slug);
+CREATE INDEX IF NOT EXISTS idx_chunks_note_ts ON chunks(note_ts);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
   text_segmented,
@@ -134,6 +136,7 @@ CREATE TABLE IF NOT EXISTS builds (
   enrich_status TEXT NOT NULL DEFAULT 'completed',
   completed_by TEXT NOT NULL DEFAULT '',
   awaiting_since TEXT,
+  ingest_kind TEXT NOT NULL DEFAULT 'full',
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -269,6 +272,123 @@ CREATE TABLE IF NOT EXISTS rewrite_validations (
   winner TEXT NOT NULL,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Skills = reusable recipes abstracted from note patterns. Notes record the
+-- skill; any MCP client (Claude Code, Cursor, OpenCode) reads them and
+-- executes themselves. SmartNote stores the recipe + time-sliced context.
+-- kind: 'periodic' (time-cycle ritual) | 'sequence' (ordered stages)
+-- period_hint: 'daily' | 'weekly' | 'monthly' | 'ad_hoc'
+-- nodes_json: ordered list of {name, description, trigger_hints[], expected_tag}
+DROP TABLE IF EXISTS workflow_runs;
+DROP TABLE IF EXISTS workflow_templates;
+
+CREATE TABLE IF NOT EXISTS skill_templates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  description TEXT NOT NULL DEFAULT '',
+  kind TEXT NOT NULL DEFAULT 'periodic',
+  period_hint TEXT NOT NULL DEFAULT 'weekly',
+  nodes_json TEXT NOT NULL DEFAULT '[]',
+  source_segment_ids TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+-- One run = a user-triggered invocation. Client creates a pending run; the
+-- MCP caller (Claude) picks it up, executes, and records the result.
+-- status: 'pending_exec' | 'completed' | 'skipped'
+-- steps_json: per-node result [{name, status, evidence_chunk_ids, notes}]
+CREATE TABLE IF NOT EXISTS skill_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  template_id INTEGER NOT NULL,
+  slice_start_ts TEXT NOT NULL,
+  slice_end_ts TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending_exec',
+  result_summary TEXT NOT NULL DEFAULT '',
+  steps_json TEXT NOT NULL DEFAULT '[]',
+  triggered_by TEXT NOT NULL DEFAULT 'ui',
+  started_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  finished_at TEXT,
+  FOREIGN KEY (template_id) REFERENCES skill_templates(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_skill_runs_tpl ON skill_runs(template_id);
+CREATE INDEX IF NOT EXISTS idx_skill_runs_status ON skill_runs(status);
+
+-- Accumulated ingest packs — each user save (or external edit detection)
+-- creates one pack representing what changed since the last ingest. Packs
+-- are then applied (triggering actual re-ingest) on the user's schedule.
+--
+-- kind: 'in_app'   — save from the SmartNote editor or MCP append
+--       'external' — file changed outside SmartNote (md5 mismatch on load)
+-- status: 'pending'   — counted in the bottom-right badge
+--         'applied'   — the triggered ingest completed
+--         'discarded' — user hid it without applying
+--         'merged'    — collapsed into another pack
+CREATE TABLE IF NOT EXISTS ingest_packs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  raw_path TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'in_app',
+  diff_patch TEXT NOT NULL DEFAULT '',
+  before_md5 TEXT NOT NULL DEFAULT '',
+  after_md5 TEXT NOT NULL DEFAULT '',
+  lines_added INTEGER NOT NULL DEFAULT 0,
+  lines_removed INTEGER NOT NULL DEFAULT 0,
+  byte_delta INTEGER NOT NULL DEFAULT 0,
+  note TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending',
+  merged_into INTEGER,
+  applied_build_id TEXT,
+  -- Structured per-change list for UI. Each entry: {op, line, range, chars,
+  -- chars_added, chars_removed, preview}. Stored alongside diff_patch so the
+  -- UI can show "which line changed and how much" without parsing unified diff.
+  changes_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  applied_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_ingest_packs_path ON ingest_packs(raw_path, status);
+CREATE INDEX IF NOT EXISTS idx_ingest_packs_status ON ingest_packs(status);
+
+-- Per-line note metadata. Keyed by (file_path, line_hash) so marks survive
+-- line-number shifts when the user inserts/deletes above. `line_no_last`
+-- is the last-observed 1-based line number (updated on save); the UI uses
+-- it for rendering, but the hash is the authoritative key.
+--
+-- ts: user-visible write time for the line (set on first-seen save, stable
+-- afterward as long as content doesn't change)
+-- bookmark: non-empty label → bookmarked
+-- highlight_color: non-empty → highlighted with that color
+CREATE TABLE IF NOT EXISTS note_lines (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  file_path TEXT NOT NULL,
+  line_hash TEXT NOT NULL,
+  line_no_last INTEGER NOT NULL DEFAULT 0,
+  line_preview TEXT NOT NULL DEFAULT '',
+  ts TEXT,
+  bookmark TEXT NOT NULL DEFAULT '',
+  highlight_color TEXT NOT NULL DEFAULT '',
+  highlight_note TEXT NOT NULL DEFAULT '',
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(file_path, line_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_note_lines_path ON note_lines(file_path);
+CREATE INDEX IF NOT EXISTS idx_note_lines_bookmark ON note_lines(file_path, bookmark)
+  WHERE bookmark != '';
+
+-- Persisted file state for external-edit detection. Updated after each
+-- successful save or apply. On load, compare the on-disk md5 to the stored
+-- md5 to decide whether the file changed externally.
+CREATE TABLE IF NOT EXISTS note_file_state (
+  file_path TEXT PRIMARY KEY,
+  md5 TEXT NOT NULL,
+  mtime REAL,
+  last_build_id TEXT,
+  line_count INTEGER NOT NULL DEFAULT 0,
+  byte_size INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 MIGRATE_SQL = """
@@ -309,10 +429,32 @@ def migrate_db() -> None:
             "trust_score": "REAL NOT NULL DEFAULT 0",
             "embedding_q8": "BLOB",  # int8-quantized embedding + scale (B3)
             "embedding_scale": "REAL NOT NULL DEFAULT 0",
+            "note_ts": "TEXT",  # user write time (distinct from created_at = ingest time)
         }
         for col, typedef in new_cols.items():
             if col not in columns:
                 conn.execute(f"ALTER TABLE chunks ADD COLUMN {col} {typedef}")
+
+        # Add changes_json to ingest_packs for structured per-line change UI.
+        pack_cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(ingest_packs)").fetchall()
+        }
+        if pack_cols and "changes_json" not in pack_cols:
+            conn.execute(
+                "ALTER TABLE ingest_packs ADD COLUMN changes_json "
+                "TEXT NOT NULL DEFAULT '[]'"
+            )
+
+        if "note_ts" not in columns:
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_chunks_note_ts ON chunks(note_ts)"
+            )
+            # Backfill note_ts from created_at for existing chunks so time
+            # slicing works uniformly. Future writes will supply their own.
+            conn.execute(
+                "UPDATE chunks SET note_ts = created_at "
+                "WHERE note_ts IS NULL AND created_at IS NOT NULL"
+            )
 
         # Backfill content_hash for pre-existing chunks so incremental edit
         # detection has a baseline instead of treating every chunk as changed.
@@ -406,6 +548,8 @@ def migrate_db() -> None:
                     "UPDATE builds SET awaiting_since = created_at "
                     "WHERE awaiting_since IS NULL AND enrich_status = 'awaiting_enrich'"
                 )
+            if "ingest_kind" not in b_cols:
+                conn.execute("ALTER TABLE builds ADD COLUMN ingest_kind TEXT NOT NULL DEFAULT 'full'")
 
         if "search_misses" not in tables:
             conn.executescript(

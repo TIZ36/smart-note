@@ -4,8 +4,8 @@ import { Sidebar } from "./components/layout/Sidebar";
 import { NihoParticles } from "./components/layout/NihoParticles";
 import { SearchPage } from "./components/search/SearchPage";
 import { SettingsPanel } from "./components/settings/SettingsPanel";
-import { DashboardPanel } from "./components/dashboard/DashboardPanel";
-import { MetaMemoryInspector } from "./components/dashboard/MetaMemoryInspector";
+import { InsightsPanel } from "./components/dashboard/InsightsPanel";
+import { SkillsPanel } from "./components/skills/SkillsPanel";
 import { WikiSourcesPanel } from "./components/wiki/WikiSourcesPanel";
 import { Toast } from "./components/layout/Toast";
 import { NotePage } from "./components/note/NotePage";
@@ -195,8 +195,10 @@ export default function App() {
 
   function renderMainPanel() {
     if (activeChannel === "settings") return <SettingsPanel />;
-    if (activeChannel === "dashboard") return <DashboardPanel />;
-    if (activeChannel === "meta-memory") return <MetaMemoryInspector />;
+    if (activeChannel === "insights" || activeChannel === "dashboard" || activeChannel === "meta-memory") {
+      return <InsightsPanel gatewayOnline={health.gatewayOnline} embeddingMode={health.embeddingMode} />;
+    }
+    if (activeChannel === "skills") return <SkillsPanel />;
     if (activeChannel === "source-list") {
       return <WikiSourcesPanel onSelectSource={(path) => setActiveChannel(`source:${path}` as ChannelId)} />;
     }
@@ -232,9 +234,7 @@ export default function App() {
       <Sidebar
         activeChannel={activeChannel}
         onSelect={setActiveChannel}
-        gatewayOnline={health.gatewayOnline}
         ingestBusy={ingestBusy}
-        embeddingMode={health.embeddingMode}
         wikiTopicCount={wikiTopicCount}
       />
       <main className="flex-1 min-w-0 overflow-hidden bg-[var(--color-bg-primary)]">

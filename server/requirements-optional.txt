@@ -1,0 +1,8 @@
+# Optional: wiki import from PDF / URL, OCR for scanned docs.
+# Install with: ./scripts/install-pdf-support.sh
+# Weight: ~250 MB (sympy, onnxruntime, magika, pdfminer, PIL, tesseract bindings).
+
+markitdown[pdf]>=0.1.5
+pdfplumber>=0.11.0
+pytesseract>=0.3.10
+pdf2image>=1.16.0

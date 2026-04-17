@@ -626,6 +626,7 @@ def submit_enrichments(
     kind: str,
     items: Optional[list[dict]] = None,
     items_file: Optional[str] = None,
+    enriched_by: str = "delegate",
 ) -> str:
     """Submit a batch of enrichments for parked delegate-mode artifacts.
 
@@ -656,6 +657,10 @@ def submit_enrichments(
         items_file: absolute path to a local .json (JSON array) or .jsonl
             (newline-delimited JSON) file. When provided, backend reads and
             merges with `items`.
+        enriched_by: your AI/tool name — e.g. "claude-code", "cursor",
+            "opencode", "gemini-cli". Recorded in builds.completed_by as
+            "mcp:<enriched_by>" and shown in the SmartNote builds UI.
+            Defaults to "delegate" (generic fallback).
 
     After submitting, call `list_pending_enrichments('summary')` to see
     what's left.
@@ -664,7 +669,11 @@ def submit_enrichments(
         return "ERROR: kind is required."
     if not items and not items_file:
         return "ERROR: provide items (inline list) or items_file (path)."
-    payload: dict[str, Any] = {"kind": kind.strip(), "items": items or []}
+    payload: dict[str, Any] = {
+        "kind": kind.strip(),
+        "items": items or [],
+        "enriched_by": (enriched_by or "delegate").strip(),
+    }
     if items_file:
         payload["items_file"] = items_file
     data = _api("POST", "/enrich-bulk", json=payload, timeout=120)
@@ -1475,6 +1484,221 @@ def append_to_note(content: str) -> str:
 
     size = data.get("bytes_written", 0)
     return f"Appended {size} bytes to note. Call ingest_notes() to index the new content for search."
+
+
+# ── Skills ────────────────────────────────────────────────────────
+#
+# Notes record meaningful skills — reusable recipes any CLI benefits from
+# without re-recording. SmartNote stores the recipe + time-sliced note
+# context; you execute it yourself.
+#
+# Two tools:
+#   upload_skill — save/update a skill template extracted from notes
+#   use_skill    — discover, run, and record skill executions
+#
+# Typical flow:
+#   1. use_skill(action="list") → see what skills exist
+#   2. use_skill(action="run", name="weekly-review", slice_days=7) → get bundle
+#   3. Execute the steps against the returned note slice
+#   4. use_skill(action="record", run_id=N, status="completed"|"skipped",
+#         result_summary="...", steps=[{name, status, evidence_chunk_ids, notes}])
+#
+# To create a skill from scratch:
+#   1. search_knowledge or get_tag_segments to sample recent notes
+#   2. Identify repeating ordered patterns (periodic rituals or sequences)
+#   3. upload_skill(name, description, nodes=[...])
+
+@mcp.tool()
+def upload_skill(
+    name: str,
+    description: str,
+    nodes: list[dict],
+    kind: str = "periodic",
+    period_hint: str = "weekly",
+    source_segment_ids: Optional[list[int]] = None,
+) -> str:
+    """Save (or update) a skill template extracted from the user's notes.
+
+    Skills are reusable recipes any CLI (Claude Code, Cursor, OpenCode) can
+    run — notes record the skill once so it never needs re-discovering.
+
+    To discover patterns worth recording: call search_knowledge or
+    get_tag_segments to sample recent notes, then identify repeating ordered
+    steps (weekly review, bug→fix→deploy, design→build→ship, etc.).
+
+    Args:
+        name: unique kebab-case identifier (e.g. "weekly-review")
+        description: one-paragraph explanation of what this skill does
+        nodes: ordered list of {name, description, trigger_hints[], expected_tag}
+        kind: "periodic" (time-cycle ritual) or "sequence" (ordered stages)
+        period_hint: "daily" | "weekly" | "monthly" | "ad_hoc"
+        source_segment_ids: chunk ids this skill was abstracted from (optional)
+    """
+    try:
+        t = _api("POST", "/skills", json={
+            "name": name,
+            "description": description,
+            "nodes": nodes,
+            "kind": kind,
+            "period_hint": period_hint,
+            "source_segment_ids": source_segment_ids or [],
+        })
+        return f"Saved skill '{t['name']}' with {len(t.get('nodes', []))} steps."
+    except Exception as e:
+        return f"ERROR: {e}"
+
+
+@mcp.tool()
+def use_skill(
+    action: str = "list",
+    name: Optional[str] = None,
+    slice_days: int = 7,
+    run_id: Optional[int] = None,
+    status: Optional[str] = None,
+    result_summary: str = "",
+    steps: Optional[list[dict]] = None,
+) -> str:
+    """Discover, run, and record skill executions.
+
+    action="list"   — list all saved skills (no other args needed)
+    action="get"    — full details of one skill (name required)
+    action="run"    — trigger a run; returns template + note slice to execute
+                      against (name required, slice_days optional)
+    action="record" — write execution result back (run_id + status required)
+                      status: "completed" | "skipped"
+                      steps: [{name, status, evidence_chunk_ids, notes}]
+    action="resume" — rehydrate a pending run you didn't create (run_id required)
+
+    Typical session:
+      use_skill("list") → pick a skill
+      use_skill("run", name="weekly-review", slice_days=7) → get bundle
+      ... execute steps against note slice ...
+      use_skill("record", run_id=N, status="completed", result_summary="...",
+                steps=[...])
+    """
+    if action == "list":
+        try:
+            data = _api("GET", "/skills")
+        except Exception as e:
+            return f"ERROR: {e}"
+        templates = data.get("templates", [])
+        if not templates:
+            return (
+                "No skills yet. Sample recent notes with search_knowledge or "
+                "get_tag_segments, identify repeating patterns, then call "
+                "upload_skill to record the first one."
+            )
+        lines = []
+        for t in templates:
+            nodes = t.get("nodes") or []
+            lines.append(
+                f"• {t['name']} ({t['kind']}/{t['period_hint']}) — "
+                f"{len(nodes)} steps · {t['description'][:80]}"
+            )
+        return "\n".join(lines)
+
+    if action == "get":
+        if not name:
+            return "ERROR: name required for action=get"
+        try:
+            t = _api("GET", f"/skills/{name}")
+        except Exception as e:
+            return f"ERROR: {e}"
+        nodes = t.get("nodes") or []
+        out = [
+            f"# {t['name']}",
+            f"kind={t['kind']} period={t['period_hint']}",
+            "",
+            t["description"] or "(no description)",
+            "",
+            "## Steps:",
+        ]
+        for i, n in enumerate(nodes, 1):
+            hints = ", ".join(n.get("trigger_hints", [])) or "—"
+            tag = n.get("expected_tag") or "—"
+            out.append(f"{i}. {n.get('name', '')} [tag={tag}]")
+            if n.get("description"):
+                out.append(f"   {n['description']}")
+            out.append(f"   triggers: {hints}")
+        return "\n".join(out)
+
+    if action == "run":
+        if not name:
+            return "ERROR: name required for action=run"
+        try:
+            bundle = _api("POST", f"/skills/{name}/run", json={
+                "slice_days": slice_days,
+                "triggered_by": "mcp",
+            })
+        except Exception as e:
+            return f"ERROR: {e}"
+        run = bundle.get("run", {})
+        tpl = bundle.get("bundle", {}).get("template", {})
+        slc = bundle.get("bundle", {}).get("slice", {})
+        nodes = tpl.get("nodes", [])
+        chunks = slc.get("chunks", [])
+        lines = [
+            f"Run #{run.get('id')} created (status=pending_exec)",
+            f"Skill: {tpl.get('name')} — {len(nodes)} steps",
+            f"Slice: {slc.get('slice_start_ts')} → {slc.get('slice_end_ts')} "
+            f"({len(chunks)} chunks)",
+            "",
+            "## Steps:",
+        ]
+        for i, n in enumerate(nodes, 1):
+            lines.append(f"  {i}. {n.get('name', '')}")
+            if n.get("trigger_hints"):
+                lines.append(f"     hints: {', '.join(n['trigger_hints'])}")
+        lines.extend(["", "## Note slice (first 10 chunks):"])
+        for c in chunks[:10]:
+            text_preview = (c.get("text") or "").replace("\n", " ")[:120]
+            lines.append(
+                f"  [#{c.get('id')}] {c.get('note_ts', '')} "
+                f"[{c.get('dimension', '')}] {text_preview}"
+            )
+        if len(chunks) > 10:
+            lines.append(f"  ... + {len(chunks) - 10} more chunks")
+        lines.extend([
+            "",
+            "## Next:",
+            f"Execute the steps against the slice, then call "
+            f"use_skill(action='record', run_id={run.get('id')}, "
+            f"status='completed'|'skipped', result_summary='...', steps=[...]).",
+        ])
+        return "\n".join(lines)
+
+    if action == "record":
+        if run_id is None or not status:
+            return "ERROR: run_id and status required for action=record"
+        try:
+            result = _api("POST", f"/skill-runs/{run_id}/result", json={
+                "status": status,
+                "result_summary": result_summary,
+                "steps": steps or [],
+            })
+            return f"Run #{run_id} → {result.get('status')}."
+        except Exception as e:
+            return f"ERROR: {e}"
+
+    if action == "resume":
+        if run_id is None:
+            return "ERROR: run_id required for action=resume"
+        try:
+            bundle = _api("GET", f"/skill-runs/{run_id}/bundle")
+        except Exception as e:
+            return f"ERROR: {e}"
+        tpl = bundle.get("template", {})
+        slc = bundle.get("slice", {})
+        run = bundle.get("run", {})
+        return (
+            f"Run #{run.get('id')} skill={tpl.get('name')} "
+            f"status={run.get('status')}\n"
+            f"Slice: {slc.get('slice_start_ts')} → {slc.get('slice_end_ts')} "
+            f"({slc.get('chunk_count')} chunks)\n"
+            f"Steps: {len(tpl.get('nodes', []))}"
+        )
+
+    return f"ERROR: unknown action '{action}'. Use list | get | run | record | resume"
 
 
 # ── Main ──
