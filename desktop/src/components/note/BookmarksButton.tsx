@@ -36,8 +36,8 @@ export function BookmarksButton({ bookmarks, onJumpToLine, onRemove }: Props) {
     };
   }, [open]);
 
-  if (bookmarks.length === 0 && !open) return null;
-
+  // Always render the button so users discover the bookmark feature even
+  // before creating any. The panel explains ⌘B as the create affordance.
   return (
     <div ref={wrapRef} className={cn("proto-bookmarks-wrap", open && "proto-bookmarks-wrap-open")}>
       <AnimatePresence>

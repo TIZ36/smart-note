@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Database, Tag, FolderOpen, Shuffle } from "lucide-react";
+import { Database, Tag, FolderOpen, Shuffle, ArrowDownToLine } from "lucide-react";
 import { NoteEditor, type LineMeta } from "../editor/NoteEditor";
 import { NoteSegments } from "./NoteSegments";
 import { IngestDialog } from "./IngestDialog";
@@ -36,6 +36,7 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
   const [recentDone, setRecentDone] = useState(false);
   const [lineMetaRows, setLineMetaRows] = useState<api.NoteLineMeta[]>([]);
   const [pendingPacks, setPendingPacks] = useState<number>(0);
+  const [packsSinceFull, setPacksSinceFull] = useState<number>(0);
   const [packsRefreshKey, setPacksRefreshKey] = useState(0);
 
   // Build the line-number → meta map the editor reads. Deriving (not storing)
@@ -64,12 +65,14 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
   const refreshNoteState = useCallback(async () => {
     if (!rawPath) return;
     try {
-      const [meta, packs] = await Promise.all([
+      const [meta, packs, stats] = await Promise.all([
         api.fetchNoteLineMeta(rawPath),
         api.fetchPacks(rawPath, "pending"),
+        api.fetchPackStats(rawPath).catch(() => null),
       ]);
       setLineMetaRows(meta.lines);
       setPendingPacks(packs.pending_count);
+      setPacksSinceFull(stats ? stats.applied_since_full : 0);
     } catch {
       /* offline / gateway down — silent */
     }
@@ -200,6 +203,17 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
           )}
         </div>
         <div className="proto-note-header-actions">
+          {packsSinceFull > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowIngest(true)}
+              className="proto-note-header-progress proto-note-header-progress-warning"
+              title={`${packsSinceFull} pack${packsSinceFull === 1 ? "" : "s"} applied since last full ingest — AI classification is stale. Click to run a full rebuild.`}
+            >
+              <span className="proto-note-header-progress-dot" />
+              <span>{packsSinceFull} since full</span>
+            </button>
+          )}
           <AnimatePresence>
             {showProgressPill && (
               <motion.button
@@ -220,7 +234,7 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
               >
                 <span className="proto-note-header-progress-dot" />
                 <span>{progressLabel}</span>
-                {progressCount && <span style={{ opacity: 0.7 }}>{progressCount}</span>}
+                {progressCount && <span className="proto-note-header-progress-count">{progressCount}</span>}
               </motion.button>
             )}
           </AnimatePresence>
@@ -286,6 +300,15 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
           />
           {rawPath && (
             <div className="proto-note-floating-stack">
+              <button
+                type="button"
+                className="proto-bookmarks-badge"
+                onClick={() => setScrollTarget({ start: 1_000_000_000, end: 1_000_000_000 })}
+                title="Jump to the latest (bottom) of the note"
+                aria-label="Jump to bottom"
+              >
+                <ArrowDownToLine size={14} strokeWidth={2} />
+              </button>
               <BookmarksButton
                 bookmarks={bookmarks}
                 onJumpToLine={(line) => setScrollTarget({ start: line, end: line })}

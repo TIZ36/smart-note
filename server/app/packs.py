@@ -34,6 +34,81 @@ def _line_hash(line: str) -> str:
     return hashlib.sha256(line.strip().encode("utf-8")).hexdigest()[:16]
 
 
+def _migrate_marks_on_replace(
+    conn, file_path: str, before_lines: list[str], after_lines: list[str]
+) -> int:
+    """When a save *replaces* existing line(s) in place, migrate the old
+    line's bookmark / highlight marks to the new line hash so marks survive
+    edits of their own line — not just edits of neighbours.
+
+    Only handles symmetric replace blocks (same old/new line count) and pairs
+    old→new positionally. Pure inserts/deletes don't migrate. Returns count
+    of lines whose marks were migrated."""
+    sm = difflib.SequenceMatcher(a=before_lines, b=after_lines, autojunk=False)
+    ts_now = _now_iso()
+    migrated = 0
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag != "replace":
+            continue
+        if (i2 - i1) != (j2 - j1):
+            continue  # asymmetric — can't pair unambiguously
+        for oi, nj in zip(range(i1, i2), range(j1, j2)):
+            old_raw = before_lines[oi]
+            new_raw = after_lines[nj]
+            if not old_raw.strip() or not new_raw.strip():
+                continue
+            old_h = _line_hash(old_raw)
+            new_h = _line_hash(new_raw)
+            if old_h == new_h:
+                continue
+            row = conn.execute(
+                "SELECT bookmark, highlight_color, highlight_note "
+                "FROM note_lines WHERE file_path = ? AND line_hash = ?",
+                (file_path, old_h),
+            ).fetchone()
+            if not row:
+                continue
+            bm = row["bookmark"] or ""
+            hc = row["highlight_color"] or ""
+            hn = row["highlight_note"] or ""
+            if not (bm or hc or hn):
+                continue
+            preview = new_raw[:120]
+            existing_new = conn.execute(
+                "SELECT bookmark, highlight_color, highlight_note "
+                "FROM note_lines WHERE file_path = ? AND line_hash = ?",
+                (file_path, new_h),
+            ).fetchone()
+            if existing_new is None:
+                conn.execute(
+                    "INSERT INTO note_lines(file_path, line_hash, line_no_last, "
+                    "line_preview, ts, bookmark, highlight_color, highlight_note, "
+                    "updated_at) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)",
+                    (file_path, new_h, nj + 1, preview, bm, hc, hn, ts_now),
+                )
+            else:
+                # Only fill marks that are empty on the destination; don't
+                # clobber pre-existing marks on a coincidentally-identical hash.
+                conn.execute(
+                    "UPDATE note_lines SET "
+                    "bookmark = CASE WHEN COALESCE(bookmark,'')='' THEN ? ELSE bookmark END, "
+                    "highlight_color = CASE WHEN COALESCE(highlight_color,'')='' THEN ? ELSE highlight_color END, "
+                    "highlight_note = CASE WHEN COALESCE(highlight_note,'')='' THEN ? ELSE highlight_note END, "
+                    "line_no_last = ?, line_preview = ?, updated_at = ? "
+                    "WHERE file_path = ? AND line_hash = ?",
+                    (bm, hc, hn, nj + 1, preview, ts_now, file_path, new_h),
+                )
+            # Clear marks on the old (now-orphaned) row so the same bookmark
+            # doesn't show up twice if the old line ever gets re-typed.
+            conn.execute(
+                "UPDATE note_lines SET bookmark='', highlight_color='', "
+                "highlight_note='', updated_at=? WHERE file_path=? AND line_hash=?",
+                (ts_now, file_path, old_h),
+            )
+            migrated += 1
+    return migrated
+
+
 def stamp_new_lines_on_save(
     file_path: str, before_content: str, after_content: str
 ) -> int:
@@ -42,9 +117,13 @@ def stamp_new_lines_on_save(
     existed — even if they moved to a new line number — update only
     `line_no_last` / `line_preview`, keep `ts` untouched.
 
+    Also migrates bookmarks/highlights across in-place line edits so users
+    don't lose a mark the moment they tweak the text of that line.
+
     Returns number of rows inserted (not updated)."""
     ts_now = _now_iso()
-    before_hashes = {_line_hash(ln) for ln in before_content.splitlines() if ln}
+    before_lines_raw = before_content.splitlines()
+    before_hashes = {_line_hash(ln) for ln in before_lines_raw if ln}
     after_lines = after_content.splitlines()
 
     seen: set[str] = set()
@@ -64,6 +143,10 @@ def stamp_new_lines_on_save(
             inserts.append((file_path, h, idx, preview, ts_now))
 
     with connect() as conn:
+        # Migrate marks on in-place line edits BEFORE we stamp inserts, so the
+        # new hash is already present and stamp_new_lines treats it as existing.
+        _migrate_marks_on_replace(conn, file_path, before_lines_raw, after_lines)
+
         # Skip rows that already exist in DB (they may not be in before_hashes
         # if the user opened the file fresh — those rows were created under a
         # prior session; preserve their ts rather than re-inserting).

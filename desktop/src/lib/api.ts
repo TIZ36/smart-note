@@ -696,6 +696,20 @@ export async function fetchPacks(rawPath?: string, status: "pending" | "applied"
   return res.json();
 }
 
+export type PackStats = {
+  applied_since_full: number;
+  pending: number;
+  last_full_build_id: string | null;
+  last_full_at: string | null;
+};
+
+export async function fetchPackStats(rawPath: string): Promise<PackStats> {
+  const q = new URLSearchParams({ raw_path: rawPath });
+  const res = await fetch(`${BASE}/packs/stats?${q.toString()}`);
+  if (!res.ok) throw new Error(`pack stats: ${res.status}`);
+  return res.json();
+}
+
 export async function applyPack(packId: number): Promise<{ pack: IngestPack; build_id: string | null; applied_siblings_count: number }> {
   const res = await fetch(`${BASE}/packs/${packId}/apply`, { method: "POST" });
   if (!res.ok) throw new Error(`apply pack: ${res.status}`);

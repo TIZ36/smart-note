@@ -3950,7 +3950,14 @@ def api_pack_apply(pack_id: int) -> dict:
     prefs = api_prefs()
     note_path = prefs.get("notePath") or str(Path(pack["raw_path"]).with_name("note.md"))
     try:
-        result = ingest_raw(pack["raw_path"], note_path, reset=False, ai_delegate=False)
+        # Pack apply runs an incremental, non-AI ingest: it should not pay the
+        # latency/cost of full LLM classification — that's what the explicit
+        # "Rebuild all" full ingest is for. The top-right pill in the note UI
+        # surfaces how many packs have been applied since the last full ingest.
+        result = ingest_raw(
+            pack["raw_path"], note_path,
+            reset=False, ai_delegate=False, force_no_ai=True,
+        )
         build_id = result.get("build_id")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"ingest failed: {e}")
@@ -3985,7 +3992,10 @@ def api_packs_apply_all(req: PacksApplyAllRequest) -> dict:
     prefs = api_prefs()
     note_path = prefs.get("notePath") or str(Path(req.raw_path).with_name("note.md"))
     try:
-        result = ingest_raw(req.raw_path, note_path, reset=False, ai_delegate=False)
+        result = ingest_raw(
+            req.raw_path, note_path,
+            reset=False, ai_delegate=False, force_no_ai=True,
+        )
         build_id = result.get("build_id")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"ingest failed: {e}")
@@ -3997,6 +4007,45 @@ def api_packs_apply_all(req: PacksApplyAllRequest) -> dict:
         last_build_id=build_id,
     )
     return {"applied": count, "build_id": build_id}
+
+
+@app.get("/packs/stats")
+def api_packs_stats(raw_path: str) -> dict:
+    """Counts for the top-right pill: how many non-AI pack-apply builds have
+    stacked up since the last full ingest for this file. When this number is
+    large the user should consider running a full "Rebuild all" so AI
+    classification catches up."""
+    with connect() as conn:
+        last_full = conn.execute(
+            "SELECT id, created_at FROM builds "
+            "WHERE source_file = ? AND ingest_kind = 'full' "
+            "ORDER BY created_at DESC LIMIT 1",
+            (raw_path,),
+        ).fetchone()
+        if last_full:
+            applied_row = conn.execute(
+                "SELECT COUNT(*) AS c FROM ingest_packs "
+                "WHERE raw_path = ? AND status = 'applied' "
+                "AND applied_at >= ?",
+                (raw_path, last_full["created_at"]),
+            ).fetchone()
+        else:
+            applied_row = conn.execute(
+                "SELECT COUNT(*) AS c FROM ingest_packs "
+                "WHERE raw_path = ? AND status = 'applied'",
+                (raw_path,),
+            ).fetchone()
+        pending_row = conn.execute(
+            "SELECT COUNT(*) AS c FROM ingest_packs "
+            "WHERE raw_path = ? AND status = 'pending'",
+            (raw_path,),
+        ).fetchone()
+    return {
+        "applied_since_full": int(applied_row["c"] if applied_row else 0),
+        "pending": int(pending_row["c"] if pending_row else 0),
+        "last_full_build_id": last_full["id"] if last_full else None,
+        "last_full_at": last_full["created_at"] if last_full else None,
+    }
 
 
 @app.post("/packs/{pack_id}/discard")

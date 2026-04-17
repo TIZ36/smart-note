@@ -3716,6 +3716,17 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   border-color: color-mix(in oklab, var(--color-danger) 35%, var(--color-border));
 }
 
+.proto-note-header-progress-warning {
+  color: var(--color-warning);
+  border-color: color-mix(in oklab, var(--color-warning) 35%, var(--color-border));
+  background: color-mix(in oklab, var(--color-warning) 6%, var(--color-bg-surface));
+}
+
+.proto-note-header-progress-count {
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
 .proto-note-header-progress-dot {
   width: 6px;
   height: 6px;

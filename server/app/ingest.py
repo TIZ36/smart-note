@@ -257,7 +257,13 @@ def _store_entity_links(conn, entity_ids: list[int]) -> None:
                 )
 
 
-def ingest_raw(raw_path: str, note_path: str, reset: bool = False, ai_delegate: bool = False) -> dict:
+def ingest_raw(
+    raw_path: str,
+    note_path: str,
+    reset: bool = False,
+    ai_delegate: bool = False,
+    force_no_ai: bool = False,
+) -> dict:
     raw_file = Path(raw_path)
     note_file = Path(note_path)
     views_dir = note_file.parent / "views"
@@ -497,10 +503,12 @@ def ingest_raw(raw_path: str, note_path: str, reset: bool = False, ai_delegate: 
     # Auto-enable AI enrichment whenever features are on AND an API key is
     # configured. The separate INGEST_AI_ENABLED flag remains an explicit opt-in
     # alternative (e.g. when the key is supplied by another means).
-    ai_active = (not ai_delegate) and _ai_features and (_api_key or _cfg.ingest_ai_enabled)
+    ai_active = (not ai_delegate) and (not force_no_ai) and _ai_features and (_api_key or _cfg.ingest_ai_enabled)
     if ai_active:
         batches_needed = (total_lines + _LPB - 1) // _LPB
         _progress("ai_enrich", 0, total_lines, f"Tag classification ({batches_needed} batches, {_MC} concurrent)...")
+    elif force_no_ai:
+        _progress("ai_enrich", 0, total_lines, "Incremental pack apply — skipping AI, non-AI classification only")
     elif ai_delegate:
         _progress("ai_enrich", 0, total_lines, "AI enrichment delegated to caller (MCP) — skipping provider calls")
     elif not _ai_features:
@@ -524,7 +532,21 @@ def ingest_raw(raw_path: str, note_path: str, reset: bool = False, ai_delegate: 
             eta = f"{remaining // 60}m{remaining % 60}s" if remaining >= 60 else f"{remaining}s"
             _progress("ai_enrich", done, total_count, f"{done}/{total_count} lines classified (ETA {eta})")
 
-    tag_segments = classify_lines(all_raw_lines, on_progress=_ai_progress, delegate=ai_delegate)
+    if not ai_active and not ai_delegate:
+        # Non-AI classification: single "others" segment covering the file. The
+        # AI path below would also fall through to this when the provider is
+        # unreachable, so force_no_ai just short-circuits the network hop.
+        tag_segments = [{
+            "tag": "others",
+            "line_start": 1,
+            "line_end": total_lines,
+            "summary": "Unclassified content",
+            "keywords": [],
+            "entities": [],
+            "is_credential": False,
+        }] if total_lines else []
+    else:
+        tag_segments = classify_lines(all_raw_lines, on_progress=_ai_progress, delegate=ai_delegate)
 
     # Show which tags were found
     found_tags: dict[str, int] = {}
