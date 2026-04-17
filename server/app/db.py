@@ -389,6 +389,15 @@ CREATE TABLE IF NOT EXISTS note_file_state (
   byte_size INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Runtime-editable app settings. Seeded from env on first launch, mutated by
+-- the Settings UI via POST /settings — changes take effect on the running
+-- backend without a restart (the Settings singleton is refreshed in place).
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 MIGRATE_SQL = """
@@ -415,6 +424,9 @@ def init_db() -> None:
 def migrate_db() -> None:
     """Add new columns to existing databases without data loss."""
     with connect() as conn:
+        # Ensure any newly added tables (all CREATE TABLE IF NOT EXISTS) are
+        # created on existing databases.
+        conn.executescript(SCHEMA)
         # Check existing columns
         columns = {
             row[1] for row in conn.execute("PRAGMA table_info(chunks)").fetchall()

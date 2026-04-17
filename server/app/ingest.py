@@ -492,12 +492,21 @@ def ingest_raw(raw_path: str, note_path: str, reset: bool = False, ai_delegate: 
     from app.ai_enrich import LINES_PER_BATCH as _LPB, MAX_CONCURRENCY as _MC, reset_token_usage, get_token_usage
     reset_token_usage()
     total_lines = len(lines)
-    ai_active = _cfg.ingest_ai_enabled and getattr(_cfg, "ai_features_enabled", True) and not ai_delegate
+    _ai_features = getattr(_cfg, "ai_features_enabled", True)
+    _api_key = bool(getattr(_cfg, "provider_api_key", "") or "")
+    # Auto-enable AI enrichment whenever features are on AND an API key is
+    # configured. The separate INGEST_AI_ENABLED flag remains an explicit opt-in
+    # alternative (e.g. when the key is supplied by another means).
+    ai_active = (not ai_delegate) and _ai_features and (_api_key or _cfg.ingest_ai_enabled)
     if ai_active:
         batches_needed = (total_lines + _LPB - 1) // _LPB
         _progress("ai_enrich", 0, total_lines, f"Tag classification ({batches_needed} batches, {_MC} concurrent)...")
     elif ai_delegate:
         _progress("ai_enrich", 0, total_lines, "AI enrichment delegated to caller (MCP) — skipping provider calls")
+    elif not _ai_features:
+        _progress("ai_enrich", 0, total_lines, "AI features disabled, using fallback...")
+    elif not _api_key:
+        _progress("ai_enrich", 0, total_lines, "No PROVIDER_API_KEY configured, using fallback...")
     else:
         _progress("ai_enrich", 0, total_lines, "AI disabled, using fallback...")
 

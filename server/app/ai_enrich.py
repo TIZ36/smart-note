@@ -157,9 +157,17 @@ def classify_lines(
         # via `submit_enrichments(kind="note_segments", items=[...])`.
         return []
 
-    if not getattr(settings, "ai_features_enabled", True) or not getattr(settings, "ingest_ai_enabled", False):
-        # AI disabled globally. Mark the whole file as "others" so it's still
-        # discoverable, but keep the single-segment fallback tight.
+    # Run AI classification whenever features are on AND either an API key is
+    # configured or the explicit ingest_ai_enabled flag is set. This lets the UI
+    # "Ingest" action auto-enrich as long as credentials are valid, without
+    # requiring a separate INGEST_AI_ENABLED toggle.
+    _ai_ok = getattr(settings, "ai_features_enabled", True) and (
+        bool(getattr(settings, "provider_api_key", "") or "")
+        or getattr(settings, "ingest_ai_enabled", False)
+    )
+    if not _ai_ok:
+        # AI disabled or no API key. Mark the whole file as "others" so it's
+        # still discoverable, but keep the single-segment fallback tight.
         return [{
             "tag": "others",
             "line_start": 1,

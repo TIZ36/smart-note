@@ -40,6 +40,16 @@ try:
 except Exception:
     pass
 
+# Runtime-editable settings: seed the DB on first launch from env-derived
+# defaults, then overlay persisted values onto the in-memory singleton so later
+# edits via POST /settings take effect without restarting the backend.
+try:
+    from app.config import seed_settings_if_empty, load_settings_from_db
+    seed_settings_if_empty()
+    load_settings_from_db()
+except Exception:
+    pass
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -1019,8 +1029,12 @@ def api_classify_segment(req: ClassifySegmentRequest) -> dict:
     if not req.tag.strip():
         raise HTTPException(status_code=400, detail="tag is required")
 
+    from app.tags import get_all_tags
+    _known_tags: set[str] = set(get_all_tags())
     active = get_active_build_id() or ""
     tag = req.tag.strip()
+    if tag not in _known_tags:
+        tag = "others"
     affected_chunks = 0
     with connect() as conn:
         conn.execute(
@@ -1043,7 +1057,7 @@ def api_classify_segment(req: ClassifySegmentRequest) -> dict:
         )
         for stag in req.secondary_tags or []:
             st = (stag or "").strip()
-            if not st or st == tag:
+            if not st or st == tag or st not in _known_tags:
                 continue
             conn.execute(
                 """
@@ -1522,6 +1536,8 @@ def api_enrich_bulk(req: EnrichBulkRequest) -> dict:
     conflicts_created: list[dict] = []
 
     if kind == "note_segments":
+        from app.tags import get_all_tags
+        _known_tags: set[str] = set(get_all_tags())
         active = get_active_build_id() or ""
         with connect() as conn:
             for idx, it in enumerate(items):
@@ -1532,6 +1548,9 @@ def api_enrich_bulk(req: EnrichBulkRequest) -> dict:
                     tag = (it.get("tag") or "").strip()
                     if not tag or line_end < line_start:
                         raise ValueError("tag + line_start<=line_end required")
+                    # Reject unknown tags — AI must only use existing tags.
+                    if tag not in _known_tags:
+                        tag = "others"
 
                     # Resolve the build_id for this submission (most recent
                     # chunk for this file) — needed both for conflict scope
@@ -1595,7 +1614,7 @@ def api_enrich_bulk(req: EnrichBulkRequest) -> dict:
                     )
                     for stag in it.get("secondary_tags") or []:
                         st = (stag or "").strip()
-                        if not st or st == tag:
+                        if not st or st == tag or st not in _known_tags:
                             continue
                         conn.execute(
                             """
@@ -3085,6 +3104,40 @@ def api_wiki_sources() -> dict:
         "sources": sources,
         "base_dir": base_dir_str,
     }
+
+
+# ── Runtime settings (persisted in DB, hot-reloadable) ──
+
+@app.get("/settings")
+def api_get_settings() -> dict:
+    from app.config import current_settings_dict
+    return current_settings_dict()
+
+
+class SettingsUpdateRequest(BaseModel):
+    # All fields optional — only provided keys are updated.
+    embedding_mode: str | None = None
+    provider_base_url: str | None = None
+    provider_api_key: str | None = None
+    provider_chat_model: str | None = None
+    embed_base_url: str | None = None
+    embed_api_key: str | None = None
+    provider_embed_model: str | None = None
+    ai_features_enabled: bool | None = None
+    ingest_ai_enabled: bool | None = None
+    ingest_ai_model: str | None = None
+    prompt_cache_mode: str | None = None
+    wiki_sources_dir: str | None = None
+    ocr_langs: str | None = None
+
+
+@app.post("/settings")
+def api_update_settings(req: SettingsUpdateRequest) -> dict:
+    """Persist settings to DB and apply them live to the running backend."""
+    from app.config import save_settings_to_db, current_settings_dict
+    updates = {k: v for k, v in req.model_dump().items() if v is not None}
+    save_settings_to_db(updates)
+    return {"ok": True, "applied": list(updates.keys()), "settings": current_settings_dict()}
 
 
 @app.get("/ocr-langs")

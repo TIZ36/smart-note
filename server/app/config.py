@@ -75,3 +75,108 @@ class Settings:
 
 
 settings = Settings()
+
+
+# ── Runtime-editable settings (persisted in DB) ─────────────────────────────
+# These keys can be edited via the Settings UI / POST /settings; changes are
+# written to the `app_settings` SQLite table and applied to the singleton in
+# place, so consumers doing `from app.config import settings` see new values
+# on their next attribute read — no backend restart required.
+
+PERSISTED_KEYS: tuple[str, ...] = (
+    "embedding_mode",
+    "provider_base_url",
+    "provider_api_key",
+    "provider_chat_model",
+    "embed_base_url",
+    "embed_api_key",
+    "provider_embed_model",
+    "ai_features_enabled",
+    "ingest_ai_enabled",
+    "ingest_ai_model",
+    "prompt_cache_mode",
+    "wiki_sources_dir",
+    "ocr_langs",
+)
+
+_BOOL_KEYS = {"ai_features_enabled", "ingest_ai_enabled"}
+
+
+def _coerce(key: str, raw: str):
+    if key in _BOOL_KEYS:
+        return str(raw).strip().lower() in ("true", "1", "yes")
+    return raw
+
+
+def _serialize(key: str, value) -> str:
+    if key in _BOOL_KEYS:
+        return "true" if bool(value) else "false"
+    return "" if value is None else str(value)
+
+
+def load_settings_from_db() -> None:
+    """Overlay persisted settings onto the in-memory singleton."""
+    from app.db import connect  # local import to avoid cycle at module load
+
+    try:
+        with connect() as conn:
+            rows = conn.execute("SELECT key, value FROM app_settings").fetchall()
+    except Exception:
+        return
+    for row in rows:
+        key = row["key"] if hasattr(row, "keys") else row[0]
+        val = row["value"] if hasattr(row, "keys") else row[1]
+        if key in PERSISTED_KEYS:
+            setattr(settings, key, _coerce(key, val))
+
+
+def seed_settings_if_empty() -> None:
+    """First-launch seed: write current env-derived singleton values to DB if
+    the table is empty."""
+    from app.db import connect
+
+    try:
+        with connect() as conn:
+            count = conn.execute("SELECT COUNT(*) FROM app_settings").fetchone()[0]
+            if count:
+                return
+            for key in PERSISTED_KEYS:
+                conn.execute(
+                    "INSERT OR IGNORE INTO app_settings(key, value) VALUES (?, ?)",
+                    (key, _serialize(key, getattr(settings, key, ""))),
+                )
+            conn.commit()
+    except Exception:
+        pass
+
+
+def save_settings_to_db(updates: dict) -> dict:
+    """Upsert updates into the DB and apply them to the singleton in place.
+    Returns the dict of effectively applied values."""
+    from app.db import connect
+
+    applied: dict = {}
+    with connect() as conn:
+        for key, value in updates.items():
+            if key not in PERSISTED_KEYS:
+                continue
+            serialized = _serialize(key, value)
+            conn.execute(
+                """
+                INSERT INTO app_settings(key, value, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(key) DO UPDATE SET
+                  value = excluded.value,
+                  updated_at = CURRENT_TIMESTAMP
+                """,
+                (key, serialized),
+            )
+            coerced = _coerce(key, serialized)
+            setattr(settings, key, coerced)
+            applied[key] = coerced
+        conn.commit()
+    return applied
+
+
+def current_settings_dict() -> dict:
+    return {k: getattr(settings, k, None) for k in PERSISTED_KEYS}

@@ -487,11 +487,13 @@ def ingest_notes(reset: bool = False, delegate_enrich: bool = True) -> str:
                 f"AI enrichment delegated — build {bid} parked as awaiting_enrich.\n"
                 f"Source: {sf} ({tl} raw lines, {new_entries} new/changed entries).\n"
                 "Next steps:\n"
-                "  1. `list_pending_enrichments(kind='note_segments')` — returns\n"
-                "     `pending_line_ranges` (what to classify) and `existing_segments`\n"
+                "  1. `list_tags()` — fetch the user's tag list FIRST. You MUST only\n"
+                "     assign tags from this list. Do NOT invent new tags.\n"
+                "  2. `list_pending_enrichments(kind='note_segments')` — returns\n"
+                "     `pending_line_ranges` (what to categorize) and `existing_segments`\n"
                 "     (preserve these; don't re-emit in incremental mode).\n"
-                "  2. Read ONLY the pending ranges from source_file.\n"
-                "  3. `submit_enrichments(kind='note_segments', items=[...])` — or\n"
+                "  3. Read ONLY the pending ranges from source_file.\n"
+                "  4. `submit_enrichments(kind='note_segments', items=[...])` — or\n"
                 "     `items_file=<path>` for very large batches.\n"
                 "Call `list_pending_enrichments('summary')` any time to see what's left."
             )
@@ -613,12 +615,25 @@ def list_pending_enrichments(
     data = _api("GET", "/enrich-queue", params=params)
     if "error" in data:
         return data["error"]
+
+    prefix_parts: list[str] = []
+
+    if kind == "note_segments":
+        prefix_parts.append(
+            "Before categorizing: call `list_tags()` to get the user's custom tags.\n"
+            "You MUST only assign tags from that list — do NOT invent new tags."
+        )
+
     # Surface meta-memory at the entries Claude visits before enrichment.
-    hint = ""
     if kind in ("summary", "note_segments"):
-        hint = _fetch_meta_memory_hint()
+        mem = _fetch_meta_memory_hint()
+        if mem:
+            prefix_parts.append(mem)
+
     payload = json.dumps(data, ensure_ascii=False, indent=2)
-    return (hint + "\n\n" + payload) if hint else payload
+    if prefix_parts:
+        return "\n\n".join(prefix_parts) + "\n\n" + payload
+    return payload
 
 
 @mcp.tool()

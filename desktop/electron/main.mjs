@@ -67,8 +67,8 @@ function parseEnvFile(content) {
 }
 
 function runIngestCmd(rawPath, notePath, doReset) {
-  // Same as ingestRawAsync: always delegate enrichment to the MCP caller.
-  const args = ["-m", "app.cli", "ingest", "--raw", rawPath, "--note", notePath, "--ai-delegate"];
+  // UI-triggered: use LLM API directly (no delegate).
+  const args = ["-m", "app.cli", "ingest", "--raw", rawPath, "--note", notePath];
   if (doReset) args.push("--reset");
   const proc = spawn(pythonBin(), args, { cwd: serverRoot() });
   let stdout = "";
@@ -235,11 +235,9 @@ function ingestRawAsync(win, rawPath, notePath, doReset) {
     message: doReset ? "Rebuilding knowledge base..." : "Ingesting new content...",
   });
 
-  // Always run in delegate mode: skip backend ai_enrich and let the MCP
-  // caller (Claude) fill in classifications. This matches how the MCP
-  // `ingest_notes` tool behaves and avoids silently overwriting prior
-  // mcp:delegate-enriched builds when the user clicks Rebuild all.
-  const args = ["-m", "app.cli", "ingest", "--raw", rawPath, "--note", notePath, "--ai-delegate"];
+  // UI-triggered: use LLM API directly (INGEST_AI_ENABLED controls whether
+  // AI runs; no --ai-delegate so the backend classifies inline).
+  const args = ["-m", "app.cli", "ingest", "--raw", rawPath, "--note", notePath];
   if (doReset) args.push("--reset");
   const proc = spawn(pythonBin(), args, {
     cwd: serverRoot(),
@@ -583,7 +581,53 @@ ipcMain.handle("write_settings", async (_, { newSettings }) => {
     if (!writtenKeys.has(key)) lines.push(`${key}=${val}`);
   }
   fs.writeFileSync(envPath, lines.join("\n") + "\n", "utf8");
-  return { ok: true, output: "Settings saved. Restart the backend for changes to take effect." };
+
+  // Hot-apply to the running backend via /settings. Backend persists values in
+  // the `app_settings` DB table and updates the Settings singleton in place,
+  // so changes take effect without restart. If the gateway is offline, the
+  // .env write above will be picked up on next backend start.
+  let applied = false;
+  try {
+    const body = JSON.stringify({
+      embedding_mode: newSettings.embedding_mode,
+      ai_features_enabled: newSettings.ai_features_enabled !== false,
+      provider_base_url: newSettings.provider_base_url,
+      provider_api_key: newSettings.provider_api_key,
+      provider_chat_model: newSettings.provider_chat_model,
+      embed_base_url: newSettings.embed_base_url ?? "",
+      embed_api_key: newSettings.embed_api_key ?? "",
+      provider_embed_model: newSettings.provider_embed_model,
+      ingest_ai_enabled: !!newSettings.ingest_ai_enabled,
+      ingest_ai_model: newSettings.ingest_ai_model,
+    });
+    applied = await new Promise((resolve) => {
+      const req = http.request(
+        {
+          host: "127.0.0.1",
+          port: 8787,
+          path: "/settings",
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+          timeout: 1500,
+        },
+        (res) => {
+          res.on("data", () => {});
+          res.on("end", () => resolve(res.statusCode === 200));
+        }
+      );
+      req.on("error", () => resolve(false));
+      req.on("timeout", () => { req.destroy(); resolve(false); });
+      req.write(body);
+      req.end();
+    });
+  } catch { /* ignore */ }
+
+  return {
+    ok: true,
+    output: applied
+      ? "Settings saved and applied live."
+      : "Settings saved. Backend is offline — changes will apply on next start.",
+  };
 });
 
 ipcMain.handle("dialog_open_raw", async () => {
