@@ -1,6 +1,10 @@
-import { Search, Settings, Loader2, FileEdit, BookOpen, Files, Inbox, Zap } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Search, Settings, Loader2, FileEdit, BookOpen, Files, Inbox, Zap, Table } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { ChannelId } from "@/lib/types";
+import { fetchSmartTables, type SmartTableSummary } from "@/lib/api";
+
+const SMART_TABLES_CHANGED_EVENT = "smart-tables-changed";
 
 type Props = {
   activeChannel: ChannelId;
@@ -43,6 +47,34 @@ function NavItem({
 }
 
 export function Sidebar({ activeChannel, onSelect, ingestBusy, wikiTopicCount = 0 }: Props) {
+  const [tables, setTables] = useState<SmartTableSummary[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const data = await fetchSmartTables();
+        if (!cancelled) setTables(data.tables);
+      } catch {
+        if (!cancelled) setTables([]);
+      }
+    }
+    void load();
+    function handleFocus() {
+      void load();
+    }
+    function handleTablesChanged() {
+      void load();
+    }
+    window.addEventListener("focus", handleFocus);
+    window.addEventListener(SMART_TABLES_CHANGED_EVENT, handleTablesChanged);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener(SMART_TABLES_CHANGED_EVENT, handleTablesChanged);
+    };
+  }, []);
+
   return (
     <div className="proto-sidebar">
       <div className="proto-sidebar-logo" style={{ WebkitAppRegion: "drag" } as React.CSSProperties}>
@@ -77,6 +109,28 @@ export function Sidebar({ activeChannel, onSelect, ingestBusy, wikiTopicCount = 
           onClick={() => onSelect("source-list")}
           sub
         />
+
+        <NavItem
+          label="Smart Tables"
+          icon={<Table size={15} strokeWidth={2} />}
+          active={activeChannel === "smart-table"}
+          onClick={() => onSelect("smart-table")}
+          trailing={tables.length > 0 ? <span className="proto-nav-badge">{tables.length}</span> : undefined}
+          sectionStart
+        />
+        {tables.map((table) => {
+          const channel = `smart-table:${table.name}` as ChannelId;
+          return (
+            <NavItem
+              key={table.id}
+              label={table.name}
+              icon={<Table size={13} strokeWidth={2} />}
+              active={activeChannel === channel}
+              onClick={() => onSelect(channel)}
+              sub
+            />
+          );
+        })}
 
       </div>
 

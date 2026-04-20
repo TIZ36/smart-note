@@ -11,6 +11,8 @@ import { Toast } from "./components/layout/Toast";
 import { NotePage } from "./components/note/NotePage";
 import { SpecialKnowledgePanel } from "./components/special/SpecialKnowledgePanel";
 import { WikiSourceViewer } from "./components/wiki/WikiSourceViewer";
+import { SmartTablePanel } from "./components/smart-table/SmartTablePanel";
+import { SmartTablesHome } from "./components/smart-table/SmartTablesHome";
 import { usePrefs } from "./hooks/usePrefs";
 import { useHealth } from "./hooks/useHealth";
 import { useSearchState } from "./hooks/useSearchState";
@@ -203,6 +205,13 @@ export default function App() {
       return <WikiSourcesPanel onSelectSource={(path) => setActiveChannel(`source:${path}` as ChannelId)} />;
     }
     if (activeChannel === "search") return <SearchPage searchState={searchState} tags={tags} />;
+    if (activeChannel === "smart-table") {
+      return <SmartTablesHome onOpenTable={(name) => setActiveChannel(`smart-table:${name}` as ChannelId)} />;
+    }
+    if (activeChannel.startsWith("smart-table:")) {
+      const tableName = activeChannel.slice("smart-table:".length);
+      return <SmartTablePanel tableName={tableName} onDeleted={() => setActiveChannel("smart-table")} />;
+    }
     if (activeChannel === "note") {
       return (
         <NotePage

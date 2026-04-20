@@ -583,6 +583,257 @@ export async function patchSkill(name: string, body: SkillPatchBody): Promise<Sk
   return res.json();
 }
 
+export type SmartTableSummary = {
+  id: number;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  sheet_count: number;
+  row_count: number;
+};
+
+export type SmartSheetSummary = {
+  id: number;
+  table_id: number;
+  name: string;
+  ord: number;
+  created_at: string;
+  updated_at: string;
+  column_count: number;
+  row_count: number;
+};
+
+export type SmartColumn = {
+  id: number;
+  sheet_id: number;
+  name: string;
+  type: "text" | "link" | "image";
+  ord: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SmartCellValue = Record<string, unknown>;
+
+export type SmartRow = {
+  id: number;
+  sheet_id: number;
+  ord: number;
+  created_at: string;
+  updated_at: string;
+  cells: Record<string, SmartCellValue>;
+};
+
+export type SmartCellHistoryItem = {
+  id: number;
+  row_id: number;
+  column_id: number;
+  old_value: SmartCellValue | null;
+  new_value: SmartCellValue | null;
+  changed_at: string;
+  source: string;
+};
+
+export type SmartSheetPayload = {
+  sheet: {
+    id: number;
+    table_id: number;
+    table_name: string;
+    name: string;
+    ord: number;
+    created_at: string;
+    updated_at: string;
+  };
+  columns: SmartColumn[];
+  rows: SmartRow[];
+};
+
+export async function fetchSmartTables(): Promise<{ tables: SmartTableSummary[] }> {
+  const res = await fetch(`${BASE}/smart-tables`);
+  if (!res.ok) throw new Error(`smart-tables: ${res.status}`);
+  return res.json();
+}
+
+export async function createSmartTable(name: string): Promise<{ table: SmartTableSummary }> {
+  const res = await fetch(`${BASE}/smart-tables`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `create smart table: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function deleteSmartTable(tableName: string): Promise<{ ok: boolean; deleted_table: string }> {
+  const res = await fetch(`${BASE}/smart-tables/${encodeURIComponent(tableName)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `delete smart table: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchSmartSheets(tableName: string): Promise<{ sheets: SmartSheetSummary[] }> {
+  const res = await fetch(`${BASE}/smart-tables/${encodeURIComponent(tableName)}/sheets`);
+  if (!res.ok) throw new Error(`smart sheets: ${res.status}`);
+  return res.json();
+}
+
+export async function createSmartSheet(tableName: string, name: string): Promise<{ sheet: SmartSheetSummary }> {
+  const res = await fetch(`${BASE}/smart-tables/${encodeURIComponent(tableName)}/sheets`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `create smart sheet: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function renameSmartSheet(tableName: string, sheetName: string, newName: string): Promise<{ sheet: SmartSheetSummary }> {
+  const res = await fetch(`${BASE}/smart-tables/${encodeURIComponent(tableName)}/sheets/${encodeURIComponent(sheetName)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ new_name: newName }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `rename smart sheet: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function addSmartColumn(tableName: string, sheetName: string, name: string, type: SmartColumn["type"]): Promise<{ column: SmartColumn }> {
+  const res = await fetch(`${BASE}/smart-tables/${encodeURIComponent(tableName)}/sheets/${encodeURIComponent(sheetName)}/columns`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, type }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `add smart column: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function renameSmartColumn(tableName: string, sheetName: string, columnName: string, newName: string): Promise<{ column: SmartColumn }> {
+  const res = await fetch(`${BASE}/smart-tables/${encodeURIComponent(tableName)}/sheets/${encodeURIComponent(sheetName)}/columns/${encodeURIComponent(columnName)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ new_name: newName }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `rename smart column: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function deleteSmartColumn(tableName: string, sheetName: string, columnName: string): Promise<{ ok: boolean; deleted_column: string }> {
+  const res = await fetch(`${BASE}/smart-tables/${encodeURIComponent(tableName)}/sheets/${encodeURIComponent(sheetName)}/columns/${encodeURIComponent(columnName)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `delete smart column: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchSmartSheet(tableName: string, sheetName: string): Promise<SmartSheetPayload> {
+  const res = await fetch(`${BASE}/smart-tables/${encodeURIComponent(tableName)}/sheets/${encodeURIComponent(sheetName)}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `smart sheet: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function updateSmartCell(
+  tableName: string,
+  sheetName: string,
+  rowId: number,
+  columnName: string,
+  value: SmartCellValue | string,
+  source = "ui"
+): Promise<SmartSheetPayload> {
+  const res = await fetch(`${BASE}/smart-tables/${encodeURIComponent(tableName)}/sheets/${encodeURIComponent(sheetName)}/cells`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ row_id: rowId, column_name: columnName, value, source }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `update smart cell: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function addSmartRow(
+  tableName: string,
+  sheetName: string,
+  values: Record<string, SmartCellValue | string> = {},
+  source = "ui"
+): Promise<{ row: { id: number; sheet_id: number; ord: number; created_at: string; updated_at: string } }> {
+  const res = await fetch(`${BASE}/smart-tables/${encodeURIComponent(tableName)}/sheets/${encodeURIComponent(sheetName)}/rows`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ values, source }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `add smart row: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function deleteSmartRow(tableName: string, sheetName: string, rowId: number): Promise<{ ok: boolean; deleted_row_id: number }> {
+  const res = await fetch(`${BASE}/smart-tables/${encodeURIComponent(tableName)}/sheets/${encodeURIComponent(sheetName)}/rows/${rowId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `delete smart row: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchSmartCellHistory(
+  tableName: string,
+  sheetName: string,
+  rowId: number,
+  columnName: string
+): Promise<{ history: SmartCellHistoryItem[] }> {
+  const q = new URLSearchParams({ row_id: String(rowId), column_name: columnName });
+  const res = await fetch(`${BASE}/smart-tables/${encodeURIComponent(tableName)}/sheets/${encodeURIComponent(sheetName)}/history?${q.toString()}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `smart cell history: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function uploadSmartTableImage(file: File): Promise<{ image: { filename: string; relative_path: string; url: string } }> {
+  const body = new FormData();
+  body.append("file", file);
+  const res = await fetch(`${BASE}/smart-tables/images`, {
+    method: "POST",
+    body,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `smart table image upload: ${res.status}`);
+  }
+  return res.json();
+}
+
 // Ingest packs — each save or external edit creates a pending pack,
 // surfaced in the bottom-right badge until the user applies or discards.
 export type PackChange = {

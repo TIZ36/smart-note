@@ -398,6 +398,79 @@ CREATE TABLE IF NOT EXISTS app_settings (
   value TEXT NOT NULL,
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS smart_tables (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS smart_table_sheets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  table_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  ord INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(table_id, name),
+  FOREIGN KEY (table_id) REFERENCES smart_tables(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS smart_table_columns (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sheet_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL CHECK(type IN ('text', 'link', 'image')),
+  ord INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(sheet_id, name),
+  FOREIGN KEY (sheet_id) REFERENCES smart_table_sheets(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS smart_table_rows (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sheet_id INTEGER NOT NULL,
+  ord INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (sheet_id) REFERENCES smart_table_sheets(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS smart_table_cells (
+  row_id INTEGER NOT NULL,
+  column_id INTEGER NOT NULL,
+  value_json TEXT NOT NULL,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (row_id, column_id),
+  FOREIGN KEY (row_id) REFERENCES smart_table_rows(id) ON DELETE CASCADE,
+  FOREIGN KEY (column_id) REFERENCES smart_table_columns(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS smart_table_cell_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  row_id INTEGER NOT NULL,
+  column_id INTEGER NOT NULL,
+  old_value TEXT,
+  new_value TEXT,
+  changed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  source TEXT NOT NULL DEFAULT 'ui',
+  FOREIGN KEY (row_id) REFERENCES smart_table_rows(id) ON DELETE CASCADE,
+  FOREIGN KEY (column_id) REFERENCES smart_table_columns(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_smart_table_sheets_table_id
+  ON smart_table_sheets(table_id);
+
+CREATE INDEX IF NOT EXISTS idx_smart_table_columns_sheet_id
+  ON smart_table_columns(sheet_id);
+
+CREATE INDEX IF NOT EXISTS idx_smart_table_rows_sheet_id
+  ON smart_table_rows(sheet_id);
+
+CREATE INDEX IF NOT EXISTS idx_smart_table_cell_history_row_column
+  ON smart_table_cell_history(row_id, column_id);
 """
 
 MIGRATE_SQL = """
@@ -412,6 +485,7 @@ def connect() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(settings.db_path), exist_ok=True)
     conn = sqlite3.connect(settings.db_path)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
@@ -472,12 +546,15 @@ def migrate_db() -> None:
         # detection has a baseline instead of treating every chunk as changed.
         if "content_hash" not in columns:
             import hashlib as _hl
+
             stale = conn.execute(
                 "SELECT id, text FROM chunks WHERE content_hash = ''"
             ).fetchall()
             for r in stale:
                 h = _hl.sha256((r["text"] or "").encode("utf-8")).hexdigest()[:16]
-                conn.execute("UPDATE chunks SET content_hash = ? WHERE id = ?", (h, r["id"]))
+                conn.execute(
+                    "UPDATE chunks SET content_hash = ? WHERE id = ?", (h, r["id"])
+                )
 
         # Check if entities table exists
         tables = {
@@ -544,13 +621,21 @@ def migrate_db() -> None:
                 """
             )
         else:
-            b_cols = {r[1] for r in conn.execute("PRAGMA table_info(builds)").fetchall()}
+            b_cols = {
+                r[1] for r in conn.execute("PRAGMA table_info(builds)").fetchall()
+            }
             if "tags_config_json" not in b_cols:
-                conn.execute("ALTER TABLE builds ADD COLUMN tags_config_json TEXT NOT NULL DEFAULT '[]'")
+                conn.execute(
+                    "ALTER TABLE builds ADD COLUMN tags_config_json TEXT NOT NULL DEFAULT '[]'"
+                )
             if "enrich_status" not in b_cols:
-                conn.execute("ALTER TABLE builds ADD COLUMN enrich_status TEXT NOT NULL DEFAULT 'completed'")
+                conn.execute(
+                    "ALTER TABLE builds ADD COLUMN enrich_status TEXT NOT NULL DEFAULT 'completed'"
+                )
             if "completed_by" not in b_cols:
-                conn.execute("ALTER TABLE builds ADD COLUMN completed_by TEXT NOT NULL DEFAULT ''")
+                conn.execute(
+                    "ALTER TABLE builds ADD COLUMN completed_by TEXT NOT NULL DEFAULT ''"
+                )
             if "awaiting_since" not in b_cols:
                 conn.execute("ALTER TABLE builds ADD COLUMN awaiting_since TEXT")
                 # Backfill awaiting_since to created_at for builds currently
@@ -561,7 +646,9 @@ def migrate_db() -> None:
                     "WHERE awaiting_since IS NULL AND enrich_status = 'awaiting_enrich'"
                 )
             if "ingest_kind" not in b_cols:
-                conn.execute("ALTER TABLE builds ADD COLUMN ingest_kind TEXT NOT NULL DEFAULT 'full'")
+                conn.execute(
+                    "ALTER TABLE builds ADD COLUMN ingest_kind TEXT NOT NULL DEFAULT 'full'"
+                )
 
         if "search_misses" not in tables:
             conn.executescript(
@@ -581,9 +668,13 @@ def migrate_db() -> None:
 
         # Answer logs: path breakdown for A2 adaptive weight learning
         if "answer_logs" in tables:
-            al_cols = {r[1] for r in conn.execute("PRAGMA table_info(answer_logs)").fetchall()}
+            al_cols = {
+                r[1] for r in conn.execute("PRAGMA table_info(answer_logs)").fetchall()
+            }
             if "path_breakdown_json" not in al_cols:
-                conn.execute("ALTER TABLE answer_logs ADD COLUMN path_breakdown_json TEXT")
+                conn.execute(
+                    "ALTER TABLE answer_logs ADD COLUMN path_breakdown_json TEXT"
+                )
 
         if "answer_cache" not in tables:
             conn.executescript(
@@ -694,13 +785,21 @@ def migrate_db() -> None:
                 """
             )
         else:
-            ts_cols = {r[1] for r in conn.execute("PRAGMA table_info(tag_segments)").fetchall()}
+            ts_cols = {
+                r[1] for r in conn.execute("PRAGMA table_info(tag_segments)").fetchall()
+            }
             if "topic_name" not in ts_cols:
-                conn.execute("ALTER TABLE tag_segments ADD COLUMN topic_name TEXT NOT NULL DEFAULT ''")
+                conn.execute(
+                    "ALTER TABLE tag_segments ADD COLUMN topic_name TEXT NOT NULL DEFAULT ''"
+                )
             if "build_id" not in ts_cols:
-                conn.execute("ALTER TABLE tag_segments ADD COLUMN build_id TEXT NOT NULL DEFAULT ''")
+                conn.execute(
+                    "ALTER TABLE tag_segments ADD COLUMN build_id TEXT NOT NULL DEFAULT ''"
+                )
             if "centroid_json" not in ts_cols:
-                conn.execute("ALTER TABLE tag_segments ADD COLUMN centroid_json TEXT NOT NULL DEFAULT ''")
+                conn.execute(
+                    "ALTER TABLE tag_segments ADD COLUMN centroid_json TEXT NOT NULL DEFAULT ''"
+                )
 
         if "search_history" not in tables:
             conn.execute(

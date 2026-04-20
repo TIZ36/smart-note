@@ -5,9 +5,10 @@ import time
 from pathlib import Path
 
 import requests
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app.adaptive import strengthen_profile
@@ -18,7 +19,15 @@ from app.knowledge_graph import get_graph
 from app.memory import add_feedback, save_qa_memory
 from app.rerank import rerank
 from app.builds import get_active_build_id, list_builds, activate_build, delete_build
-from app.tags import get_all_tags, get_tags_with_desc, add_tag, delete_tag, reorder_tags, set_tag_color, TAG_COLORS
+from app.tags import (
+    get_all_tags,
+    get_tags_with_desc,
+    add_tag,
+    delete_tag,
+    reorder_tags,
+    set_tag_color,
+    TAG_COLORS,
+)
 from app.retrieval import search
 from app.rewrite import (
     generate_candidate,
@@ -27,9 +36,15 @@ from app.rewrite import (
     reject_candidate,
     record_validation,
 )
-from app.versioning import list_versions, restore_version, create_snapshot, delete_version
+from app.versioning import (
+    list_versions,
+    restore_version,
+    create_snapshot,
+    delete_version,
+)
 from app import skill
 from app import packs
+from app import smart_table
 
 
 app = FastAPI(title="SmartNote Gateway")
@@ -45,6 +60,7 @@ except Exception:
 # edits via POST /settings take effect without restarting the backend.
 try:
     from app.config import seed_settings_if_empty, load_settings_from_db
+
     seed_settings_if_empty()
     load_settings_from_db()
 except Exception:
@@ -57,8 +73,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+smart_table.IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+app.mount(
+    "/smart-table-images",
+    StaticFiles(directory=str(smart_table.IMAGE_DIR)),
+    name="smart-table-images",
+)
+
 
 # ── Request models ──
+
 
 class SearchRequest(BaseModel):
     query: str
@@ -83,7 +107,9 @@ class ChatRequest(BaseModel):
     query: str
     evidence_ids: list[int] = []
     history: list[ChatHistoryItem] = []  # Previous Q&A for follow-ups
-    source_files: list[str] = []  # Full source files for deep context (populated by frontend from prior response)
+    source_files: list[
+        str
+    ] = []  # Full source files for deep context (populated by frontend from prior response)
     topk: int = 15
 
 
@@ -93,7 +119,56 @@ class FeedbackRequest(BaseModel):
     feedback_type: str = "plus_one"
 
 
+class SmartTableCreateRequest(BaseModel):
+    name: str
+
+
+class SmartTableRenameRequest(BaseModel):
+    new_name: str
+
+
+class SmartSheetCreateRequest(BaseModel):
+    name: str
+
+
+class SmartColumnCreateRequest(BaseModel):
+    name: str
+    type: str
+
+
+class SmartColumnRenameRequest(BaseModel):
+    new_name: str
+
+
+class SmartSheetRenameRequest(BaseModel):
+    new_name: str
+
+
+class SmartCellUpdateRequest(BaseModel):
+    row_id: int
+    column_name: str
+    value: dict | str
+    source: str = "ui"
+
+
+class SmartAppendColumnRequest(BaseModel):
+    column_name: str
+    values: list[dict | str]
+    source: str = "mcp"
+
+
+class SmartRowCreateRequest(BaseModel):
+    values: dict[str, dict | str] = {}
+    source: str = "ui"
+
+
+class SmartRowsInsertRequest(BaseModel):
+    rows: list[dict[str, dict | str]]
+    source: str = "mcp"
+
+
 # ── Stage 1: Recall ──
+
 
 @app.get("/health")
 def health() -> dict:
@@ -103,6 +178,7 @@ def health() -> dict:
 # ── Ingest progress SSE ──
 # Lets the desktop app observe ingest runs that execute inside this gateway
 # process (e.g. MCP-triggered). CLI-spawned ingests already stream over stderr.
+
 
 @app.get("/events/ingest")
 def api_events_ingest():
@@ -138,7 +214,12 @@ def api_events_ingest():
 @app.post("/search")
 def api_search(req: SearchRequest) -> dict:
     """Stage 1: Wide recall with 5 retrieval paths + adaptive weights."""
-    result = search(req.query, req.topk, tag_filter=req.tag_filter, include_wiki=req.include_wiki or None)
+    result = search(
+        req.query,
+        req.topk,
+        tag_filter=req.tag_filter,
+        include_wiki=req.include_wiki or None,
+    )
 
     # Dual-search validation for active rewrite candidates (async, non-blocking)
     try:
@@ -162,7 +243,9 @@ def api_search(req: SearchRequest) -> dict:
                 "INSERT INTO search_history(query_text, result_count, tag_filter) VALUES(?, ?, ?)",
                 (req.query, result_count, req.tag_filter),
             )
-            conn.execute("DELETE FROM search_history WHERE id NOT IN (SELECT id FROM search_history ORDER BY created_at DESC LIMIT 20)")
+            conn.execute(
+                "DELETE FROM search_history WHERE id NOT IN (SELECT id FROM search_history ORDER BY created_at DESC LIMIT 20)"
+            )
             # Track knowledge gaps: miss = no results, or top score weak.
             # Feeds the list_knowledge_gaps MCP tool so Claude can proactively
             # ingest docs to fill what the user keeps searching for.
@@ -179,7 +262,214 @@ def api_search(req: SearchRequest) -> dict:
     return result
 
 
+@app.get("/smart-tables")
+def api_list_smart_tables() -> dict:
+    return {"tables": smart_table.list_tables()}
+
+
+@app.post("/smart-tables")
+def api_create_smart_table(req: SmartTableCreateRequest) -> dict:
+    try:
+        return {"table": smart_table.create_table(req.name.strip())}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.patch("/smart-tables/{table_name}")
+def api_rename_smart_table(table_name: str, req: SmartTableRenameRequest) -> dict:
+    try:
+        return {"table": smart_table.rename_table(table_name, req.new_name.strip())}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/smart-tables/{table_name}")
+def api_delete_smart_table(table_name: str) -> dict:
+    try:
+        return smart_table.delete_table(table_name)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/smart-tables/{table_name}/sheets")
+def api_list_smart_sheets(table_name: str) -> dict:
+    try:
+        return {"sheets": smart_table.list_sheets(table_name)}
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.post("/smart-tables/{table_name}/sheets")
+def api_create_smart_sheet(table_name: str, req: SmartSheetCreateRequest) -> dict:
+    try:
+        return {"sheet": smart_table.create_sheet(table_name, req.name.strip())}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.patch("/smart-tables/{table_name}/sheets/{sheet_name}")
+def api_rename_smart_sheet(
+    table_name: str, sheet_name: str, req: SmartSheetRenameRequest
+) -> dict:
+    try:
+        return {
+            "sheet": smart_table.rename_sheet(
+                table_name, sheet_name, req.new_name.strip()
+            )
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/smart-tables/{table_name}/sheets/{sheet_name}")
+def api_delete_smart_sheet(table_name: str, sheet_name: str) -> dict:
+    try:
+        return smart_table.delete_sheet(table_name, sheet_name)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/smart-tables/{table_name}/sheets/{sheet_name}")
+def api_get_smart_sheet(table_name: str, sheet_name: str) -> dict:
+    try:
+        return smart_table.get_sheet(table_name, sheet_name)
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.post("/smart-tables/{table_name}/sheets/{sheet_name}/columns")
+def api_add_smart_column(
+    table_name: str, sheet_name: str, req: SmartColumnCreateRequest
+) -> dict:
+    try:
+        return {
+            "column": smart_table.add_column(
+                table_name, sheet_name, req.name.strip(), req.type
+            )
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.patch("/smart-tables/{table_name}/sheets/{sheet_name}/columns/{column_name}")
+def api_rename_smart_column(
+    table_name: str,
+    sheet_name: str,
+    column_name: str,
+    req: SmartColumnRenameRequest,
+) -> dict:
+    try:
+        return {
+            "column": smart_table.rename_column(
+                table_name, sheet_name, column_name, req.new_name.strip()
+            )
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/smart-tables/{table_name}/sheets/{sheet_name}/columns/{column_name}")
+def api_delete_smart_column(table_name: str, sheet_name: str, column_name: str) -> dict:
+    try:
+        return smart_table.delete_column(table_name, sheet_name, column_name)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/smart-tables/{table_name}/sheets/{sheet_name}/rows")
+def api_add_smart_row(
+    table_name: str, sheet_name: str, req: SmartRowCreateRequest
+) -> dict:
+    try:
+        return {
+            "row": smart_table.add_row(
+                table_name, sheet_name, req.values, source=req.source
+            )
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/smart-tables/{table_name}/sheets/{sheet_name}/rows/batch")
+def api_insert_smart_rows(
+    table_name: str, sheet_name: str, req: SmartRowsInsertRequest
+) -> dict:
+    try:
+        return smart_table.insert_rows(
+            table_name, sheet_name, req.rows, source=req.source
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/smart-tables/{table_name}/sheets/{sheet_name}/rows/{row_id}")
+def api_delete_smart_row(table_name: str, sheet_name: str, row_id: int) -> dict:
+    try:
+        return smart_table.delete_row(table_name, sheet_name, row_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/smart-tables/{table_name}/sheets/{sheet_name}/cells")
+def api_update_smart_cell(
+    table_name: str, sheet_name: str, req: SmartCellUpdateRequest
+) -> dict:
+    try:
+        return smart_table.update_cell(
+            table_name,
+            sheet_name,
+            req.row_id,
+            req.column_name,
+            req.value,
+            source=req.source,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/smart-tables/{table_name}/sheets/{sheet_name}/append-column")
+def api_append_smart_column(
+    table_name: str, sheet_name: str, req: SmartAppendColumnRequest
+) -> dict:
+    try:
+        return smart_table.append_column_data(
+            table_name,
+            sheet_name,
+            req.column_name,
+            req.values,
+            source=req.source,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/smart-tables/{table_name}/sheets/{sheet_name}/history")
+def api_get_smart_cell_history(
+    table_name: str, sheet_name: str, row_id: int, column_name: str
+) -> dict:
+    try:
+        return {
+            "history": smart_table.get_cell_history(
+                table_name, sheet_name, row_id, column_name
+            )
+        }
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.post("/smart-tables/images")
+async def api_upload_smart_table_image(file: UploadFile = File(...)) -> dict:
+    try:
+        payload = smart_table.save_image(
+            file.filename or "image.bin", await file.read()
+        )
+        return {"image": payload}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 # ── Stage 2: Rerank ──
+
 
 @app.post("/rerank")
 def api_rerank(req: RerankRequest) -> dict:
@@ -190,7 +480,10 @@ def api_rerank(req: RerankRequest) -> dict:
 
 # ── Stage 3: AI Answer ──
 
-def _chat_completion(system: str, messages: list[dict], cacheable_prefix: str = "") -> str:
+
+def _chat_completion(
+    system: str, messages: list[dict], cacheable_prefix: str = ""
+) -> str:
     """Call the configured chat provider.
 
     `cacheable_prefix`: when non-empty AND the provider is Anthropic
@@ -216,20 +509,22 @@ def _chat_completion(system: str, messages: list[dict], cacheable_prefix: str = 
     # on proxies that route to Anthropic but reject the field.
     is_anthropic = "anthropic" in (settings.provider_base_url or "").lower()
     cache_mode = (getattr(settings, "prompt_cache_mode", "auto") or "auto").lower()
-    cache_enabled = (
-        (cache_mode == "on")
-        or (cache_mode == "auto" and is_anthropic)
-    )
+    cache_enabled = (cache_mode == "on") or (cache_mode == "auto" and is_anthropic)
     if cacheable_prefix and cache_enabled:
         system_blocks = [
-            {"type": "text", "text": cacheable_prefix,
-             "cache_control": {"type": "ephemeral"}},
+            {
+                "type": "text",
+                "text": cacheable_prefix,
+                "cache_control": {"type": "ephemeral"},
+            },
         ]
         if system:
             system_blocks.append({"type": "text", "text": system})
         all_messages = [{"role": "system", "content": system_blocks}] + messages
     else:
-        sys_text = (cacheable_prefix + "\n\n" + system).strip() if cacheable_prefix else system
+        sys_text = (
+            (cacheable_prefix + "\n\n" + system).strip() if cacheable_prefix else system
+        )
         all_messages = [{"role": "system", "content": sys_text}] + messages
 
     payload = {
@@ -300,7 +595,10 @@ def _read_full_source(source_file: str) -> str:
     try:
         text = p.read_text(encoding="utf-8", errors="ignore")
         if len(text) > 50000:
-            text = text[:50000] + f"\n\n[... truncated, {len(text) - 50000} more chars ...]"
+            text = (
+                text[:50000]
+                + f"\n\n[... truncated, {len(text) - 50000} more chars ...]"
+            )
         return text
     except Exception:
         return ""
@@ -328,7 +626,10 @@ def api_chat(req: ChatRequest) -> dict:
 
     # A3: answer cache lookup (query + sorted evidence ids signature)
     from app.cache import lookup_answer as _cache_lookup, save_answer as _cache_save
-    ev_ids_ordered = [int(e.get("id")) for e in evidence if isinstance(e.get("id"), int)]
+
+    ev_ids_ordered = [
+        int(e.get("id")) for e in evidence if isinstance(e.get("id"), int)
+    ]
     cached = _cache_lookup(req.query, ev_ids_ordered)
     if cached and not req.source_files:
         # Only serve cache when NOT in deep-source follow-up mode — deep mode
@@ -350,7 +651,7 @@ def api_chat(req: ChatRequest) -> dict:
         text = (e.get("text", "") or "").strip()
         ref = e.get("source_ref", "")
         if text:
-            evidence_lines.append(f"[{i+1}] ({ref}) {text}")
+            evidence_lines.append(f"[{i + 1}] ({ref}) {text}")
     evidence_text = "\n".join(evidence_lines)
 
     # Deep mode: if source_files provided (follow-up), inject full document content
@@ -402,15 +703,18 @@ def api_chat(req: ChatRequest) -> dict:
     cacheable_prefix = ""
     dim_counts: dict[str, int] = {}
     for e in evidence:
-        dim = (e.get("dimension") or "")
+        dim = e.get("dimension") or ""
         if dim.startswith("wiki:"):
             dim_counts[dim] = dim_counts.get(dim, 0) + 1
     if dim_counts:
         top_dim, top_n = max(dim_counts.items(), key=lambda kv: kv[1])
         if top_n >= max(2, len(evidence) // 2):
             # At least half evidence agrees on one wiki topic.
-            wiki_source_files = {e.get("source_file") for e in evidence
-                                 if (e.get("dimension") or "") == top_dim}
+            wiki_source_files = {
+                e.get("source_file")
+                for e in evidence
+                if (e.get("dimension") or "") == top_dim
+            }
             wiki_text_parts = []
             for sf in list(wiki_source_files)[:2]:
                 full = _read_full_source(sf)
@@ -472,23 +776,33 @@ def api_chat(req: ChatRequest) -> dict:
         pass
 
     with connect() as conn:
-        qid_row = conn.execute("SELECT id FROM query_logs ORDER BY id DESC LIMIT 1").fetchone()
+        qid_row = conn.execute(
+            "SELECT id FROM query_logs ORDER BY id DESC LIMIT 1"
+        ).fetchone()
         qid = qid_row["id"] if qid_row else 0
         conn.execute(
             "INSERT INTO answer_logs(query_id, answer_text, evidence_refs, "
             "model_name, latency_ms, path_breakdown_json) "
             "VALUES(?, ?, ?, ?, ?, ?)",
-            (qid, answer, json.dumps(evidence_ids),
-             settings.provider_chat_model, latency,
-             json.dumps(path_breakdown_agg, ensure_ascii=False)),
+            (
+                qid,
+                answer,
+                json.dumps(evidence_ids),
+                settings.provider_chat_model,
+                latency,
+                json.dumps(path_breakdown_agg, ensure_ascii=False),
+            ),
         )
         answer_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         conn.commit()
 
     # A3: cache the answer if evidence is trusted
     _cache_save(
-        req.query, ev_ids_ordered, answer,
-        settings.provider_chat_model, trust_sum,
+        req.query,
+        ev_ids_ordered,
+        answer,
+        settings.provider_chat_model,
+        trust_sum,
     )
 
     return {
@@ -504,6 +818,7 @@ def api_chat(req: ChatRequest) -> dict:
 
 # ── Stage 4: Strengthen ──
 
+
 @app.post("/feedback")
 def api_feedback(req: FeedbackRequest) -> dict:
     """Stage 4: Strengthen — saves Q&A memory with params, updates query profiles."""
@@ -518,6 +833,7 @@ def api_feedback(req: FeedbackRequest) -> dict:
         # upvoted evidence (or dampen the winning path on downvote).
         try:
             from app.adaptive import adjust_weights_from_feedback as _adjust
+
             with connect() as conn:
                 pb_row = conn.execute(
                     "SELECT path_breakdown_json FROM answer_logs WHERE id = ?",
@@ -597,7 +913,9 @@ def api_feedback(req: FeedbackRequest) -> dict:
     return {"status": "ok"}
 
 
-def _read_line_window(path: str | Path, center_line: int, before: int = 5, after: int = 5) -> list[dict]:
+def _read_line_window(
+    path: str | Path, center_line: int, before: int = 5, after: int = 5
+) -> list[dict]:
     """Stream only the window around center_line (1-based). Does not load the full file into memory."""
     start = max(1, center_line - before)
     end = center_line + after
@@ -614,7 +932,9 @@ def _read_line_window(path: str | Path, center_line: int, before: int = 5, after
     return out
 
 
-def _read_lines_inclusive(path: str | Path, line_start: int, line_end: int) -> list[dict]:
+def _read_lines_inclusive(
+    path: str | Path, line_start: int, line_end: int
+) -> list[dict]:
     """Lines line_start..line_end inclusive (1-based). Streaming read."""
     if line_end < line_start:
         return []
@@ -631,8 +951,11 @@ def _read_lines_inclusive(path: str | Path, line_start: int, line_end: int) -> l
 
 # ── Source preview ──
 
+
 @app.get("/source")
-def api_source(ref: str = Query(..., description="source_ref like raw.md:line:5:line")) -> dict:
+def api_source(
+    ref: str = Query(..., description="source_ref like raw.md:line:5:line"),
+) -> dict:
     """Return raw file content around the referenced line for source preview."""
     parts = ref.split(":")
 
@@ -738,10 +1061,12 @@ def api_wiki_graph() -> dict:
         dim = row["dimension"]
         topic = dim.replace("wiki:", "", 1)
         if topic in topics:
-            topics[topic]["files"].append({
-                "path": row["source_file"],
-                "chunks": row["chunk_count"],
-            })
+            topics[topic]["files"].append(
+                {
+                    "path": row["source_file"],
+                    "chunks": row["chunk_count"],
+                }
+            )
             topics[topic]["chunk_count"] += row["chunk_count"]
 
     # ── Add user's note as a node (non-wiki tag_segments) ──
@@ -765,7 +1090,9 @@ def api_wiki_graph() -> dict:
             note_tags.append(tag)
         try:
             kws = json.loads(row["keywords_json"]) if row["keywords_json"] else []
-            note_keywords.update(k.lower() for k in kws if isinstance(k, str) and len(k) > 2)
+            note_keywords.update(
+                k.lower() for k in kws if isinstance(k, str) and len(k) > 2
+            )
         except (json.JSONDecodeError, TypeError):
             pass
 
@@ -777,13 +1104,17 @@ def api_wiki_graph() -> dict:
             "summary": f"{len(note_tags)} tags, {note_chunk_count} chunks",
             "keywords": list(note_keywords)[:100],
             "folder": "",
-            "files": [{"path": r["source_file"], "chunks": r["chunk_count"]} for r in note_file_rows[:5]],
+            "files": [
+                {"path": r["source_file"], "chunks": r["chunk_count"]}
+                for r in note_file_rows[:5]
+            ],
             "chunk_count": note_chunk_count,
             "is_note": True,
         }
 
     # Build edges: semantic similarity between topic embedding centroids
     import numpy as np
+
     topic_list = list(topics.values())
 
     # Compute average embedding vector per topic (centroid)
@@ -830,12 +1161,14 @@ def api_wiki_graph() -> dict:
                 continue
             sim = _cosine(centroids[id_i], centroids[id_j])
             if sim >= SIM_THRESHOLD:
-                edges.append({
-                    "source": id_i,
-                    "target": id_j,
-                    "similarity": round(sim, 3),
-                    "weight": round(sim * 10, 1),
-                })
+                edges.append(
+                    {
+                        "source": id_i,
+                        "target": id_j,
+                        "similarity": round(sim, 3),
+                        "weight": round(sim * 10, 1),
+                    }
+                )
 
     # Clean up keywords from response
     nodes = []
@@ -856,6 +1189,7 @@ def api_wiki_graph() -> dict:
 
 
 # ── Version management ──
+
 
 class RestoreRequest(BaseModel):
     version_id: str
@@ -895,6 +1229,7 @@ def api_restore(req: RestoreRequest) -> dict:
 
 
 # ── Rewrite (lossless reorganization) ──
+
 
 class RewriteRequest(BaseModel):
     raw_path: str
@@ -940,6 +1275,7 @@ def api_rewrite_reject(req: RewriteApproveRequest) -> dict:
 
 # ── Builds ──
 
+
 class BuildActivateRequest(BaseModel):
     build_id: str
 
@@ -963,12 +1299,14 @@ def api_build_delete(build_id: str) -> dict:
 
 # ── User Prefs (read by MCP server to find active note path) ──
 
+
 @app.get("/prefs")
 def api_prefs() -> dict:
     """Return stored user preferences (raw note path, etc.)."""
     prefs_file = Path(settings.db_path).resolve().parent / "prefs.json"
     if prefs_file.exists():
         import json as _json
+
         try:
             return _json.loads(prefs_file.read_text(encoding="utf-8"))
         except Exception:
@@ -977,6 +1315,7 @@ def api_prefs() -> dict:
 
 
 # ── Raw Note Ingest (via API) ──
+
 
 class IngestRequest(BaseModel):
     raw_path: str
@@ -992,8 +1331,11 @@ class IngestRequest(BaseModel):
 def api_ingest(req: IngestRequest) -> dict:
     """Ingest raw notes — incremental (default) or full rebuild."""
     from app.ingest import ingest_raw
+
     try:
-        result = ingest_raw(req.raw_path, req.note_path, reset=req.reset, ai_delegate=req.ai_delegate)
+        result = ingest_raw(
+            req.raw_path, req.note_path, reset=req.reset, ai_delegate=req.ai_delegate
+        )
         if req.ai_delegate:
             result = {**result, "ai_delegated": True, "source_file": req.raw_path}
         return result
@@ -1002,6 +1344,7 @@ def api_ingest(req: IngestRequest) -> dict:
 
 
 # ── Delegated classification (called by MCP caller after ai_delegate ingest) ──
+
 
 class ClassifySegmentRequest(BaseModel):
     source_file: str
@@ -1030,6 +1373,7 @@ def api_classify_segment(req: ClassifySegmentRequest) -> dict:
         raise HTTPException(status_code=400, detail="tag is required")
 
     from app.tags import get_all_tags
+
     _known_tags: set[str] = set(get_all_tags())
     active = get_active_build_id() or ""
     tag = req.tag.strip()
@@ -1065,8 +1409,13 @@ def api_classify_segment(req: ClassifySegmentRequest) -> dict:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    active, req.source_file, st, req.topic_name or "",
-                    req.line_start, req.line_end, req.summary or "",
+                    active,
+                    req.source_file,
+                    st,
+                    req.topic_name or "",
+                    req.line_start,
+                    req.line_end,
+                    req.summary or "",
                     json.dumps(req.keywords, ensure_ascii=False),
                     json.dumps(req.entities, ensure_ascii=False),
                     1 if req.is_credential else 0,
@@ -1092,7 +1441,9 @@ def api_classify_segment(req: ClassifySegmentRequest) -> dict:
             if line_no is None:
                 continue
             if req.line_start <= line_no <= req.line_end:
-                conn.execute("UPDATE chunks SET dimension = ? WHERE id = ?", (tag, row["id"]))
+                conn.execute(
+                    "UPDATE chunks SET dimension = ? WHERE id = ?", (tag, row["id"])
+                )
                 affected_chunks += 1
         conn.commit()
 
@@ -1123,7 +1474,10 @@ def api_classify_segment(req: ClassifySegmentRequest) -> dict:
 
 @app.get("/enrich-queue")
 def api_enrich_queue(
-    kind: str = Query("summary", description="summary | note_segments | wiki_chunks | wiki_topic | doc_format"),
+    kind: str = Query(
+        "summary",
+        description="summary | note_segments | wiki_chunks | wiki_topic | doc_format",
+    ),
     build_id: str = Query("", description="Filter to a specific build"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -1290,17 +1644,23 @@ def api_enrich_queue(
                             buf_end = e
                             buf_lines += e - s + 1
                         if buf_lines >= slice_size:
-                            suggested_partitions.append({
-                                "line_start": buf_start, "line_end": buf_end,
-                                "approx_lines": buf_lines,
-                            })
+                            suggested_partitions.append(
+                                {
+                                    "line_start": buf_start,
+                                    "line_end": buf_end,
+                                    "approx_lines": buf_lines,
+                                }
+                            )
                             buf_start = None
                             buf_lines = 0
                     if buf_start is not None:
-                        suggested_partitions.append({
-                            "line_start": buf_start, "line_end": buf_end,
-                            "approx_lines": buf_lines,
-                        })
+                        suggested_partitions.append(
+                            {
+                                "line_start": buf_start,
+                                "line_end": buf_end,
+                                "approx_lines": buf_lines,
+                            }
+                        )
 
                 hint = (
                     "Incremental enrich: only classify the lines in `pending_line_ranges`. "
@@ -1318,18 +1678,20 @@ def api_enrich_queue(
                         "/tmp/seg-<idx>.jsonl, then merge and submit with items_file."
                     )
 
-                builds.append({
-                    "build_id": r["id"],
-                    "source_file": sf,
-                    "chunks": r["chunk_count"],
-                    "total_lines": total_lines,
-                    "existing_segments": existing_segments,
-                    "pending_line_ranges": pending_ranges,
-                    "pending_chunk_count": len(pending_rows),
-                    "incremental": incremental,
-                    "suggested_partitions": suggested_partitions,
-                    "hint": hint,
-                })
+                builds.append(
+                    {
+                        "build_id": r["id"],
+                        "source_file": sf,
+                        "chunks": r["chunk_count"],
+                        "total_lines": total_lines,
+                        "existing_segments": existing_segments,
+                        "pending_line_ranges": pending_ranges,
+                        "pending_chunk_count": len(pending_rows),
+                        "incremental": incremental,
+                        "suggested_partitions": suggested_partitions,
+                        "hint": hint,
+                    }
+                )
             return {"kind": "note_segments", "builds": builds}
 
         if kind == "wiki_chunks":
@@ -1392,19 +1754,21 @@ def api_enrich_queue(
                     "WHERE dimension = ? AND ai_summary != '' LIMIT 20",
                     (r["tag"],),
                 ).fetchall()
-                topics.append({
-                    "tag_segment_id": r["id"],
-                    "build_id": r["build_id"],
-                    "topic_name": r["topic_name"],
-                    "source_file": r["source_file"],
-                    "chunk_summary_samples": [
-                        {"source_ref": h["source_ref"], "summary": h["ai_summary"]}
-                        for h in chunk_hints
-                    ],
-                    "structural_keywords": (
-                        json.loads(r["keywords_json"]) if r["keywords_json"] else []
-                    )[:30],
-                })
+                topics.append(
+                    {
+                        "tag_segment_id": r["id"],
+                        "build_id": r["build_id"],
+                        "topic_name": r["topic_name"],
+                        "source_file": r["source_file"],
+                        "chunk_summary_samples": [
+                            {"source_ref": h["source_ref"], "summary": h["ai_summary"]}
+                            for h in chunk_hints
+                        ],
+                        "structural_keywords": (
+                            json.loads(r["keywords_json"]) if r["keywords_json"] else []
+                        )[:30],
+                    }
+                )
             return {
                 "kind": "wiki_topic",
                 "topics": topics,
@@ -1480,7 +1844,9 @@ def api_enrich_bulk(req: EnrichBulkRequest) -> dict:
     if req.items_file:
         p = Path(req.items_file)
         if not p.exists():
-            raise HTTPException(status_code=400, detail=f"items_file not found: {req.items_file}")
+            raise HTTPException(
+                status_code=400, detail=f"items_file not found: {req.items_file}"
+            )
         try:
             if p.suffix.lower() == ".jsonl":
                 with p.open(encoding="utf-8") as fh:
@@ -1498,7 +1864,9 @@ def api_enrich_bulk(req: EnrichBulkRequest) -> dict:
             else:
                 parsed = json.loads(p.read_text(encoding="utf-8"))
                 if not isinstance(parsed, list):
-                    raise HTTPException(status_code=400, detail="items_file must be a JSON array")
+                    raise HTTPException(
+                        status_code=400, detail="items_file must be a JSON array"
+                    )
                 items.extend(parsed)
         except HTTPException:
             raise
@@ -1515,15 +1883,17 @@ def api_enrich_bulk(req: EnrichBulkRequest) -> dict:
 
     def _emit(step: str, current: int, detail: str) -> None:
         try:
-            _publish({
-                "channel": sse_channel,
-                "step": step,
-                "current": current,
-                "total": total_items,
-                "detail": detail,
-                "actor": "mcp:delegate",
-                "kind": kind,
-            })
+            _publish(
+                {
+                    "channel": sse_channel,
+                    "step": step,
+                    "current": current,
+                    "total": total_items,
+                    "detail": detail,
+                    "actor": "mcp:delegate",
+                    "kind": kind,
+                }
+            )
         except Exception:
             pass
 
@@ -1537,6 +1907,7 @@ def api_enrich_bulk(req: EnrichBulkRequest) -> dict:
 
     if kind == "note_segments":
         from app.tags import get_all_tags
+
         _known_tags: set[str] = set(get_all_tags())
         active = get_active_build_id() or ""
         with connect() as conn:
@@ -1583,17 +1954,25 @@ def api_enrich_bulk(req: EnrichBulkRequest) -> dict:
                             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                             (
                                 build_id,
-                                source_file, line_start, line_end,
-                                overlap["tag"], overlap["topic_name"] or "",
-                                tag, it.get("topic_name", "") or "",
+                                source_file,
+                                line_start,
+                                line_end,
+                                overlap["tag"],
+                                overlap["topic_name"] or "",
+                                tag,
+                                it.get("topic_name", "") or "",
                                 it.get("summary", "") or "",
                                 json.dumps(it, ensure_ascii=False),
                             ),
                         )
-                        conflicts_created.append({
-                            "line_start": line_start, "line_end": line_end,
-                            "existing_tag": overlap["tag"], "incoming_tag": tag,
-                        })
+                        conflicts_created.append(
+                            {
+                                "line_start": line_start,
+                                "line_end": line_end,
+                                "existing_tag": overlap["tag"],
+                                "incoming_tag": tag,
+                            }
+                        )
                         conn.commit()
                         # Skip applying — wait for human resolution
                         continue
@@ -1605,8 +1984,13 @@ def api_enrich_bulk(req: EnrichBulkRequest) -> dict:
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
-                            build_id, source_file, tag, it.get("topic_name", "") or "",
-                            line_start, line_end, it.get("summary", "") or "",
+                            build_id,
+                            source_file,
+                            tag,
+                            it.get("topic_name", "") or "",
+                            line_start,
+                            line_end,
+                            it.get("summary", "") or "",
                             json.dumps(kws, ensure_ascii=False),
                             json.dumps(ents, ensure_ascii=False),
                             1 if it.get("is_credential") else 0,
@@ -1622,8 +2006,13 @@ def api_enrich_bulk(req: EnrichBulkRequest) -> dict:
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
-                                build_id, source_file, st, it.get("topic_name", "") or "",
-                                line_start, line_end, it.get("summary", "") or "",
+                                build_id,
+                                source_file,
+                                st,
+                                it.get("topic_name", "") or "",
+                                line_start,
+                                line_end,
+                                it.get("summary", "") or "",
                                 json.dumps(kws, ensure_ascii=False),
                                 json.dumps(ents, ensure_ascii=False),
                                 1 if it.get("is_credential") else 0,
@@ -1647,7 +2036,10 @@ def api_enrich_bulk(req: EnrichBulkRequest) -> dict:
                             except ValueError:
                                 continue
                         if line_no is not None and line_start <= line_no <= line_end:
-                            conn.execute("UPDATE chunks SET dimension = ? WHERE id = ?", (tag, cr["id"]))
+                            conn.execute(
+                                "UPDATE chunks SET dimension = ? WHERE id = ?",
+                                (tag, cr["id"]),
+                            )
                     if build_id:
                         touched_builds.add(build_id)
                     applied += 1
@@ -1667,15 +2059,22 @@ def api_enrich_bulk(req: EnrichBulkRequest) -> dict:
                     ents = it.get("entities") or []
                     # Merge kws into existing keywords_json
                     row = conn.execute(
-                        "SELECT build_id, keywords_json FROM chunks WHERE id = ?", (chunk_id,)
+                        "SELECT build_id, keywords_json FROM chunks WHERE id = ?",
+                        (chunk_id,),
                     ).fetchone()
                     if not row:
                         raise ValueError(f"chunk {chunk_id} not found")
                     try:
-                        existing_kws = json.loads(row["keywords_json"]) if row["keywords_json"] else []
+                        existing_kws = (
+                            json.loads(row["keywords_json"])
+                            if row["keywords_json"]
+                            else []
+                        )
                     except (json.JSONDecodeError, TypeError):
                         existing_kws = []
-                    merged = list({(k or "").lower() for k in (*existing_kws, *kws) if k})
+                    merged = list(
+                        {(k or "").lower() for k in (*existing_kws, *kws) if k}
+                    )
                     conn.execute(
                         "UPDATE chunks SET ai_summary = ?, keywords_json = ?, entities_json = ? WHERE id = ?",
                         (
@@ -1702,12 +2101,17 @@ def api_enrich_bulk(req: EnrichBulkRequest) -> dict:
                         raise ValueError("summary required")
                     kws = it.get("keywords") or []
                     row = conn.execute(
-                        "SELECT build_id, keywords_json FROM tag_segments WHERE id = ?", (seg_id,)
+                        "SELECT build_id, keywords_json FROM tag_segments WHERE id = ?",
+                        (seg_id,),
                     ).fetchone()
                     if not row:
                         raise ValueError(f"tag_segment {seg_id} not found")
                     try:
-                        existing_kws = json.loads(row["keywords_json"]) if row["keywords_json"] else []
+                        existing_kws = (
+                            json.loads(row["keywords_json"])
+                            if row["keywords_json"]
+                            else []
+                        )
                     except (json.JSONDecodeError, TypeError):
                         existing_kws = []
                     # Preserve existing structural kws; prepend new LLM kws
@@ -1725,6 +2129,7 @@ def api_enrich_bulk(req: EnrichBulkRequest) -> dict:
 
     elif kind == "doc_format":
         from app.special_ingest import ingest_folder
+
         chained: list[dict] = []
         with connect() as conn:
             for idx, it in enumerate(items):
@@ -1739,11 +2144,16 @@ def api_enrich_bulk(req: EnrichBulkRequest) -> dict:
                         (format_id,),
                     ).fetchone()
                     if not row:
-                        raise ValueError(f"format_id {format_id} not found or already done")
+                        raise ValueError(
+                            f"format_id {format_id} not found or already done"
+                        )
                     target_dir = Path(row["target_dir"])
                     target_dir.mkdir(parents=True, exist_ok=True)
                     import re as _re
-                    safe_name = _re.sub(r'[^\w\s\u4e00-\u9fff-]', '_', row["topic_name"])[:80]
+
+                    safe_name = _re.sub(
+                        r"[^\w\s\u4e00-\u9fff-]", "_", row["topic_name"]
+                    )[:80]
                     md_path = target_dir / f"{safe_name}.md"
                     md_path.write_text(markdown, encoding="utf-8")
                     conn.execute(
@@ -1753,17 +2163,31 @@ def api_enrich_bulk(req: EnrichBulkRequest) -> dict:
                     conn.commit()
                     # Chain into delegated wiki ingest (creates wiki_chunks + wiki_topic pending)
                     try:
-                        ing = ingest_folder(str(target_dir), topic_name=row["topic_name"], ai_delegate=True)
+                        ing = ingest_folder(
+                            str(target_dir),
+                            topic_name=row["topic_name"],
+                            ai_delegate=True,
+                        )
                         chained.append({"format_id": format_id, **ing})
                         if ing.get("build_id"):
                             touched_builds.add(ing["build_id"])
                     except Exception as ie:
-                        chained.append({"format_id": format_id, "ingest_error": str(ie)})
+                        chained.append(
+                            {"format_id": format_id, "ingest_error": str(ie)}
+                        )
                     applied += 1
                 except Exception as e:
                     failed.append({"index": idx, "error": str(e)})
-        _emit("ai_enrich", applied, f"Applied {applied}/{total_items} doc_format (chained ingests: {len(chained)})")
-        _emit("done", applied, f"Claude completed doc_format: {applied} applied, {len(chained)} wiki ingests triggered")
+        _emit(
+            "ai_enrich",
+            applied,
+            f"Applied {applied}/{total_items} doc_format (chained ingests: {len(chained)})",
+        )
+        _emit(
+            "done",
+            applied,
+            f"Claude completed doc_format: {applied} applied, {len(chained)} wiki ingests triggered",
+        )
         return {
             "kind": kind,
             "applied": applied,
@@ -1786,6 +2210,7 @@ def api_enrich_bulk(req: EnrichBulkRequest) -> dict:
                 merge_adjacent_segments as _merge,
                 refresh_segment_centroids as _refresh,
             )
+
             for bid in touched_builds:
                 r = _merge(bid)
                 merged_total += int(r.get("merged", 0) or 0)
@@ -1794,7 +2219,9 @@ def api_enrich_bulk(req: EnrichBulkRequest) -> dict:
             pass
 
     # Recompute enrich_status for all touched builds
-    enriched_by = (getattr(req, "enriched_by", None) or "delegate").strip() or "delegate"
+    enriched_by = (
+        getattr(req, "enriched_by", None) or "delegate"
+    ).strip() or "delegate"
     build_status: dict[str, str] = {}
     for bid in touched_builds:
         try:
@@ -1802,7 +2229,9 @@ def api_enrich_bulk(req: EnrichBulkRequest) -> dict:
         except Exception:
             pass
 
-    all_done = bool(build_status) and all(v == "completed" for v in build_status.values())
+    all_done = bool(build_status) and all(
+        v == "completed" for v in build_status.values()
+    )
     if all_done:
         _emit("done", applied, f"{enriched_by} completed {kind}: {applied} applied")
     return {
@@ -1817,10 +2246,12 @@ def api_enrich_bulk(req: EnrichBulkRequest) -> dict:
 
 # ── Conflicts, split suggestions, dashboard, streaming chat ──
 
+
 @app.post("/ocr/process")
 def api_ocr_process(limit: int = Query(20, ge=1, le=100)) -> dict:
     """C4: drain pending OCR queue (best-effort — requires local tesseract)."""
     from app.ocr import process_pending_ocr
+
     return process_pending_ocr(limit=limit)
 
 
@@ -1868,7 +2299,12 @@ def api_conflict_resolve(req: ConflictResolveRequest) -> dict:
             conn.execute(
                 "DELETE FROM tag_segments WHERE source_file = ? "
                 "AND line_start = ? AND line_end = ? AND tag = ?",
-                (row["source_file"], row["line_start"], row["line_end"], row["existing_tag"]),
+                (
+                    row["source_file"],
+                    row["line_start"],
+                    row["line_end"],
+                    row["existing_tag"],
+                ),
             )
             try:
                 payload = json.loads(row["incoming_payload_json"] or "{}")
@@ -1879,9 +2315,12 @@ def api_conflict_resolve(req: ConflictResolveRequest) -> dict:
                 "line_start, line_end, summary, keywords_json, entities_json, is_credential) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    row["build_id"], row["source_file"], row["incoming_tag"],
+                    row["build_id"],
+                    row["source_file"],
+                    row["incoming_tag"],
                     row["incoming_topic"] or "",
-                    row["line_start"], row["line_end"],
+                    row["line_start"],
+                    row["line_end"],
                     row["incoming_summary"] or "",
                     json.dumps(payload.get("keywords", []), ensure_ascii=False),
                     json.dumps(payload.get("entities", []), ensure_ascii=False),
@@ -1926,22 +2365,28 @@ def api_split_suggestions(
             with p.open(encoding="utf-8", errors="ignore") as fh:
                 for idx, line in enumerate(fh, start=1):
                     s = line.strip()
-                    if s.startswith("## ") or s.startswith("### ") or s.startswith("#### "):
+                    if (
+                        s.startswith("## ")
+                        or s.startswith("### ")
+                        or s.startswith("#### ")
+                    ):
                         heading_lines.append(idx)
             for r in segs:
                 ls, le = r["line_start"], r["line_end"]
                 hits = [h for h in heading_lines if ls <= h <= le]
                 if len(hits) >= min_subheadings:
-                    suggestions.append({
-                        "segment_id": r["id"],
-                        "source_file": sf,
-                        "tag": r["tag"],
-                        "topic_name": r["topic_name"],
-                        "line_start": ls,
-                        "line_end": le,
-                        "line_count": le - ls + 1,
-                        "subheadings_at": hits,
-                    })
+                    suggestions.append(
+                        {
+                            "segment_id": r["id"],
+                            "source_file": sf,
+                            "tag": r["tag"],
+                            "topic_name": r["topic_name"],
+                            "line_start": ls,
+                            "line_end": le,
+                            "line_count": le - ls + 1,
+                            "subheadings_at": hits,
+                        }
+                    )
         except Exception:
             continue
     return {"suggestions": suggestions}
@@ -1953,8 +2398,16 @@ def api_dashboard() -> dict:
     system has saved me' in one place. All numbers are current state snapshots."""
     with connect() as conn:
         counts = {}
-        for t in ("chunks", "tag_segments", "search_history", "search_misses",
-                  "answer_cache", "meta_memory", "ocr_pending", "builds"):
+        for t in (
+            "chunks",
+            "tag_segments",
+            "search_history",
+            "search_misses",
+            "answer_cache",
+            "meta_memory",
+            "ocr_pending",
+            "builds",
+        ):
             try:
                 counts[t] = conn.execute(f"SELECT COUNT(1) c FROM {t}").fetchone()["c"]
             except Exception:
@@ -2046,7 +2499,7 @@ def api_chat_stream(req: ChatRequest):
                 t = (e.get("text") or "").strip()
                 r = e.get("source_ref", "")
                 if t:
-                    ev_lines.append(f"[{i+1}] ({r}) {t}")
+                    ev_lines.append(f"[{i + 1}] ({r}) {t}")
             user_prompt = (
                 f"问题: {req.query}\n\n"
                 f"{len(ev_lines)} 条证据:\n"
@@ -2061,7 +2514,9 @@ def api_chat_stream(req: ChatRequest):
             if mm_prelude:
                 system = mm_prelude + "\n\n" + system
 
-            evidence_ids_log = [e.get("id") for e in evidence if isinstance(e.get("id"), int)]
+            evidence_ids_log = [
+                e.get("id") for e in evidence if isinstance(e.get("id"), int)
+            ]
             yield f"event: evidence\ndata: {json.dumps({'ids': evidence_ids_log}, ensure_ascii=False)}\n\n"
 
             # Emit source_files like /chat does, so clients can cache them
@@ -2095,7 +2550,9 @@ def api_chat_stream(req: ChatRequest):
             }
             stream_start = time.time()
             accumulated = []  # accumulate deltas for post-stream logging
-            with requests.post(url, headers=headers, json=payload, stream=True, timeout=60) as resp:
+            with requests.post(
+                url, headers=headers, json=payload, stream=True, timeout=60
+            ) as resp:
                 resp.raise_for_status()
                 for raw in resp.iter_lines():
                     if not raw:
@@ -2133,9 +2590,13 @@ def api_chat_stream(req: ChatRequest):
                     conn.execute(
                         "INSERT INTO answer_logs(query_id, answer_text, evidence_refs, "
                         "model_name, latency_ms) VALUES(?, ?, ?, ?, ?)",
-                        (qid, full_answer,
-                         json.dumps(evidence_ids_log),
-                         settings.provider_chat_model, latency_ms),
+                        (
+                            qid,
+                            full_answer,
+                            json.dumps(evidence_ids_log),
+                            settings.provider_chat_model,
+                            latency_ms,
+                        ),
                     )
                     answer_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
                     conn.commit()
@@ -2145,11 +2606,15 @@ def api_chat_stream(req: ChatRequest):
         except Exception as e:
             yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
 
-    return StreamingResponse(gen(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 # ── Append to Raw Note File ──
+
 
 class AppendNoteRequest(BaseModel):
     raw_path: str
@@ -2166,10 +2631,15 @@ def api_note_append(req: AppendNoteRequest) -> dict:
     if existing and not existing.endswith("\n\n"):
         sep = "\n" if existing.endswith("\n") else "\n\n"
     p.write_text(f"{existing}{sep}{req.content.strip()}\n", encoding="utf-8")
-    return {"ok": True, "path": str(p.resolve()), "bytes_written": len(req.content.strip())}
+    return {
+        "ok": True,
+        "path": str(p.resolve()),
+        "bytes_written": len(req.content.strip()),
+    }
 
 
 # ── Special Knowledge Ingest ──
+
 
 class SpecialIngestRequest(BaseModel):
     folder_path: str
@@ -2181,8 +2651,11 @@ class SpecialIngestRequest(BaseModel):
 def api_special_ingest(req: SpecialIngestRequest) -> dict:
     """Ingest a folder as a specialknowledge topic."""
     from app.special_ingest import ingest_folder
+
     try:
-        result = ingest_folder(req.folder_path, topic_name=req.topic_name, ai_delegate=req.ai_delegate)
+        result = ingest_folder(
+            req.folder_path, topic_name=req.topic_name, ai_delegate=req.ai_delegate
+        )
         if req.ai_delegate:
             result = {**result, "ai_delegated": True}
         return result
@@ -2211,14 +2684,16 @@ def api_special_knowledge() -> dict:
                 category = meta.get("category", "reference")
         except (json.JSONDecodeError, TypeError):
             pass
-        topics.append({
-            "id": r["id"],
-            "topic": r["topic_name"],
-            "summary": r["summary"],
-            "folder": r["source_file"],
-            "category": category,
-            "created_at": r["created_at"],
-        })
+        topics.append(
+            {
+                "id": r["id"],
+                "topic": r["topic_name"],
+                "summary": r["summary"],
+                "folder": r["source_file"],
+                "category": category,
+                "created_at": r["created_at"],
+            }
+        )
     return {"topics": topics}
 
 
@@ -2235,11 +2710,17 @@ def api_special_knowledge_delete(topic_name: str) -> dict:
         build_rows = conn.execute(
             "SELECT DISTINCT build_id FROM chunks WHERE dimension = ?", (dimension,)
         ).fetchall()
-        chunk_del = conn.execute("DELETE FROM chunks WHERE dimension = ?", (dimension,)).rowcount
-        seg_del = conn.execute("DELETE FROM tag_segments WHERE tag = ?", (dimension,)).rowcount
+        chunk_del = conn.execute(
+            "DELETE FROM chunks WHERE dimension = ?", (dimension,)
+        ).rowcount
+        seg_del = conn.execute(
+            "DELETE FROM tag_segments WHERE tag = ?", (dimension,)
+        ).rowcount
         for br in build_rows:
             bid = br["build_id"]
-            remaining = conn.execute("SELECT COUNT(1) c FROM chunks WHERE build_id = ?", (bid,)).fetchone()["c"]
+            remaining = conn.execute(
+                "SELECT COUNT(1) c FROM chunks WHERE build_id = ?", (bid,)
+            ).fetchone()["c"]
             if remaining == 0:
                 conn.execute("DELETE FROM builds WHERE id = ?", (bid,))
         conn.commit()
@@ -2255,13 +2736,21 @@ def api_special_knowledge_delete(topic_name: str) -> dict:
             except OSError:
                 pass
 
-    return {"deleted": topic_name, "chunks_removed": chunk_del, "segments_removed": seg_del, "files_deleted": files_deleted}
+    return {
+        "deleted": topic_name,
+        "chunks_removed": chunk_del,
+        "segments_removed": seg_del,
+        "files_deleted": files_deleted,
+    }
 
 
 # ── Wiki optimization + grouping (P0) ──
 
+
 @app.get("/wiki/find")
-def api_wiki_find(q: str = Query(..., min_length=1), top_k: int = Query(5, ge=1, le=20)) -> dict:
+def api_wiki_find(
+    q: str = Query(..., min_length=1), top_k: int = Query(5, ge=1, le=20)
+) -> dict:
     """Resolve a natural-language query to existing wiki topic candidates.
 
     Ranks by (a) embedding cosine between query and topic centroid (when
@@ -2285,6 +2774,7 @@ def api_wiki_find(q: str = Query(..., min_length=1), top_k: int = Query(5, ge=1,
         qv = None
 
     import math as _math
+
     ql = q.lower()
     ranked: list[tuple[float, dict]] = []
     for t in topics:
@@ -2335,6 +2825,7 @@ def api_wiki_find(q: str = Query(..., min_length=1), top_k: int = Query(5, ge=1,
         sf = t["source_file"] or ""
         try:
             from app.config import settings as _cfg
+
             src_root = Path(_cfg.wiki_sources_dir).resolve()
             rel = Path(sf).resolve().relative_to(src_root)
             parts = rel.parts
@@ -2342,18 +2833,23 @@ def api_wiki_find(q: str = Query(..., min_length=1), top_k: int = Query(5, ge=1,
                 group = parts[0]
         except Exception:
             pass
-        ranked.append((score, {
-            "topic_name": name,
-            "tag": t["tag"],
-            "summary": summary[:400],
-            "keywords": kws[:12],
-            "source_file": sf,
-            "group": group if group and group != name else "",
-            "build_id": t["build_id"],
-            "score": round(score, 3),
-            "lex": round(lex, 3),
-            "sem": round(sem, 3),
-        }))
+        ranked.append(
+            (
+                score,
+                {
+                    "topic_name": name,
+                    "tag": t["tag"],
+                    "summary": summary[:400],
+                    "keywords": kws[:12],
+                    "source_file": sf,
+                    "group": group if group and group != name else "",
+                    "build_id": t["build_id"],
+                    "score": round(score, 3),
+                    "lex": round(lex, 3),
+                    "sem": round(sem, 3),
+                },
+            )
+        )
     ranked.sort(key=lambda x: x[0], reverse=True)
     return {"candidates": [r[1] for r in ranked[:top_k]]}
 
@@ -2415,7 +2911,9 @@ def api_wiki_update(req: WikiUpdateRequest) -> dict:
 
     topic = req.topic_name.strip()
     if not topic or not req.content.strip():
-        raise HTTPException(status_code=400, detail="topic_name + non-empty content required")
+        raise HTTPException(
+            status_code=400, detail="topic_name + non-empty content required"
+        )
 
     # Locate existing topic folder
     with connect() as conn:
@@ -2442,18 +2940,22 @@ def api_wiki_update(req: WikiUpdateRequest) -> dict:
     dim = f"wiki:{topic}"
     with connect() as conn:
         old_build_ids = [
-            r["build_id"] for r in conn.execute(
+            r["build_id"]
+            for r in conn.execute(
                 "SELECT DISTINCT build_id FROM chunks WHERE dimension = ?", (dim,)
             ).fetchall()
         ]
         conn.execute("DELETE FROM chunks WHERE dimension = ?", (dim,))
         conn.execute("DELETE FROM tag_segments WHERE tag = ?", (dim,))
         for bid in old_build_ids:
-            conn.execute("DELETE FROM builds WHERE id = ? AND source_file LIKE 'wiki:%'", (bid,))
+            conn.execute(
+                "DELETE FROM builds WHERE id = ? AND source_file LIKE 'wiki:%'", (bid,)
+            )
         conn.commit()
 
     # Overwrite the primary .md inside the topic dir.
     import re as _re
+
     safe = _re.sub(r"[^\w\s\u4e00-\u9fff-]", "_", topic)[:80]
     md_path = topic_dir / f"{safe}.md"
     # If a differently-named file was the source, prefer overwriting that one.
@@ -2463,7 +2965,9 @@ def api_wiki_update(req: WikiUpdateRequest) -> dict:
     md_path.write_text(req.content.strip() + "\n", encoding="utf-8")
 
     # Re-ingest the folder under the same topic_name.
-    result = ingest_folder(str(topic_dir), topic_name=topic, ai_delegate=req.delegate_enrich)
+    result = ingest_folder(
+        str(topic_dir), topic_name=topic, ai_delegate=req.delegate_enrich
+    )
     return {
         **result,
         "updated": True,
@@ -2478,23 +2982,27 @@ def api_wiki_redistill(topic: str = Query(..., min_length=1)) -> dict:
     so Claude re-distills from scratch (better chunk summaries, topic
     summary, and keyword sets). Embeddings + chunk text are kept."""
     from app.builds import recompute_enrich_status
+
     dim = f"wiki:{topic}"
     with connect() as conn:
         touched = conn.execute(
             "UPDATE chunks SET ai_summary = '' WHERE dimension = ?", (dim,)
         ).rowcount
         conn.execute(
-            "UPDATE tag_segments SET summary = '', keywords_json = '[]' "
-            "WHERE tag = ?", (dim,),
+            "UPDATE tag_segments SET summary = '', keywords_json = '[]' WHERE tag = ?",
+            (dim,),
         )
         build_ids = [
-            r["build_id"] for r in conn.execute(
+            r["build_id"]
+            for r in conn.execute(
                 "SELECT DISTINCT build_id FROM chunks WHERE dimension = ?", (dim,)
             ).fetchall()
         ]
         conn.commit()
     if touched == 0:
-        raise HTTPException(status_code=404, detail=f"no chunks found for wiki topic: {topic}")
+        raise HTTPException(
+            status_code=404, detail=f"no chunks found for wiki topic: {topic}"
+        )
     for bid in build_ids:
         try:
             recompute_enrich_status(bid)
@@ -2529,12 +3037,14 @@ def api_wiki_groups() -> dict:
                 group = parts[0]
         except Exception:
             pass
-        groups.setdefault(group, []).append({
-            "topic_name": r["topic_name"],
-            "tag": r["tag"],
-            "summary": (r["summary"] or "")[:240],
-            "source_file": sf,
-        })
+        groups.setdefault(group, []).append(
+            {
+                "topic_name": r["topic_name"],
+                "tag": r["tag"],
+                "summary": (r["summary"] or "")[:240],
+                "source_file": sf,
+            }
+        )
     return {
         "groups": [
             {"name": g, "topic_count": len(v), "topics": v}
@@ -2621,13 +3131,16 @@ def api_wiki_suggest_groups() -> dict:
             name_suggestion = member_names[0][:12]
         else:
             name_suggestion = shared[:24]
-        groups.append({
-            "name": name_suggestion,
-            "topic_names": member_names,
-            "avg_cohesion": round(
-                float(sim[np.ix_(member_idxs, member_idxs)].mean()), 3,
-            ),
-        })
+        groups.append(
+            {
+                "name": name_suggestion,
+                "topic_names": member_names,
+                "avg_cohesion": round(
+                    float(sim[np.ix_(member_idxs, member_idxs)].mean()),
+                    3,
+                ),
+            }
+        )
     groups.sort(key=lambda g: -len(g["topic_names"]))
     return {
         "groups": groups,
@@ -2644,7 +3157,7 @@ def _common_substring(strings: list[str], min_len: int = 2) -> str:
     shortest = min(strings, key=len)
     for length in range(len(shortest), min_len - 1, -1):
         for start in range(0, len(shortest) - length + 1):
-            candidate = shortest[start:start + length]
+            candidate = shortest[start : start + length]
             if all(candidate in s for s in strings):
                 return candidate
     return ""
@@ -2674,7 +3187,9 @@ def api_wiki_reorganize(req: WikiReorganizeRequest) -> dict:
         topic_rows = conn.execute(
             "SELECT topic_name, tag, source_file FROM tag_segments WHERE tag LIKE 'wiki:%'"
         ).fetchall()
-    topic_to_src: dict[str, str] = {r["topic_name"]: r["source_file"] for r in topic_rows if r["topic_name"]}
+    topic_to_src: dict[str, str] = {
+        r["topic_name"]: r["source_file"] for r in topic_rows if r["topic_name"]
+    }
 
     moves: list[dict] = []
     warnings: list[str] = []
@@ -2704,23 +3219,27 @@ def api_wiki_reorganize(req: WikiReorganizeRequest) -> dict:
             inner_name = src_path.name
             if inner_name == group_slug:
                 # Move contents of src_path into group_dir instead.
-                moves.append({
-                    "topic_name": topic_name,
-                    "from": str(src_path),
-                    "to": str(group_dir),
-                    "group": raw_name,
-                    "merge_contents": True,
-                })
+                moves.append(
+                    {
+                        "topic_name": topic_name,
+                        "from": str(src_path),
+                        "to": str(group_dir),
+                        "group": raw_name,
+                        "merge_contents": True,
+                    }
+                )
                 continue
             dest_path = group_dir / inner_name
             if src_path == dest_path.resolve():
                 continue  # already in place
-            moves.append({
-                "topic_name": topic_name,
-                "from": str(src_path),
-                "to": str(dest_path),
-                "group": raw_name,
-            })
+            moves.append(
+                {
+                    "topic_name": topic_name,
+                    "from": str(src_path),
+                    "to": str(dest_path),
+                    "group": raw_name,
+                }
+            )
 
     if req.dry_run:
         return {"dry_run": True, "moves": moves, "warnings": warnings}
@@ -2791,6 +3310,7 @@ def api_wiki_reorganize(req: WikiReorganizeRequest) -> dict:
     cleanup: list[dict] = []
     try:
         from app.wiki_dedup import cleanup_hints as _cleanup_hints
+
         cleanup = _cleanup_hints(max_items=20)
     except Exception:
         pass
@@ -2840,7 +3360,9 @@ def api_wiki_unnest_doubles(dry_run: bool = Query(False)) -> dict:
         for item in inner.iterdir():
             target = group / item.name
             if target.exists():
-                lifts.append({"item": str(item), "target": str(target), "error": "target exists"})
+                lifts.append(
+                    {"item": str(item), "target": str(target), "error": "target exists"}
+                )
                 continue
             lifts.append({"item": str(item), "target": str(target)})
         plan.append({"inner": str(inner), "group": str(group), "lifts": lifts})
@@ -2886,7 +3408,9 @@ def api_wiki_unnest_doubles(dry_run: bool = Query(False)) -> dict:
                     "WHERE source_file LIKE ?",
                     (str(inner), str(group), str(inner) + "%"),
                 )
-                applied.append({"lifted": p["inner"], "into": p["group"], "items": len(p["lifts"])})
+                applied.append(
+                    {"lifted": p["inner"], "into": p["group"], "items": len(p["lifts"])}
+                )
         conn.commit()
     return {"dry_run": False, "applied": applied, "errors": errors}
 
@@ -2897,6 +3421,7 @@ def api_wiki_duplicates() -> dict:
     imported topics. Suggested actions: delete (identical/near-dup/subset),
     review (similar), import (distinct), skip (unreadable)."""
     from app.wiki_dedup import find_duplicate_wiki_sources
+
     return {"candidates": find_duplicate_wiki_sources()}
 
 
@@ -2908,6 +3433,7 @@ class DedupActionsRequest(BaseModel):
 @app.post("/wiki/dedupe")
 def api_wiki_dedupe(req: DedupActionsRequest) -> dict:
     from app.wiki_dedup import apply_dedup_actions
+
     return apply_dedup_actions(req.actions, dry_run=req.dry_run)
 
 
@@ -2961,36 +3487,45 @@ def api_wiki_flatten(req: WikiFlattenRequest) -> dict:
         md_files = [p for p in children if p.suffix.lower() == ".md"]
         non_md = [p for p in children if p.suffix.lower() != ".md"]
         if len(md_files) != 1:
-            skipped.append({
-                "topic": topic,
-                "reason": f"has {len(md_files)} .md files (need exactly 1)",
-            })
+            skipped.append(
+                {
+                    "topic": topic,
+                    "reason": f"has {len(md_files)} .md files (need exactly 1)",
+                }
+            )
             continue
         if non_md:
-            skipped.append({
-                "topic": topic,
-                "reason": f"has non-md assets: {[p.name for p in non_md]}",
-            })
+            skipped.append(
+                {
+                    "topic": topic,
+                    "reason": f"has non-md assets: {[p.name for p in non_md]}",
+                }
+            )
             continue
 
         md = md_files[0]
         # Target: group_dir/<topic_name>.md — preserve topic name in filename
         # so it's self-describing at the flat level.
         import re as _re
+
         safe = _re.sub(r"[^\w\s\u4e00-\u9fff-]", "_", topic)[:80]
         dest = topic_dir.parent / f"{safe}.md"
         if dest.exists() and dest.resolve() != md.resolve():
-            skipped.append({
-                "topic": topic,
-                "reason": f"destination already exists: {dest}",
-            })
+            skipped.append(
+                {
+                    "topic": topic,
+                    "reason": f"destination already exists: {dest}",
+                }
+            )
             continue
-        plan.append({
-            "topic": topic,
-            "from_md": str(md),
-            "from_dir": str(topic_dir),
-            "to_md": str(dest),
-        })
+        plan.append(
+            {
+                "topic": topic,
+                "from_md": str(md),
+                "from_dir": str(topic_dir),
+                "to_md": str(dest),
+            }
+        )
 
     if req.dry_run:
         return {"dry_run": True, "plan": plan, "skipped": skipped}
@@ -3093,13 +3628,15 @@ def api_wiki_sources() -> dict:
                 rel_path = Path(abs_path).name
         except ValueError:
             rel_path = Path(abs_path).name
-        sources.append({
-            "path": abs_path,
-            "rel_path": rel_path,
-            "name": Path(sf).stem,
-            "topic": r["topic_name"] or "",
-            "category": category,
-        })
+        sources.append(
+            {
+                "path": abs_path,
+                "rel_path": rel_path,
+                "name": Path(sf).stem,
+                "topic": r["topic_name"] or "",
+                "category": category,
+            }
+        )
     return {
         "sources": sources,
         "base_dir": base_dir_str,
@@ -3108,9 +3645,11 @@ def api_wiki_sources() -> dict:
 
 # ── Runtime settings (persisted in DB, hot-reloadable) ──
 
+
 @app.get("/settings")
 def api_get_settings() -> dict:
     from app.config import current_settings_dict
+
     return current_settings_dict()
 
 
@@ -3135,9 +3674,14 @@ class SettingsUpdateRequest(BaseModel):
 def api_update_settings(req: SettingsUpdateRequest) -> dict:
     """Persist settings to DB and apply them live to the running backend."""
     from app.config import save_settings_to_db, current_settings_dict
+
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
     save_settings_to_db(updates)
-    return {"ok": True, "applied": list(updates.keys()), "settings": current_settings_dict()}
+    return {
+        "ok": True,
+        "applied": list(updates.keys()),
+        "settings": current_settings_dict(),
+    }
 
 
 @app.get("/ocr-langs")
@@ -3145,6 +3689,7 @@ def api_ocr_langs() -> dict:
     """List installed OCR language packs and active config."""
     from app.pdf_convert import get_installed_ocr_langs
     import shutil
+
     has_tesseract = shutil.which("tesseract") is not None
     langs = get_installed_ocr_langs()
     active = settings.ocr_langs or ""
@@ -3159,6 +3704,7 @@ class OcrConfigRequest(BaseModel):
 def api_ocr_config(req: OcrConfigRequest) -> dict:
     """Save active OCR language config to .env."""
     import dotenv
+
     env_path = Path(".env")
     if env_path.exists():
         dotenv.set_key(str(env_path), "OCR_LANGS", req.ocr_langs)
@@ -3171,9 +3717,11 @@ def api_ocr_config(req: OcrConfigRequest) -> dict:
 
 # ── MCP Server Management ──
 
+
 @app.get("/mcp/servers")
 def api_mcp_servers() -> dict:
     from app.mcp_client import list_servers
+
     return {"servers": list_servers()}
 
 
@@ -3187,6 +3735,7 @@ class McpServerRequest(BaseModel):
 @app.post("/mcp/servers")
 def api_mcp_server_add(req: McpServerRequest) -> dict:
     from app.mcp_client import add_server
+
     servers = add_server(req.name, req.url, req.transport, req.auth)
     return {"servers": servers}
 
@@ -3194,6 +3743,7 @@ def api_mcp_server_add(req: McpServerRequest) -> dict:
 @app.delete("/mcp/servers/{name}")
 def api_mcp_server_delete(name: str) -> dict:
     from app.mcp_client import remove_server
+
     servers = remove_server(name)
     return {"servers": servers}
 
@@ -3201,6 +3751,7 @@ def api_mcp_server_delete(name: str) -> dict:
 @app.get("/mcp/servers/{name}/tools")
 def api_mcp_tools(name: str) -> dict:
     from app.mcp_client import mcp_list_tools
+
     try:
         tools = mcp_list_tools(name)
         return {"tools": tools}
@@ -3216,6 +3767,7 @@ class McpCallRequest(BaseModel):
 @app.post("/mcp/servers/{name}/call")
 def api_mcp_call(name: str, req: McpCallRequest) -> dict:
     from app.mcp_client import mcp_call_tool
+
     try:
         result = mcp_call_tool(name, req.tool_name, req.arguments)
         return {"content": result}
@@ -3226,6 +3778,7 @@ def api_mcp_call(name: str, req: McpCallRequest) -> dict:
 @app.get("/mcp/servers/{name}/resources")
 def api_mcp_resources(name: str) -> dict:
     from app.mcp_client import mcp_list_resources
+
     try:
         resources = mcp_list_resources(name)
         return {"resources": resources}
@@ -3240,6 +3793,7 @@ class McpReadResourceRequest(BaseModel):
 @app.post("/mcp/servers/{name}/resources/read")
 def api_mcp_read_resource(name: str, req: McpReadResourceRequest) -> dict:
     from app.mcp_client import mcp_read_resource
+
     try:
         content = mcp_read_resource(name, req.uri)
         return {"content": content}
@@ -3248,6 +3802,7 @@ def api_mcp_read_resource(name: str, req: McpReadResourceRequest) -> dict:
 
 
 # ── Wiki Import: URL ──
+
 
 class UrlImportRequest(BaseModel):
     url: str
@@ -3281,10 +3836,11 @@ def api_wiki_import_url(req: UrlImportRequest) -> dict:
 
 # ── Wiki Import: MCP Document ──
 
+
 class McpDocImportRequest(BaseModel):
     server_name: str
-    doc_url: str = ""       # Feishu doc URL — auto-extract doc ID
-    document_id: str = ""   # Or pass doc ID directly
+    doc_url: str = ""  # Feishu doc URL — auto-extract doc ID
+    document_id: str = ""  # Or pass doc ID directly
     topic_name: str = ""
     ai_delegate: bool = False
 
@@ -3294,8 +3850,9 @@ def _extract_feishu_doc_id(url: str) -> str:
     e.g. https://xxx.feishu.cn/wiki/Jt78wVLEJiqPN3kPIorcoOtjngf → Jt78wVLEJiqPN3kPIorcoOtjngf
     """
     import re
+
     # Match wiki or docx URLs
-    m = re.search(r'(?:wiki|docx|docs)/([A-Za-z0-9]+)', url)
+    m = re.search(r"(?:wiki|docx|docs)/([A-Za-z0-9]+)", url)
     if m:
         return m.group(1)
     # Fallback: last path segment
@@ -3349,13 +3906,15 @@ def api_wiki_import_mcp(req: McpDocImportRequest) -> dict:
         wiki_dir = Path(settings.wiki_sources_dir)
         wiki_dir.mkdir(parents=True, exist_ok=True)
         import re as _re
-        safe_name = _re.sub(r'[^\w\s\u4e00-\u9fff-]', '_', topic)[:80]
+
+        safe_name = _re.sub(r"[^\w\s\u4e00-\u9fff-]", "_", topic)[:80]
         topic_dir = wiki_dir / safe_name
         topic_dir.mkdir(parents=True, exist_ok=True)
 
         # Delegate path: park raw content awaiting Claude rewrite
         if req.ai_delegate:
             from app.mcp_import import _new_format_id
+
             format_id = _new_format_id()
             with connect() as conn:
                 conn.execute(
@@ -3364,8 +3923,12 @@ def api_wiki_import_mcp(req: McpDocImportRequest) -> dict:
                     VALUES (?, ?, ?, ?, ?, ?, 'awaiting')
                     """,
                     (
-                        format_id, topic, title, content,
-                        f"mcp:{req.server_name}:{doc_id}", str(topic_dir),
+                        format_id,
+                        topic,
+                        title,
+                        content,
+                        f"mcp:{req.server_name}:{doc_id}",
+                        str(topic_dir),
                     ),
                 )
                 conn.commit()
@@ -3384,6 +3947,7 @@ def api_wiki_import_mcp(req: McpDocImportRequest) -> dict:
 
         # Ingest only this topic's directory
         from app.special_ingest import ingest_folder
+
         result = ingest_folder(str(topic_dir), topic_name=topic)
         return {
             **result,
@@ -3473,6 +4037,7 @@ def api_tag_colors() -> dict:
 
 # ── Search history ──
 
+
 @app.get("/search/gaps")
 def api_search_gaps(limit: int = Query(20, ge=1, le=200)) -> dict:
     """Return recurring search misses grouped by normalized query. A knowledge
@@ -3524,9 +4089,13 @@ def api_meta_memory_list(limit: int = Query(100, ge=1, le=500)) -> dict:
     return {
         "memories": [
             {
-                "id": r["id"], "kind": r["kind"], "text": r["text"],
-                "scope": r["scope"], "hit_count": r["hit_count"],
-                "created_at": r["created_at"], "updated_at": r["updated_at"],
+                "id": r["id"],
+                "kind": r["kind"],
+                "text": r["text"],
+                "scope": r["scope"],
+                "hit_count": r["hit_count"],
+                "created_at": r["created_at"],
+                "updated_at": r["updated_at"],
             }
             for r in rows
         ]
@@ -3577,7 +4146,13 @@ def api_search_history() -> dict:
         ).fetchall()
     return {
         "history": [
-            {"id": r["id"], "query": r["query_text"], "result_count": r["result_count"], "tag_filter": r["tag_filter"], "created_at": r["created_at"]}
+            {
+                "id": r["id"],
+                "query": r["query_text"],
+                "result_count": r["result_count"],
+                "tag_filter": r["tag_filter"],
+                "created_at": r["created_at"],
+            }
             for r in rows
         ]
     }
@@ -3612,8 +4187,7 @@ def api_tag_stats() -> dict:
             for r in tag_counts
         ],
         "daily_growth": [
-            {"day": r["day"], "tag": r["tag"], "count": r["c"]}
-            for r in growth
+            {"day": r["day"], "tag": r["tag"], "count": r["c"]} for r in growth
         ],
     }
 
@@ -3710,6 +4284,7 @@ def api_tag_source_lines(tag_name: str, segment_id: int = Query(...)) -> dict:
 # Notes record meaningful skills. SmartNote stores the recipe and packages the
 # time-sliced note context so any CLI can execute and report back.
 
+
 class SkillSaveRequest(BaseModel):
     name: str
     description: str = ""
@@ -3777,7 +4352,11 @@ def api_skill_patch(name: str, req: SkillPatchRequest) -> dict:
         node_patches = None
         if req.nodes is not None:
             node_patches = [
-                {k: v for k, v in p.model_dump().items() if v is not None or k == "index"}
+                {
+                    k: v
+                    for k, v in p.model_dump().items()
+                    if v is not None or k == "index"
+                }
                 for p in req.nodes
             ]
         return skill.patch_template(
@@ -3804,7 +4383,9 @@ def api_skill_run(name: str, req: SkillRunRequest) -> dict:
     """Create a pending run. Returns the bundle (template + sliced notes)
     that the CLI will read to execute. Does NOT execute anything server-side."""
     try:
-        return skill.trigger_run(name, slice_days=req.slice_days, triggered_by=req.triggered_by)
+        return skill.trigger_run(
+            name, slice_days=req.slice_days, triggered_by=req.triggered_by
+        )
     except KeyError:
         raise HTTPException(status_code=404, detail="skill not found")
 
@@ -3836,7 +4417,9 @@ def api_skill_runs_list(
     status: str | None = None,
     limit: int = 30,
 ) -> dict:
-    return {"runs": skill.list_runs(template_id=template_id, status=status, limit=limit)}
+    return {
+        "runs": skill.list_runs(template_id=template_id, status=status, limit=limit)
+    }
 
 
 @app.get("/skill-runs/{run_id}")
@@ -3861,6 +4444,7 @@ def api_skill_run_bundle(run_id: int) -> dict:
 # Each save creates a pending ingest pack; each load detects external
 # edits and creates an external pack if the file changed outside SmartNote.
 # Every save also stamps per-line ts/hash so the note gutter can render it.
+
 
 class NoteSaveRequest(BaseModel):
     raw_path: str
@@ -3920,6 +4504,7 @@ def api_note_line_mark(req: LineMarkRequest) -> dict:
 
 # ── Pack queue ───────────────────────────────────────────────────
 
+
 @app.get("/packs")
 def api_packs_list(
     raw_path: str | None = None,
@@ -3947,16 +4532,22 @@ def api_pack_apply(pack_id: int) -> dict:
     # Trigger the ingest against the pack's file. Use prefs.notePath as the
     # derived note.md target (existing convention).
     from app.ingest import ingest_raw
+
     prefs = api_prefs()
-    note_path = prefs.get("notePath") or str(Path(pack["raw_path"]).with_name("note.md"))
+    note_path = prefs.get("notePath") or str(
+        Path(pack["raw_path"]).with_name("note.md")
+    )
     try:
         # Pack apply runs an incremental, non-AI ingest: it should not pay the
         # latency/cost of full LLM classification — that's what the explicit
         # "Rebuild all" full ingest is for. The top-right pill in the note UI
         # surfaces how many packs have been applied since the last full ingest.
         result = ingest_raw(
-            pack["raw_path"], note_path,
-            reset=False, ai_delegate=False, force_no_ai=True,
+            pack["raw_path"],
+            note_path,
+            reset=False,
+            ai_delegate=False,
+            force_no_ai=True,
         )
         build_id = result.get("build_id")
     except Exception as e:
@@ -3989,12 +4580,16 @@ def api_packs_apply_all(req: PacksApplyAllRequest) -> dict:
         return {"applied": 0, "build_id": None}
 
     from app.ingest import ingest_raw
+
     prefs = api_prefs()
     note_path = prefs.get("notePath") or str(Path(req.raw_path).with_name("note.md"))
     try:
         result = ingest_raw(
-            req.raw_path, note_path,
-            reset=False, ai_delegate=False, force_no_ai=True,
+            req.raw_path,
+            note_path,
+            reset=False,
+            ai_delegate=False,
+            force_no_ai=True,
         )
         build_id = result.get("build_id")
     except Exception as e:
@@ -4073,6 +4668,7 @@ def api_packs_merge(req: PacksMergeRequest) -> dict:
 # the diff and approves; approval writes the file, snapshots it, and does
 # a full reset-ingest. This is destructive — always show the diff first.
 
+
 class ReorganizeRequest(BaseModel):
     raw_path: str
 
@@ -4080,6 +4676,7 @@ class ReorganizeRequest(BaseModel):
 @app.post("/note/reorganize-preview")
 def api_note_reorganize_preview(req: ReorganizeRequest) -> dict:
     from app import reorganize as _reorganize
+
     try:
         return _reorganize.build_candidate(req.raw_path)
     except FileNotFoundError as e:
@@ -4090,7 +4687,7 @@ def api_note_reorganize_preview(req: ReorganizeRequest) -> dict:
 
 class ReorganizeApproveRequest(BaseModel):
     raw_path: str
-    candidate: str    # the content the user approved (sent back verbatim)
+    candidate: str  # the content the user approved (sent back verbatim)
     note_path: str | None = None
 
 
@@ -4110,8 +4707,9 @@ def api_note_reorganize_approve(req: ReorganizeApproveRequest) -> dict:
 
     # 1. Snapshot so this is reversible.
     try:
-        snap = create_snapshot(note_path, reason="reorganize-by-tag",
-                               extra_meta={"raw_path": req.raw_path})
+        snap = create_snapshot(
+            note_path, reason="reorganize-by-tag", extra_meta={"raw_path": req.raw_path}
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"snapshot failed: {e}")
 
@@ -4126,6 +4724,7 @@ def api_note_reorganize_approve(req: ReorganizeApproveRequest) -> dict:
     # 3. Full reset ingest — old chunks wiped, new chunks generated.
     try:
         from app.ingest import ingest_raw
+
         result = ingest_raw(req.raw_path, note_path, reset=True, ai_delegate=False)
         build_id = result.get("build_id")
     except Exception as e:

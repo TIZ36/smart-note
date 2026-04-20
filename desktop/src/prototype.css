@@ -2409,6 +2409,19 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   background: var(--color-bg-surface);
 }
 
+.proto-dashboard-list-row-with-actions {
+  align-items: center;
+}
+
+.proto-dashboard-list-open {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+  flex: 1;
+}
+
 .proto-dashboard-list-row:last-child {
   border-bottom: none;
 }
@@ -6322,6 +6335,606 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   gap: 6px;
   font-size: 11px;
   color: var(--color-warning, #d97706);
+}
+
+.proto-smart-table-page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  height: 100%;
+  padding: 18px 20px 20px;
+}
+
+.proto-smart-table-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.proto-smart-table-header-compact {
+  align-items: center;
+  gap: 12px;
+}
+
+.proto-smart-table-header-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.proto-smart-table-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.proto-smart-table-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--color-accent) 10%, transparent);
+  color: color-mix(in oklab, var(--color-accent) 72%, var(--color-text-primary));
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.proto-smart-table-subtitle {
+  margin-top: 6px;
+  max-width: 680px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.proto-smart-table-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.proto-smart-table-controlbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.proto-smart-table-controlgroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.proto-smart-table-controlgroup-label {
+  color: var(--color-text-muted);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.proto-smart-table-chip-button {
+  min-height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border-primary, var(--color-border));
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.proto-smart-table-chip-button:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  border-color: var(--color-border-strong, var(--color-accent));
+}
+
+.proto-smart-table-chip-button-danger:hover:not(:disabled) {
+  color: color-mix(in oklab, var(--color-danger) 72%, var(--color-text-primary));
+  border-color: color-mix(in oklab, var(--color-danger) 24%, var(--color-border));
+}
+
+.proto-smart-table-chip-button:disabled {
+  opacity: 0.45;
+}
+
+.proto-smart-table-tray {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-height: 40px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--color-border-primary, var(--color-border));
+  background: color-mix(in oklab, var(--color-bg-secondary) 82%, transparent);
+}
+
+.proto-smart-table-tray-label {
+  color: var(--color-text-muted);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.proto-smart-table-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--color-border-primary, var(--color-border));
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-muted);
+}
+
+.proto-smart-table-icon-button:hover {
+  color: var(--color-text-primary);
+  border-color: var(--color-border-strong, var(--color-accent));
+}
+
+.proto-smart-table-toolbar-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(320px, 1fr));
+  gap: 10px;
+}
+
+.proto-smart-table-toolpane {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--color-border-primary, var(--color-border));
+  border-radius: 14px;
+  background: color-mix(in oklab, var(--color-bg-secondary) 76%, transparent);
+}
+
+.proto-smart-table-toolpane-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.proto-smart-table-toolpane-kicker {
+  color: var(--color-text-primary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.proto-smart-table-toolpane-copy {
+  color: var(--color-text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+  max-width: 42ch;
+}
+
+.proto-smart-table-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.proto-smart-table-toolbar-input,
+.proto-smart-table-toolbar-select {
+  height: 32px;
+  min-width: 140px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid var(--color-border-primary, var(--color-border));
+  background: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+  font-size: 12px;
+}
+
+.proto-smart-table-toolbar-input:disabled,
+.proto-smart-table-toolbar-select:disabled {
+  opacity: 0.45;
+}
+
+.proto-smart-table-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border-primary, var(--color-border));
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+.proto-smart-table-action-strong {
+  background: color-mix(in oklab, var(--color-accent) 12%, var(--color-bg-secondary));
+  color: color-mix(in oklab, var(--color-accent) 70%, var(--color-text-primary));
+}
+
+.proto-smart-table-action-danger {
+  color: color-mix(in oklab, var(--color-danger) 70%, var(--color-text-primary));
+}
+
+.proto-smart-table-action:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  border-color: var(--color-border-strong, var(--color-accent));
+}
+
+.proto-smart-table-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.proto-smart-table-stats {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.proto-smart-table-stats-inline {
+  gap: 6px;
+}
+
+.proto-smart-table-stats span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border-primary, var(--color-border));
+  background: color-mix(in oklab, var(--color-bg-secondary) 88%, transparent);
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+
+.proto-smart-table-feedback {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in oklab, var(--color-accent) 18%, var(--color-border));
+  background: color-mix(in oklab, var(--color-accent) 6%, var(--color-bg-secondary));
+  color: color-mix(in oklab, var(--color-accent) 60%, var(--color-text-primary));
+  font-size: 12px;
+}
+
+.proto-smart-table-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  overflow-x: auto;
+  padding-bottom: 1px;
+}
+
+.proto-smart-table-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 110px;
+  max-width: 180px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border-primary, var(--color-border));
+  border-bottom-color: transparent;
+  border-radius: 10px 10px 0 0;
+  background: color-mix(in oklab, var(--color-bg-secondary) 84%, transparent);
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.proto-smart-table-tab-active {
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  border-color: var(--color-border-strong, var(--color-accent));
+}
+
+.proto-smart-table-tab-label {
+  min-width: 0;
+}
+
+.proto-smart-table-tab-meta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--color-bg-primary) 60%, var(--color-bg-secondary));
+  color: inherit;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.proto-smart-table-grid-wrap {
+  min-height: 0;
+  flex: 1;
+  overflow-x: auto;
+  overflow-y: auto;
+  border: 1px solid var(--color-border-primary, var(--color-border));
+  border-radius: 16px;
+  background: color-mix(in oklab, var(--color-bg-secondary) 86%, transparent);
+}
+
+.proto-smart-table-grid {
+  width: max-content;
+  min-width: max-content;
+}
+
+.proto-smart-table-grid-head,
+.proto-smart-table-grid-row {
+  display: grid;
+  align-items: stretch;
+}
+
+.proto-smart-table-grid-cell {
+  position: relative;
+  min-height: 48px;
+  padding: 8px 10px;
+  border-right: 1px solid var(--color-border-primary, var(--color-border));
+  border-bottom: 1px solid var(--color-border-primary, var(--color-border));
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  justify-content: center;
+  overflow: visible;
+}
+
+.proto-smart-table-grid-cell-head {
+  min-height: 44px;
+  background: color-mix(in oklab, var(--color-bg-primary) 50%, var(--color-bg-secondary));
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.proto-smart-table-colname {
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.proto-smart-table-rownum {
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.proto-smart-table-row-delete-head,
+.proto-smart-table-row-delete {
+  align-items: center;
+  justify-content: center;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+.proto-smart-table-coltype {
+  color: var(--color-text-muted);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.proto-smart-table-inline-input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  padding: 0;
+}
+
+.proto-smart-table-cell-shell {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.proto-smart-table-cell-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms ease-out;
+}
+
+.proto-smart-table-grid-editable:hover .proto-smart-table-cell-actions,
+.proto-smart-table-grid-editable:focus-within .proto-smart-table-cell-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.proto-smart-table-inline-input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.proto-smart-table-link-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 4px;
+}
+
+.proto-smart-table-file-input {
+  padding-top: 4px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.proto-smart-table-cell-text,
+.proto-smart-table-cell-link {
+  font-size: 12px;
+  line-height: 1.4;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proto-smart-table-grid-editable {
+  background: transparent;
+}
+
+.proto-smart-table-grid-editable:hover {
+  background: color-mix(in oklab, var(--color-bg-primary) 45%, transparent);
+}
+
+.proto-smart-table-cell-link {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+.proto-smart-table-cell-link:hover {
+  text-decoration: underline;
+}
+
+.proto-smart-table-cell-image {
+  width: 100%;
+  max-width: 72px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--color-border-primary, var(--color-border));
+}
+
+.proto-smart-table-editor-popover {
+  position: absolute;
+  top: calc(100% - 4px);
+  left: 8px;
+  right: 8px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in oklab, var(--color-accent) 14%, var(--color-border));
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--color-bg-primary) 94%, var(--color-bg-secondary));
+  box-shadow: 0 12px 28px color-mix(in oklab, var(--color-text-primary) 10%, transparent);
+}
+
+.proto-smart-table-saving {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  color: var(--color-accent);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.proto-smart-table-history-toggle {
+  align-self: flex-start;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--color-text-muted);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+
+.proto-smart-table-history-toggle:hover {
+  color: var(--color-accent);
+}
+
+.proto-smart-table-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 4px;
+}
+
+.proto-smart-table-history-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border-primary, var(--color-border));
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--color-bg-primary) 88%, transparent);
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.proto-smart-table-history-meta {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.proto-smart-table-history-item code {
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--color-text-secondary);
+}
+
+.proto-smart-table-history-empty {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.proto-smart-table-row-delete-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-text-muted);
+}
+
+.proto-smart-table-row-delete-button:hover {
+  color: color-mix(in oklab, var(--color-danger) 70%, var(--color-text-primary));
+  border-color: color-mix(in oklab, var(--color-danger) 24%, var(--color-border));
+  background: color-mix(in oklab, var(--color-danger) 8%, transparent);
+}
+
+.proto-smart-table-row-delete-button-confirm {
+  color: color-mix(in oklab, var(--color-danger) 70%, var(--color-text-primary));
+  border-color: color-mix(in oklab, var(--color-danger) 24%, var(--color-border));
+  background: color-mix(in oklab, var(--color-danger) 10%, transparent);
+}
+
+@media (max-width: 900px) {
+  .proto-smart-table-page {
+    padding: 14px;
+  }
+
+  .proto-smart-table-header {
+    flex-direction: column;
+  }
+
+  .proto-smart-table-title-row,
+  .proto-smart-table-controlbar,
+  .proto-smart-table-tray {
+    align-items: stretch;
+  }
+
 }
 
 @media (prefers-reduced-motion: reduce) {

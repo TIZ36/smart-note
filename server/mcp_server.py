@@ -38,12 +38,15 @@ _TOOL_CACHE_TTL = 60.0  # seconds — short so user-driven updates are reflected
 
 
 def _cache_key(tool: str, args: dict) -> str:
-    raw = tool + "::" + json.dumps(args, sort_keys=True, ensure_ascii=False, default=str)
+    raw = (
+        tool + "::" + json.dumps(args, sort_keys=True, ensure_ascii=False, default=str)
+    )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 
 
 def _cached(tool_name: str):
     """Decorator: cache tool results by argument signature for TTL seconds."""
+
     def wrap(fn):
         def inner(*args, **kwargs):
             key = _cache_key(tool_name, kwargs or {"args": args})
@@ -56,10 +59,13 @@ def _cached(tool_name: str):
             with _TOOL_CACHE_LOCK:
                 _TOOL_CACHE[key] = (now + _TOOL_CACHE_TTL, result)
             return result
+
         inner.__wrapped__ = fn
         inner.__name__ = fn.__name__
         return inner
+
     return wrap
+
 
 # ── Gateway base URL ──
 GATEWAY_URL = "http://localhost:8787"
@@ -101,7 +107,9 @@ def _api(method: str, path: str, timeout: int = 30, **kwargs) -> dict:
             _invalidate_cache()
         return data
     except requests.ConnectionError:
-        return {"error": f"Cannot connect to SmartNote gateway at {GATEWAY_URL}. Is the server running?"}
+        return {
+            "error": f"Cannot connect to SmartNote gateway at {GATEWAY_URL}. Is the server running?"
+        }
     except requests.HTTPError as e:
         return {"error": f"HTTP {e.response.status_code}: {e.response.text[:500]}"}
     except Exception as e:
@@ -116,8 +124,11 @@ def _invalidate_cache():
 
 # ── Tool: Search knowledge base ──
 
+
 @mcp.tool()
-def search_knowledge(query: str, top_k: int = 10, tag_filter: Optional[str] = None) -> str:
+def search_knowledge(
+    query: str, top_k: int = 10, tag_filter: Optional[str] = None
+) -> str:
     """Search the user's knowledge base (notes + wiki) using hybrid retrieval.
 
     Args:
@@ -137,7 +148,9 @@ def search_knowledge(query: str, top_k: int = 10, tag_filter: Optional[str] = No
     if not results:
         return f"No results found for: {query}"
 
-    lines = [f"Found {len(results)} results (latency: {data.get('latency_ms', '?')}ms):"]
+    lines = [
+        f"Found {len(results)} results (latency: {data.get('latency_ms', '?')}ms):"
+    ]
     lines.append("")
     for i, r in enumerate(results[:top_k], 1):
         source = r.get("source_ref", "unknown")
@@ -163,6 +176,7 @@ def search_knowledge(query: str, top_k: int = 10, tag_filter: Optional[str] = No
 
 # ── Tool: List tags ──
 
+
 @mcp.tool()
 def list_tags() -> str:
     """List all knowledge base tags with their segment counts and descriptions."""
@@ -181,11 +195,14 @@ def list_tags() -> str:
         segs = t.get("segments", 0)
         total_lines = t.get("lines", 0)
         color = t.get("color", "")
-        lines.append(f"- **{name}** ({segs} segments, {total_lines} lines) [{color}] — {desc}")
+        lines.append(
+            f"- **{name}** ({segs} segments, {total_lines} lines) [{color}] — {desc}"
+        )
     return "\n".join(lines)
 
 
 # ── Tool: Get segments by tag ──
+
 
 @mcp.tool()
 def get_tag_segments(tag_name: str) -> str:
@@ -218,6 +235,7 @@ def get_tag_segments(tag_name: str) -> str:
 
 # ── Tool: List wiki topics ──
 
+
 @mcp.tool()
 def list_wiki_topics() -> str:
     """List all special knowledge (wiki) topics imported into the knowledge base."""
@@ -240,6 +258,7 @@ def list_wiki_topics() -> str:
 
 
 # ── Tool: Read source file content ──
+
 
 @mcp.tool()
 def read_source(source_ref: str) -> str:
@@ -264,6 +283,7 @@ def read_source(source_ref: str) -> str:
 
 
 # ── Tool: Knowledge graph ──
+
 
 @mcp.tool()
 def get_knowledge_graph() -> str:
@@ -296,6 +316,7 @@ def get_knowledge_graph() -> str:
 
 
 # ── Tool: Wiki knowledge graph ──
+
 
 @mcp.tool()
 def get_wiki_graph() -> str:
@@ -330,6 +351,7 @@ def get_wiki_graph() -> str:
 
 # ── Tool: Search history ──
 
+
 @mcp.tool()
 def get_search_history() -> str:
     """Get recent search queries from the knowledge base (last 20)."""
@@ -348,11 +370,12 @@ def get_search_history() -> str:
         tag = h.get("tag_filter", "")
         ts = h.get("created_at", "")
         tag_info = f" [tag: {tag}]" if tag else ""
-        lines.append(f"- \"{q}\"{tag_info} → {count} results ({ts})")
+        lines.append(f'- "{q}"{tag_info} → {count} results ({ts})')
     return "\n".join(lines)
 
 
 # ── Tool: Ingest notes ──
+
 
 @mcp.tool()
 def ingest_notes(reset: bool = False, delegate_enrich: bool = True) -> str:
@@ -416,14 +439,20 @@ def ingest_notes(reset: bool = False, delegate_enrich: bool = True) -> str:
 
     # Derive note path by convention: same directory, note.md
     import os
+
     note_path = os.path.join(os.path.dirname(raw_path), "note.md")
 
-    data = _api("POST", "/ingest", json={
-        "raw_path": raw_path,
-        "note_path": note_path,
-        "reset": reset,
-        "ai_delegate": bool(delegate_enrich),
-    }, timeout=300)
+    data = _api(
+        "POST",
+        "/ingest",
+        json={
+            "raw_path": raw_path,
+            "note_path": note_path,
+            "reset": reset,
+            "ai_delegate": bool(delegate_enrich),
+        },
+        timeout=300,
+    )
     if "error" in data:
         return f"Ingest failed: {data['error']}"
 
@@ -446,7 +475,9 @@ def ingest_notes(reset: bool = False, delegate_enrich: bool = True) -> str:
             f"({data.get('non_empty_lines', '?')} non-empty)"
         )
         if changed_refs or removed_refs:
-            lines.append(f"- edit detection: {changed_refs} changed, {removed_refs} removed refs")
+            lines.append(
+                f"- edit detection: {changed_refs} changed, {removed_refs} removed refs"
+            )
     if segments:
         lines.append(f"- {segments} tag segments recorded")
     if tags:
@@ -577,6 +608,7 @@ def classify_segment(
 
 
 # ── Tool: Delegate enrichment queue ──
+
 
 @mcp.tool()
 def list_pending_enrichments(
@@ -722,6 +754,7 @@ def submit_enrichments(
 
 # ── Tool: Knowledge gaps (search misses) ──
 
+
 @mcp.tool()
 def list_knowledge_gaps(limit: int = 20) -> str:
     """Queries the user has searched but the knowledge base couldn't answer
@@ -737,17 +770,20 @@ def list_knowledge_gaps(limit: int = 20) -> str:
         return data["error"]
     gaps = data.get("gaps", [])
     if not gaps:
-        return "No recurring knowledge gaps detected — searches are returning decent hits."
+        return (
+            "No recurring knowledge gaps detected — searches are returning decent hits."
+        )
     lines = [f"Recurring knowledge gaps ({len(gaps)}):"]
     for g in gaps:
         lines.append(
-            f"- \"{g['query']}\"  ×{g['miss_count']}  "
+            f'- "{g["query"]}"  ×{g["miss_count"]}  '
             f"(top_score={g['avg_top_score']}, last={g['last_seen']})"
         )
     return "\n".join(lines)
 
 
 # ── Tool: Meta-memory (Claude's own cross-session learnings) ──
+
 
 @mcp.tool()
 def read_meta_memory(limit: int = 100) -> str:
@@ -769,7 +805,9 @@ def read_meta_memory(limit: int = 100) -> str:
         return "(empty) No meta-memories yet. Consider calling append_meta_memory with useful learnings from this session."
     lines = [f"Meta-memory ({len(mems)} entries):"]
     for m in mems:
-        lines.append(f"- [{m['kind']}/{m['scope']}] {m['text']} (hits={m['hit_count']})")
+        lines.append(
+            f"- [{m['kind']}/{m['scope']}] {m['text']} (hits={m['hit_count']})"
+        )
     return "\n".join(lines)
 
 
@@ -797,9 +835,15 @@ def append_meta_memory(text: str, kind: str = "rule", scope: str = "global") -> 
     text = (text or "").strip()
     if not text:
         return "ERROR: text is required."
-    data = _api("POST", "/meta-memory", json={
-        "text": text, "kind": kind, "scope": scope,
-    })
+    data = _api(
+        "POST",
+        "/meta-memory",
+        json={
+            "text": text,
+            "kind": kind,
+            "scope": scope,
+        },
+    )
     if "error" in data:
         return f"Failed: {data['error']}"
     if data.get("deduped"):
@@ -817,6 +861,7 @@ def forget_meta_memory(memory_id: int) -> str:
 
 
 # ── Tool: Conflicts (C1) ──
+
 
 @mcp.tool()
 def list_conflicts() -> str:
@@ -850,9 +895,14 @@ def resolve_conflict(conflict_id: int, choice: str) -> str:
     """
     if choice not in ("keep_existing", "accept_incoming", "dismiss"):
         return "ERROR: choice must be 'keep_existing', 'accept_incoming', or 'dismiss'."
-    data = _api("POST", "/conflicts/resolve", json={
-        "conflict_id": conflict_id, "choice": choice,
-    })
+    data = _api(
+        "POST",
+        "/conflicts/resolve",
+        json={
+            "conflict_id": conflict_id,
+            "choice": choice,
+        },
+    )
     if "error" in data:
         return data["error"]
     return f"Resolved conflict {data.get('resolved')} with choice={data.get('choice')}."
@@ -860,14 +910,20 @@ def resolve_conflict(conflict_id: int, choice: str) -> str:
 
 # ── Tool: Segment split suggestions (C2) ──
 
+
 @mcp.tool()
 def list_split_suggestions(min_lines: int = 200, min_subheadings: int = 3) -> str:
     """Find segments that are probably too broad (over min_lines and contain
     >= min_subheadings markdown sub-headings) — candidates for Claude to
     re-classify into finer sub-topics."""
-    data = _api("GET", "/segments/split-suggestions", params={
-        "min_lines": min_lines, "min_subheadings": min_subheadings,
-    })
+    data = _api(
+        "GET",
+        "/segments/split-suggestions",
+        params={
+            "min_lines": min_lines,
+            "min_subheadings": min_subheadings,
+        },
+    )
     if "error" in data:
         return data["error"]
     suggestions = data.get("suggestions", [])
@@ -884,6 +940,7 @@ def list_split_suggestions(min_lines: int = 200, min_subheadings: int = 3) -> st
 
 
 # ── Tool: Observability dashboard (D1) ──
+
 
 @mcp.tool()
 def get_dashboard() -> str:
@@ -903,15 +960,17 @@ def get_dashboard() -> str:
         lines.append(f"  {k or '(unspecified)'}: {v}")
     ac = data.get("answer_cache") or {}
     lines.append("")
-    lines.append(f"Answer cache: {ac.get('entries', 0)} entries, "
-                 f"{ac.get('total_hits', 0)} total hits")
+    lines.append(
+        f"Answer cache: {ac.get('entries', 0)} entries, "
+        f"{ac.get('total_hits', 0)} total hits"
+    )
     lines.append(f"Total cost (CNY): {data.get('total_cost_cny', 0):.2f}")
     gaps = data.get("recent_gaps") or []
     if gaps:
         lines.append("")
         lines.append("Top 7-day gaps:")
         for g in gaps:
-            lines.append(f"  - \"{g['query_text']}\" ×{g['c']}")
+            lines.append(f'  - "{g["query_text"]}" ×{g["c"]}')
     tt = data.get("trust_top_chunks") or []
     if tt:
         lines.append("")
@@ -922,6 +981,7 @@ def get_dashboard() -> str:
 
 
 # ── Tool: OCR processing trigger (C4) ──
+
 
 @mcp.tool()
 def process_pending_ocr(limit: int = 20) -> str:
@@ -945,6 +1005,7 @@ def process_pending_ocr(limit: int = 20) -> str:
 #      OR just redistill_wiki(topic_name) to re-run enrichment without
 #      touching the .md. Both reuse the same folder + topic slug, so the
 #      wiki graph / cross-references don't break.
+
 
 @mcp.tool()
 def find_wiki_topics(query: str, top_k: int = 5) -> str:
@@ -989,8 +1050,7 @@ def read_wiki_source(topic_name: str) -> str:
     return (
         f"# {data.get('topic_name', topic_name)}\n"
         f"# path: {data.get('md_path', '?')}\n"
-        f"# length: {data.get('length', 0)} chars\n\n"
-        + (data.get("content") or "")
+        f"# length: {data.get('length', 0)} chars\n\n" + (data.get("content") or "")
     )
 
 
@@ -1018,11 +1078,16 @@ def update_wiki_doc(topic_name: str, content: str, delegate_enrich: bool = True)
     content = (content or "").strip()
     if not topic_name or not content:
         return "ERROR: topic_name + non-empty content required."
-    data = _api("POST", "/wiki/update", json={
-        "topic_name": topic_name,
-        "content": content,
-        "delegate_enrich": bool(delegate_enrich),
-    }, timeout=300)
+    data = _api(
+        "POST",
+        "/wiki/update",
+        json={
+            "topic_name": topic_name,
+            "content": content,
+            "delegate_enrich": bool(delegate_enrich),
+        },
+        timeout=300,
+    )
     if "error" in data:
         return f"Update failed: {data['error']}"
     inserted = data.get("inserted", 0)
@@ -1138,7 +1203,9 @@ def find_duplicate_wiki_sources() -> str:
         return "No orphan .md/.txt files under wiki_sources_dir. Clean."
     # Sort: delete > review > import
     order = {"delete": 0, "review": 1, "import": 2, "skip": 3, "keep": 4}
-    cands.sort(key=lambda c: (order.get(c.get("suggested_action", ""), 9), c.get("path", "")))
+    cands.sort(
+        key=lambda c: (order.get(c.get("suggested_action", ""), 9), c.get("path", ""))
+    )
     lines = [f"Orphan wiki sources ({len(cands)} found):"]
     for c in cands:
         action = c.get("suggested_action", "?")
@@ -1176,10 +1243,15 @@ def dedupe_wiki_sources(actions: list[dict], dry_run: bool = True) -> str:
     """
     if not actions:
         return "ERROR: actions list required."
-    data = _api("POST", "/wiki/dedupe", json={
-        "actions": actions,
-        "dry_run": bool(dry_run),
-    }, timeout=60)
+    data = _api(
+        "POST",
+        "/wiki/dedupe",
+        json={
+            "actions": actions,
+            "dry_run": bool(dry_run),
+        },
+        timeout=60,
+    )
     if "error" in data:
         return data["error"]
     lines = []
@@ -1191,16 +1263,22 @@ def dedupe_wiki_sources(actions: list[dict], dry_run: bool = True) -> str:
         hint = a.get("would") or a.get("noted") or "done"
         lines.append(f"  ✓ {a.get('action')}: {a.get('path')}  [{hint}]")
     for e in data.get("errors", []):
-        lines.append(f"  ✗ {e.get('action', '?')}: {e.get('path', '?')} — {e.get('error')}")
+        lines.append(
+            f"  ✗ {e.get('action', '?')}: {e.get('path', '?')} — {e.get('error')}"
+        )
     for s in data.get("skipped", []):
-        lines.append(f"  — {s.get('action', '?')}: {s.get('path', '?')} — {s.get('reason')}")
+        lines.append(
+            f"  — {s.get('action', '?')}: {s.get('path', '?')} — {s.get('reason')}"
+        )
     if data.get("dry_run"):
         lines.append("\nRun with dry_run=False to execute.")
     return "\n".join(lines)
 
 
 @mcp.tool()
-def flatten_wiki_layout(topic_names: Optional[list[str]] = None, dry_run: bool = True) -> str:
+def flatten_wiki_layout(
+    topic_names: Optional[list[str]] = None, dry_run: bool = True
+) -> str:
     """Collapse single-.md topic subdirectories into group-level files.
 
     Typical flow: after `wiki_reorganize(...)`, most topics land as
@@ -1217,17 +1295,24 @@ def flatten_wiki_layout(topic_names: Optional[list[str]] = None, dry_run: bool =
         topic_names: restrict to these; None = process every wiki topic.
         dry_run: True (default) returns the plan without touching anything.
     """
-    data = _api("POST", "/wiki/flatten", json={
-        "topic_names": topic_names or [],
-        "dry_run": bool(dry_run),
-    }, timeout=60)
+    data = _api(
+        "POST",
+        "/wiki/flatten",
+        json={
+            "topic_names": topic_names or [],
+            "dry_run": bool(dry_run),
+        },
+        timeout=60,
+    )
     if "error" in data:
         return f"Flatten failed: {data['error']}"
 
     if data.get("dry_run"):
         plan = data.get("plan", [])
         skipped = data.get("skipped", [])
-        lines = [f"Dry-run: {len(plan)} topics can be flattened, {len(skipped)} skipped."]
+        lines = [
+            f"Dry-run: {len(plan)} topics can be flattened, {len(skipped)} skipped."
+        ]
         for p in plan:
             lines.append(f"  '{p['topic']}'")
             lines.append(f"    {p['from_md']}")
@@ -1242,7 +1327,9 @@ def flatten_wiki_layout(topic_names: Optional[list[str]] = None, dry_run: bool =
     applied = data.get("applied", [])
     skipped = data.get("skipped", [])
     errors = data.get("errors", [])
-    lines = [f"Flattened {len(applied)} topics. {len(errors)} errors, {len(skipped)} skipped."]
+    lines = [
+        f"Flattened {len(applied)} topics. {len(errors)} errors, {len(skipped)} skipped."
+    ]
     for p in applied:
         lines.append(f"  ✓ '{p['topic']}' → {p['to_md']}")
     for e in errors:
@@ -1267,10 +1354,15 @@ def wiki_reorganize(groups: list[dict], dry_run: bool = False) -> str:
     """
     if not groups:
         return "ERROR: groups list is required."
-    data = _api("POST", "/wiki/reorganize", json={
-        "groups": groups,
-        "dry_run": bool(dry_run),
-    }, timeout=120)
+    data = _api(
+        "POST",
+        "/wiki/reorganize",
+        json={
+            "groups": groups,
+            "dry_run": bool(dry_run),
+        },
+        timeout=120,
+    )
     if "error" in data:
         return f"Reorganize failed: {data['error']}"
 
@@ -1290,7 +1382,9 @@ def wiki_reorganize(groups: list[dict], dry_run: bool = False) -> str:
     errors = data.get("errors", [])
     warnings = data.get("warnings", [])
     cleanup = data.get("cleanup_hints", [])
-    lines = [f"Applied {len(applied)} moves. {len(errors)} errors, {len(warnings)} warnings."]
+    lines = [
+        f"Applied {len(applied)} moves. {len(errors)} errors, {len(warnings)} warnings."
+    ]
     for m in applied:
         lines.append(f"  ✓ '{m['topic_name']}' → '{m['group']}'")
     for e in errors:
@@ -1316,6 +1410,7 @@ def wiki_reorganize(groups: list[dict], dry_run: bool = False) -> str:
 
 
 # ── Tool: Import wiki document ──
+
 
 @mcp.tool()
 def import_wiki_doc(
@@ -1378,10 +1473,13 @@ def import_wiki_doc(
     # ── Option 1: Direct content ──
     if content:
         import os, re
-        safe = re.sub(r'[^\w\s\u4e00-\u9fff-]', '_', topic_name.strip())[:80]
+
+        safe = re.sub(r"[^\w\s\u4e00-\u9fff-]", "_", topic_name.strip())[:80]
         wiki_dir = os.environ.get(
             "WIKI_SOURCES_DIR",
-            os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/sn/source"),
+            os.path.expanduser(
+                "~/Library/Mobile Documents/com~apple~CloudDocs/sn/source"
+            ),
         )
         topic_dir = os.path.join(wiki_dir, safe)
         os.makedirs(topic_dir, exist_ok=True)
@@ -1389,11 +1487,16 @@ def import_wiki_doc(
         with open(md_path, "w", encoding="utf-8") as f:
             f.write(content.strip() + "\n")
 
-        data = _api("POST", "/special-ingest", json={
-            "folder_path": topic_dir,
-            "topic_name": topic_name.strip(),
-            "ai_delegate": bool(delegate_enrich),
-        }, timeout=300)
+        data = _api(
+            "POST",
+            "/special-ingest",
+            json={
+                "folder_path": topic_dir,
+                "topic_name": topic_name.strip(),
+                "ai_delegate": bool(delegate_enrich),
+            },
+            timeout=300,
+        )
 
         if "error" in data:
             return f"Import failed: {data['error']}"
@@ -1402,16 +1505,23 @@ def import_wiki_doc(
 
     # ── Option 2: URL ──
     if url:
-        data = _api("POST", "/wiki/import-url", json={
-            "url": url,
-            "topic_name": topic_name.strip(),
-            "ai_delegate": bool(delegate_enrich),
-        }, timeout=300)
+        data = _api(
+            "POST",
+            "/wiki/import-url",
+            json={
+                "url": url,
+                "topic_name": topic_name.strip(),
+                "ai_delegate": bool(delegate_enrich),
+            },
+            timeout=300,
+        )
 
         if "error" in data:
             return f"Import failed: {data['error']}"
         inserted = data.get("inserted", 0)
-        return f"Wiki imported: '{topic_name}' — {inserted} chunks indexed from URL: {url}"
+        return (
+            f"Wiki imported: '{topic_name}' — {inserted} chunks indexed from URL: {url}"
+        )
 
     # ── Option 3: Local path ──
     if local_path:
@@ -1428,26 +1538,39 @@ def import_wiki_doc(
 
         if path.is_file() and path.suffix.lower() in (".md", ".txt", ".pdf"):
             import re, shutil
-            safe = re.sub(r'[^\w\s\u4e00-\u9fff-]', '_', topic_name.strip())[:80]
+
+            safe = re.sub(r"[^\w\s\u4e00-\u9fff-]", "_", topic_name.strip())[:80]
             wiki_dir = os.environ.get(
                 "WIKI_SOURCES_DIR",
-                os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/sn/source"),
+                os.path.expanduser(
+                    "~/Library/Mobile Documents/com~apple~CloudDocs/sn/source"
+                ),
             )
             topic_dir = os.path.join(wiki_dir, safe)
             os.makedirs(topic_dir, exist_ok=True)
             shutil.copy2(str(path), os.path.join(topic_dir, path.name))
 
-            data = _api("POST", "/special-ingest", json={
-                "folder_path": topic_dir,
-                "topic_name": topic_name.strip(),
-                "ai_delegate": bool(delegate_enrich),
-            }, timeout=300)
+            data = _api(
+                "POST",
+                "/special-ingest",
+                json={
+                    "folder_path": topic_dir,
+                    "topic_name": topic_name.strip(),
+                    "ai_delegate": bool(delegate_enrich),
+                },
+                timeout=300,
+            )
         elif path.is_dir():
-            data = _api("POST", "/special-ingest", json={
-                "folder_path": str(path),
-                "topic_name": topic_name.strip(),
-                "ai_delegate": bool(delegate_enrich),
-            }, timeout=300)
+            data = _api(
+                "POST",
+                "/special-ingest",
+                json={
+                    "folder_path": str(path),
+                    "topic_name": topic_name.strip(),
+                    "ai_delegate": bool(delegate_enrich),
+                },
+                timeout=300,
+            )
         else:
             return (
                 f"ERROR: Unsupported file type: {path.suffix}\n"
@@ -1465,6 +1588,7 @@ def import_wiki_doc(
 
 
 # ── Tool: Append content to note ──
+
 
 @mcp.tool()
 def append_to_note(content: str) -> str:
@@ -1490,10 +1614,14 @@ def append_to_note(content: str) -> str:
             "You cannot provide a path — SmartNote manages its own file locations."
         )
 
-    data = _api("POST", "/note/append", json={
-        "raw_path": raw_path,
-        "content": content,
-    })
+    data = _api(
+        "POST",
+        "/note/append",
+        json={
+            "raw_path": raw_path,
+            "content": content,
+        },
+    )
     if "error" in data:
         return f"Append failed: {data['error']}"
 
@@ -1523,6 +1651,7 @@ def append_to_note(content: str) -> str:
 #   2. Identify repeating ordered patterns (periodic rituals or sequences)
 #   3. upload_skill(name, description, nodes=[...])
 
+
 @mcp.tool()
 def upload_skill(
     name: str,
@@ -1550,14 +1679,18 @@ def upload_skill(
         source_segment_ids: chunk ids this skill was abstracted from (optional)
     """
     try:
-        t = _api("POST", "/skills", json={
-            "name": name,
-            "description": description,
-            "nodes": nodes,
-            "kind": kind,
-            "period_hint": period_hint,
-            "source_segment_ids": source_segment_ids or [],
-        })
+        t = _api(
+            "POST",
+            "/skills",
+            json={
+                "name": name,
+                "description": description,
+                "nodes": nodes,
+                "kind": kind,
+                "period_hint": period_hint,
+                "source_segment_ids": source_segment_ids or [],
+            },
+        )
         return f"Saved skill '{t['name']}' with {len(t.get('nodes', []))} steps."
     except Exception as e:
         return f"ERROR: {e}"
@@ -1641,10 +1774,14 @@ def use_skill(
         if not name:
             return "ERROR: name required for action=run"
         try:
-            bundle = _api("POST", f"/skills/{name}/run", json={
-                "slice_days": slice_days,
-                "triggered_by": "mcp",
-            })
+            bundle = _api(
+                "POST",
+                f"/skills/{name}/run",
+                json={
+                    "slice_days": slice_days,
+                    "triggered_by": "mcp",
+                },
+            )
         except Exception as e:
             return f"ERROR: {e}"
         run = bundle.get("run", {})
@@ -1673,24 +1810,30 @@ def use_skill(
             )
         if len(chunks) > 10:
             lines.append(f"  ... + {len(chunks) - 10} more chunks")
-        lines.extend([
-            "",
-            "## Next:",
-            f"Execute the steps against the slice, then call "
-            f"use_skill(action='record', run_id={run.get('id')}, "
-            f"status='completed'|'skipped', result_summary='...', steps=[...]).",
-        ])
+        lines.extend(
+            [
+                "",
+                "## Next:",
+                f"Execute the steps against the slice, then call "
+                f"use_skill(action='record', run_id={run.get('id')}, "
+                f"status='completed'|'skipped', result_summary='...', steps=[...]).",
+            ]
+        )
         return "\n".join(lines)
 
     if action == "record":
         if run_id is None or not status:
             return "ERROR: run_id and status required for action=record"
         try:
-            result = _api("POST", f"/skill-runs/{run_id}/result", json={
-                "status": status,
-                "result_summary": result_summary,
-                "steps": steps or [],
-            })
+            result = _api(
+                "POST",
+                f"/skill-runs/{run_id}/result",
+                json={
+                    "status": status,
+                    "result_summary": result_summary,
+                    "steps": steps or [],
+                },
+            )
             return f"Run #{run_id} → {result.get('status')}."
         except Exception as e:
             return f"ERROR: {e}"
@@ -1714,6 +1857,378 @@ def use_skill(
         )
 
     return f"ERROR: unknown action '{action}'. Use list | get | run | record | resume"
+
+
+@mcp.tool()
+def list_smart_tables() -> str:
+    """List all smart tables with sheet and row counts."""
+    data = _api("GET", "/smart-tables")
+    if "error" in data:
+        return data["error"]
+    tables = data.get("tables", [])
+    if not tables:
+        return "No smart tables found."
+    lines = ["Smart tables:"]
+    for table in tables:
+        lines.append(
+            f"- {table['name']} (id={table['id']}, sheets={table.get('sheet_count', 0)}, rows={table.get('row_count', 0)})"
+        )
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def list_sheets(table_name: str) -> str:
+    """List all sheets in a smart table."""
+    data = _api("GET", f"/smart-tables/{table_name}/sheets")
+    if "error" in data:
+        return data["error"]
+    sheets = data.get("sheets", [])
+    if not sheets:
+        return f"No sheets found in table: {table_name}"
+    lines = [f"Sheets in '{table_name}':"]
+    for sheet in sheets:
+        lines.append(
+            f"- {sheet['name']} (id={sheet['id']}, columns={sheet.get('column_count', 0)}, rows={sheet.get('row_count', 0)})"
+        )
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def read_sheet(table_name: str, sheet_name: str) -> str:
+    """Read a smart table sheet including columns and rows."""
+    data = _api("GET", f"/smart-tables/{table_name}/sheets/{sheet_name}")
+    if "error" in data:
+        return data["error"]
+    sheet = data.get("sheet", {})
+    columns = data.get("columns", [])
+    rows = data.get("rows", [])
+    lines = [
+        f"Sheet '{sheet.get('name', sheet_name)}' in table '{sheet.get('table_name', table_name)}'",
+        f"Columns: {len(columns)}, Rows: {len(rows)}",
+        "",
+        "Columns:",
+    ]
+    for column in columns:
+        lines.append(f"- {column['name']} [{column['type']}] (id={column['id']})")
+    lines.append("")
+    lines.append("Rows:")
+    column_order = [column["id"] for column in columns]
+    column_map = {column["id"]: column["name"] for column in columns}
+    for row in rows[:50]:
+        parts = []
+        for column_id in column_order:
+            value = row.get("cells", {}).get(column_id)
+            if value is None:
+                continue
+            parts.append(
+                f"{column_map[column_id]}={json.dumps(value, ensure_ascii=False)}"
+            )
+        lines.append(
+            f"- row #{row['id']}: " + (", ".join(parts) if parts else "(empty)")
+        )
+    if len(rows) > 50:
+        lines.append(f"... and {len(rows) - 50} more rows.")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def create_smart_table(name: str, dry_run: bool = True) -> str:
+    """Create a smart table. Defaults to dry-run preview."""
+    if dry_run:
+        return f"Dry-run: would create smart table '{name}'. Run with dry_run=False to execute."
+    data = _api("POST", "/smart-tables", json={"name": name})
+    if "error" in data:
+        return data["error"]
+    table = data.get("table", {})
+    return f"Created smart table '{table.get('name', name)}' (id={table.get('id')})."
+
+
+@mcp.tool()
+def rename_smart_table(table_name: str, new_name: str, dry_run: bool = True) -> str:
+    """Rename a smart table."""
+    if dry_run:
+        return (
+            f"Dry-run: would rename smart table '{table_name}' to '{new_name}'. "
+            "Run with dry_run=False to execute."
+        )
+    data = _api("PATCH", f"/smart-tables/{table_name}", json={"new_name": new_name})
+    if "error" in data:
+        return data["error"]
+    table = data.get("table", {})
+    return f"Renamed smart table to '{table.get('name', new_name)}'."
+
+
+@mcp.tool()
+def delete_smart_table(table_name: str, dry_run: bool = True) -> str:
+    """Delete a smart table."""
+    if dry_run:
+        return (
+            f"Dry-run: would delete smart table '{table_name}'. "
+            "Run with dry_run=False to execute."
+        )
+    data = _api("DELETE", f"/smart-tables/{table_name}")
+    if "error" in data:
+        return data["error"]
+    return f"Deleted smart table '{table_name}'."
+
+
+@mcp.tool()
+def create_sheet(table_name: str, sheet_name: str, dry_run: bool = True) -> str:
+    """Create a sheet inside a smart table. Defaults to dry-run preview."""
+    if dry_run:
+        return (
+            f"Dry-run: would create sheet '{sheet_name}' in table '{table_name}'. "
+            "Run with dry_run=False to execute."
+        )
+    data = _api("POST", f"/smart-tables/{table_name}/sheets", json={"name": sheet_name})
+    if "error" in data:
+        return data["error"]
+    sheet = data.get("sheet", {})
+    return f"Created sheet '{sheet.get('name', sheet_name)}' in table '{table_name}'."
+
+
+@mcp.tool()
+def add_column(
+    table_name: str,
+    sheet_name: str,
+    column_name: str,
+    column_type: str,
+    dry_run: bool = True,
+) -> str:
+    """Add a column to a sheet. column_type must be text, link, or image."""
+    if dry_run:
+        return (
+            f"Dry-run: would add column '{column_name}' ({column_type}) to '{table_name}/{sheet_name}'. "
+            "Run with dry_run=False to execute."
+        )
+    data = _api(
+        "POST",
+        f"/smart-tables/{table_name}/sheets/{sheet_name}/columns",
+        json={"name": column_name, "type": column_type},
+    )
+    if "error" in data:
+        return data["error"]
+    column = data.get("column", {})
+    return (
+        f"Added column '{column.get('name', column_name)}' "
+        f"[{column.get('type', column_type)}] to '{table_name}/{sheet_name}'."
+    )
+
+
+@mcp.tool()
+def append_column_data(
+    table_name: str,
+    sheet_name: str,
+    column_name: str,
+    values: list[dict | str],
+    dry_run: bool = True,
+) -> str:
+    """Append values down one column; new rows are created as needed."""
+    if dry_run:
+        preview = [json.dumps(v, ensure_ascii=False) for v in values[:5]]
+        more = "" if len(values) <= 5 else f" ... +{len(values) - 5} more"
+        return (
+            f"Dry-run: would append {len(values)} values to '{table_name}/{sheet_name}/{column_name}': "
+            f"{preview}{more}. Run with dry_run=False to execute."
+        )
+    data = _api(
+        "POST",
+        f"/smart-tables/{table_name}/sheets/{sheet_name}/append-column",
+        json={"column_name": column_name, "values": values, "source": "mcp"},
+        timeout=60,
+    )
+    if "error" in data:
+        return data["error"]
+    return (
+        f"Wrote {data.get('written_values', len(values))} values to '{table_name}/{sheet_name}/{column_name}'. "
+        f"Created {data.get('appended_rows', 0)} new rows."
+    )
+
+
+@mcp.tool()
+def update_cell(
+    table_name: str,
+    sheet_name: str,
+    row_id: int,
+    column_name: str,
+    value: dict | str,
+    dry_run: bool = True,
+) -> str:
+    """Update a single cell by row id and column name."""
+    if dry_run:
+        return (
+            f"Dry-run: would update row {row_id} column '{column_name}' in '{table_name}/{sheet_name}' "
+            f"to {json.dumps(value, ensure_ascii=False)}. Run with dry_run=False to execute."
+        )
+    data = _api(
+        "POST",
+        f"/smart-tables/{table_name}/sheets/{sheet_name}/cells",
+        json={
+            "row_id": row_id,
+            "column_name": column_name,
+            "value": value,
+            "source": "mcp",
+        },
+    )
+    if "error" in data:
+        return data["error"]
+    return (
+        f"Updated row {row_id} column '{column_name}' in '{table_name}/{sheet_name}'."
+    )
+
+
+@mcp.tool()
+def rename_sheet(
+    table_name: str, sheet_name: str, new_name: str, dry_run: bool = True
+) -> str:
+    """Rename a sheet within a smart table."""
+    if dry_run:
+        return (
+            f"Dry-run: would rename sheet '{sheet_name}' to '{new_name}' in '{table_name}'. "
+            "Run with dry_run=False to execute."
+        )
+    data = _api(
+        "PATCH",
+        f"/smart-tables/{table_name}/sheets/{sheet_name}",
+        json={"new_name": new_name},
+    )
+    if "error" in data:
+        return data["error"]
+    sheet = data.get("sheet", {})
+    return f"Renamed sheet to '{sheet.get('name', new_name)}' in table '{table_name}'."
+
+
+@mcp.tool()
+def delete_sheet(table_name: str, sheet_name: str, dry_run: bool = True) -> str:
+    """Delete a sheet within a smart table."""
+    if dry_run:
+        return (
+            f"Dry-run: would delete sheet '{sheet_name}' from '{table_name}'. "
+            "Run with dry_run=False to execute."
+        )
+    data = _api("DELETE", f"/smart-tables/{table_name}/sheets/{sheet_name}")
+    if "error" in data:
+        return data["error"]
+    return f"Deleted sheet '{sheet_name}' from table '{table_name}'."
+
+
+@mcp.tool()
+def add_row(
+    table_name: str,
+    sheet_name: str,
+    values: Optional[dict[str, dict | str]] = None,
+    dry_run: bool = True,
+) -> str:
+    """Add a row to a sheet, optionally with initial values."""
+    if dry_run:
+        return (
+            f"Dry-run: would add a row to '{table_name}/{sheet_name}' with values="
+            f"{json.dumps(values or {}, ensure_ascii=False)}. Run with dry_run=False to execute."
+        )
+    data = _api(
+        "POST",
+        f"/smart-tables/{table_name}/sheets/{sheet_name}/rows",
+        json={"values": values or {}, "source": "mcp"},
+    )
+    if "error" in data:
+        return data["error"]
+    row = data.get("row", {})
+    return f"Added row #{row.get('id')} to '{table_name}/{sheet_name}'."
+
+
+@mcp.tool()
+def insert_rows(
+    table_name: str,
+    sheet_name: str,
+    rows: list[dict[str, dict | str]],
+    dry_run: bool = True,
+) -> str:
+    """Insert multiple rows into a sheet. Best for AI-generated structured data."""
+    if dry_run:
+        preview = [json.dumps(r, ensure_ascii=False) for r in rows[:3]]
+        more = "" if len(rows) <= 3 else f" ... +{len(rows) - 3} more"
+        return (
+            f"Dry-run: would insert {len(rows)} rows into '{table_name}/{sheet_name}': "
+            f"{preview}{more}. Run with dry_run=False to execute."
+        )
+    data = _api(
+        "POST",
+        f"/smart-tables/{table_name}/sheets/{sheet_name}/rows/batch",
+        json={"rows": rows, "source": "mcp"},
+        timeout=60,
+    )
+    if "error" in data:
+        return data["error"]
+    return (
+        f"Inserted {data.get('written_rows', len(rows))} rows into '{table_name}/{sheet_name}'. "
+        f"New row ids: {data.get('inserted_row_ids', [])}."
+    )
+
+
+@mcp.tool()
+def delete_row(
+    table_name: str, sheet_name: str, row_id: int, dry_run: bool = True
+) -> str:
+    """Delete a row from a sheet by row id."""
+    if dry_run:
+        return (
+            f"Dry-run: would delete row {row_id} from '{table_name}/{sheet_name}'. "
+            "Run with dry_run=False to execute."
+        )
+    data = _api(
+        "DELETE",
+        f"/smart-tables/{table_name}/sheets/{sheet_name}/rows/{row_id}",
+    )
+    if "error" in data:
+        return data["error"]
+    return f"Deleted row {row_id} from '{table_name}/{sheet_name}'."
+
+
+@mcp.tool()
+def rename_column(
+    table_name: str,
+    sheet_name: str,
+    column_name: str,
+    new_name: str,
+    dry_run: bool = True,
+) -> str:
+    """Rename a column within a sheet."""
+    if dry_run:
+        return (
+            f"Dry-run: would rename column '{column_name}' to '{new_name}' in '{table_name}/{sheet_name}'. "
+            "Run with dry_run=False to execute."
+        )
+    data = _api(
+        "PATCH",
+        f"/smart-tables/{table_name}/sheets/{sheet_name}/columns/{column_name}",
+        json={"new_name": new_name},
+    )
+    if "error" in data:
+        return data["error"]
+    column = data.get("column", {})
+    return f"Renamed column to '{column.get('name', new_name)}' in '{table_name}/{sheet_name}'."
+
+
+@mcp.tool()
+def delete_column(
+    table_name: str,
+    sheet_name: str,
+    column_name: str,
+    dry_run: bool = True,
+) -> str:
+    """Delete a column from a sheet."""
+    if dry_run:
+        return (
+            f"Dry-run: would delete column '{column_name}' from '{table_name}/{sheet_name}'. "
+            "Run with dry_run=False to execute."
+        )
+    data = _api(
+        "DELETE",
+        f"/smart-tables/{table_name}/sheets/{sheet_name}/columns/{column_name}",
+    )
+    if "error" in data:
+        return data["error"]
+    return f"Deleted column '{column_name}' from '{table_name}/{sheet_name}'."
 
 
 # ── Main ──
