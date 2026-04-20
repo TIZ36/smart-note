@@ -7,6 +7,7 @@ import { IngestDialog } from "./IngestDialog";
 import { PackBadge } from "./PackBadge";
 import { ReorganizeDialog } from "./ReorganizeDialog";
 import { BookmarksButton } from "./BookmarksButton";
+import { QuickSearch } from "./QuickSearch";
 import { cn } from "@/lib/cn";
 import { pickRawFile, saveRawPathForHotkey } from "@/lib/electron";
 import * as api from "@/lib/api";
@@ -29,6 +30,7 @@ type Props = {
 export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIngestComplete, ingestBusy, ingestSteps, ingestResult, buildVersion, tags, onTagsChanged }: Props) {
   const [showIngest, setShowIngest] = useState(false);
   const [showReorganize, setShowReorganize] = useState(false);
+  const [showQuickSearch, setShowQuickSearch] = useState(false);
   const [activeBuild, setActiveBuild] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [scrollTarget, setScrollTarget] = useState<{ start: number; end: number } | null>(null);
@@ -126,6 +128,27 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
     }, 20_000);
     return () => clearInterval(id);
   }, [rawPath, refreshNoteState]);
+
+  // Shift+Shift (double-tap within 400ms) opens the unified quick-search palette.
+  // We only count "bare" Shift presses — any modifier combo (Shift+Cmd, Shift+letter)
+  // resets the timer so normal shortcuts aren't hijacked.
+  useEffect(() => {
+    if (!rawPath) return;
+    let lastShiftAt = 0;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Shift") { lastShiftAt = 0; return; }
+      if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) { lastShiftAt = 0; return; }
+      const now = performance.now();
+      if (now - lastShiftAt < 400) {
+        lastShiftAt = 0;
+        setShowQuickSearch((v) => !v);
+      } else {
+        lastShiftAt = now;
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [rawPath]);
 
   useEffect(() => {
     api.fetchBuilds().then((d) => {
@@ -336,6 +359,13 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
           onIngestComplete={onIngestComplete}
         />
       )}
+
+      <QuickSearch
+        rawPath={rawPath}
+        open={showQuickSearch}
+        onClose={() => setShowQuickSearch(false)}
+        onJumpToLine={(line) => setScrollTarget({ start: line, end: line })}
+      />
 
       <ReorganizeDialog
         rawPath={rawPath}

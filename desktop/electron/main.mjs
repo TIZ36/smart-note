@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, clipboard, nativeImage } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, shell, clipboard, nativeImage, Menu } from "electron";
 import electron from "electron";
 const { globalShortcut, Notification } = electron;
 import path from "path";
@@ -311,6 +311,7 @@ function ingestRawAsync(win, rawPath, notePath, doReset) {
 let mainWindow = null;
 
 function createWindow() {
+  Menu.setApplicationMenu(null);
   mainWindow = new BrowserWindow({
     width: 1100,
     height: 760,
@@ -327,6 +328,8 @@ function createWindow() {
       sandbox: false,
     },
   });
+
+  mainWindow.setMenuBarVisibility(false);
 
   mainWindow.webContents.on("did-fail-load", (_e, code, desc, url) => {
     console.error("[electron] did-fail-load", { code, desc, url });

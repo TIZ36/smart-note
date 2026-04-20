@@ -333,6 +333,26 @@ export function NoteEditor({ filePath, onSave, onDirty, scrollToRange, lineMeta,
             return true;
           },
         },
+        {
+          key: "Mod-l",
+          run: (view) => {
+            const currentLine = view.state.doc.lineAt(view.state.selection.main.head).number;
+            const raw = window.prompt("Go to line", String(currentLine));
+            if (raw === null) return true;
+            const nextLine = Number.parseInt(raw.trim(), 10);
+            if (Number.isNaN(nextLine)) return true;
+            const targetLine = Math.max(1, Math.min(nextLine, view.state.doc.lines));
+            const line = view.state.doc.line(targetLine);
+            view.dispatch({
+              selection: { anchor: line.from },
+              effects: [
+                setHighlightRange.of({ start: targetLine, end: targetLine }),
+                EditorView.scrollIntoView(line.from, { y: "center" }),
+              ],
+            });
+            return true;
+          },
+        },
       ]);
 
       const updateListener = EditorView.updateListener.of((update) => {
