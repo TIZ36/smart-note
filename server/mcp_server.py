@@ -233,6 +233,307 @@ def get_tag_segments(tag_name: str) -> str:
     return "\n".join(lines)
 
 
+# ── Tools: Enrich-tag CRUD ─────────────────────────────────────────
+# Enrich-tags are the AI classifier's taxonomy buckets. Adding/removing a
+# tag shapes what the next `ingest_notes(delegate_enrich=True)` pass will
+# classify into. These are distinct from note-views (see below), which are
+# user-owned lenses over a single raw file.
+
+
+@mcp.tool()
+def add_enrich_tag(name: str, desc: str = "") -> str:
+    """Add a new enrich-tag to the classification taxonomy.
+
+    The next AI enrich pass will start grouping matching content under this
+    tag. Existing classifications are NOT re-run automatically — call
+    `ingest_notes(delegate_enrich=True)` after adding if you want existing
+    content re-classified.
+
+    Args:
+        name: Tag name (e.g. "meeting-notes", "ideas").
+        desc: Optional short description shown in the tag list.
+    """
+    if not name.strip():
+        return "Error: tag name cannot be empty."
+    data = _api("POST", "/tags/add", json={"name": name.strip(), "desc": desc})
+    if "error" in data:
+        return data["error"]
+    return f"Added enrich-tag '{name}'. Run AI enrich to populate it."
+
+
+@mcp.tool()
+def delete_enrich_tag(name: str) -> str:
+    """Delete an enrich-tag from the taxonomy.
+
+    Existing tagged segments stay in the DB until the next full enrich; the
+    tag just stops being a classification target.
+
+    Args:
+        name: Tag name to remove.
+    """
+    data = _api("DELETE", f"/tags/{name}")
+    if "error" in data:
+        return data["error"]
+    return f"Deleted enrich-tag '{name}'."
+
+
+# ── Tools: Note views (self-views) ────────────────────────────────
+# Self-views are topical lenses over a single raw note file. Members are
+# anchored by line_hash (same as bookmarks), so they survive edits that
+# shift line numbers. Three membership sources: rule (keyword/regex match),
+# ai (semantic match via retrieval), manual (user-added). These tools let
+# Claude curate views on the user's behalf — e.g. populate a view via a
+# natural-language query or hand-pick lines from a conversation.
+
+
+def _line_hash(line: str) -> str:
+    """Match the backend's hash function (server/app/views.py::_line_hash)
+    so hashes computed here can be looked up on the server."""
+    return hashlib.sha256(line.strip().encode("utf-8")).hexdigest()[:16]
+
+
+@mcp.tool()
+def list_note_views(raw_path: str) -> str:
+    """List all self-views defined for a raw note file.
+
+    Args:
+        raw_path: Absolute path to the raw note file.
+    """
+    data = _api("GET", "/note/views", params={"raw_path": raw_path})
+    if "error" in data:
+        return data["error"]
+    views = data.get("views", [])
+    if not views:
+        return f"No views for {raw_path}."
+    lines = [f"Views for {raw_path}:"]
+    for v in views:
+        rule = v.get("rule") or {}
+        bits = []
+        if rule.get("keywords"):
+            bits.append(f"kw=[{','.join(rule['keywords'])}]")
+        if rule.get("regex"):
+            bits.append(f"regex={rule['regex']!r}")
+        if rule.get("ai_query"):
+            bits.append(f"ai={rule['ai_query']!r}")
+        rule_str = " ".join(bits) or "(no rules)"
+        lines.append(
+            f"- **{v['name']}** (id={v['id']}, {v.get('member_count', 0)} members) — {rule_str}"
+        )
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def create_note_view(
+    raw_path: str,
+    name: str,
+    keywords: Optional[list[str]] = None,
+    regex: Optional[str] = None,
+    ai_query: Optional[str] = None,
+    populate: bool = True,
+) -> str:
+    """Create a new self-view for a raw note file.
+
+    If any rule (keywords / regex / ai_query) is provided and `populate` is
+    True (default), runs the populate pass immediately so the view is
+    usable right after creation.
+
+    Args:
+        raw_path: Absolute path to the raw note file.
+        name: View name (e.g. "meeting-notes", "Q4 planning").
+        keywords: Optional list of case-insensitive substrings. Any line
+            containing any keyword becomes a member.
+        regex: Optional Python regex applied per line.
+        ai_query: Optional natural-language query for semantic matching
+            via the existing retrieval index.
+        populate: If True, immediately run rules + AI match after creating
+            the view. Default True.
+    """
+    rule: dict = {}
+    if keywords: rule["keywords"] = keywords
+    if regex: rule["regex"] = regex
+    if ai_query: rule["ai_query"] = ai_query
+    body = {"raw_path": raw_path, "name": name, "rule": rule or None}
+    data = _api("POST", "/note/views", json=body)
+    if "error" in data:
+        return data["error"]
+    view = data["view"]
+    out = [f"Created view '{view['name']}' (id={view['id']})."]
+    if populate and rule:
+        pop = _api("POST", f"/note/views/{view['id']}/populate", json={"replace": True})
+        if "error" in pop:
+            out.append(f"Populate failed: {pop['error']}")
+        else:
+            out.append(
+                f"Populated: rule={pop.get('rule_hits', 0)}, ai={pop.get('ai_hits', 0)}, "
+                f"total={pop.get('total_hits', 0)}."
+            )
+    return "\n".join(out)
+
+
+@mcp.tool()
+def update_note_view(
+    view_id: int,
+    name: Optional[str] = None,
+    keywords: Optional[list[str]] = None,
+    regex: Optional[str] = None,
+    ai_query: Optional[str] = None,
+) -> str:
+    """Update a self-view's name or rules.
+
+    IMPORTANT: if you pass any of `keywords`, `regex`, or `ai_query`, the
+    view's rule_json is replaced with a fresh object built from the fields
+    you provided — unspecified fields are dropped. To preserve a rule
+    field, pass it explicitly. To clear just the name, pass only `name`.
+
+    Args:
+        view_id: The view id (from list_note_views).
+        name: New name.
+        keywords: New keywords list.
+        regex: New regex.
+        ai_query: New AI semantic query.
+    """
+    patch: dict = {}
+    if name is not None:
+        patch["name"] = name
+    if keywords is not None or regex is not None or ai_query is not None:
+        rule: dict = {}
+        if keywords: rule["keywords"] = keywords
+        if regex: rule["regex"] = regex
+        if ai_query: rule["ai_query"] = ai_query
+        patch["rule"] = rule
+    if not patch:
+        return "Nothing to update — pass at least one field."
+    data = _api("PATCH", f"/note/views/{view_id}", json=patch)
+    if "error" in data:
+        return data["error"]
+    return f"Updated view id={view_id}."
+
+
+@mcp.tool()
+def delete_note_view(view_id: int) -> str:
+    """Delete a self-view. The source file is untouched; only the lens + its
+    membership records are removed.
+
+    Args:
+        view_id: The view id.
+    """
+    data = _api("DELETE", f"/note/views/{view_id}")
+    if "error" in data:
+        return data["error"]
+    return f"Deleted view id={view_id}."
+
+
+@mcp.tool()
+def populate_note_view(view_id: int, replace: bool = True) -> str:
+    """Re-run rules + AI match for a self-view against the current file.
+
+    Manual adds and manual exclusions are always respected — populate will
+    never resurrect a user-excluded line or demote a manually-added one.
+
+    Args:
+        view_id: The view id.
+        replace: If True (default), clear existing rule/ai members before
+            repopulating. If False, merge new hits with existing ones.
+    """
+    data = _api("POST", f"/note/views/{view_id}/populate", json={"replace": replace})
+    if "error" in data:
+        return data["error"]
+    return (
+        f"Populate done. rule={data.get('rule_hits', 0)}, "
+        f"ai={data.get('ai_hits', 0)}, total={data.get('total_hits', 0)}."
+    )
+
+
+@mcp.tool()
+def add_note_view_members(view_id: int, lines: list[str]) -> str:
+    """Manually add lines (by raw text) to a self-view.
+
+    Each line's text is hashed with the same function the backend uses, so
+    membership stays stable across future edits that shift line numbers.
+    Manual adds take precedence over rule/ai sources and are never removed
+    by a subsequent populate.
+
+    Args:
+        view_id: The view id.
+        lines: List of raw line texts (with or without trailing whitespace).
+    """
+    add = []
+    for text in lines:
+        if not text.strip():
+            continue
+        add.append({
+            "line_hash": _line_hash(text),
+            "line_preview": text.strip()[:200],
+        })
+    if not add:
+        return "No non-empty lines to add."
+    data = _api("POST", f"/note/views/{view_id}/members", json={"add": add})
+    if "error" in data:
+        return data["error"]
+    return f"Added {len(add)} member(s). Total now: {data.get('count', '?')}."
+
+
+@mcp.tool()
+def remove_note_view_members(view_id: int, lines: list[str]) -> str:
+    """Manually exclude lines (by raw text) from a self-view.
+
+    Uses `exclude` not `remove`: the line is marked as user-excluded in the
+    DB so a future populate pass does NOT resurrect it via rule/ai match.
+
+    Args:
+        view_id: The view id.
+        lines: List of raw line texts to exclude.
+    """
+    exclude = []
+    for text in lines:
+        if not text.strip():
+            continue
+        exclude.append({
+            "line_hash": _line_hash(text),
+            "line_preview": text.strip()[:200],
+        })
+    if not exclude:
+        return "No non-empty lines to exclude."
+    data = _api("POST", f"/note/views/{view_id}/members", json={"exclude": exclude})
+    if "error" in data:
+        return data["error"]
+    return f"Excluded {len(exclude)} line(s). Total now: {data.get('count', '?')}."
+
+
+@mcp.tool()
+def list_note_view_members(view_id: int, raw_path: Optional[str] = None) -> str:
+    """List the current members of a self-view, resolved to live line numbers.
+
+    Lines whose hashes no longer match anything in the source file (because
+    they were deleted or heavily edited) are reported as 'missing'.
+
+    Args:
+        view_id: The view id.
+        raw_path: Optional — resolve against a specific file path. Defaults
+            to the view's own raw_path.
+    """
+    params = {"raw_path": raw_path} if raw_path else {}
+    data = _api("GET", f"/note/views/{view_id}/resolve", params=params)
+    if "error" in data:
+        return data["error"]
+    lines = data.get("lines", [])
+    missing = data.get("missing", [])
+    if not lines and not missing:
+        return "View is empty."
+    out = [f"Members ({len(lines)} live, {len(missing)} missing):"]
+    for m in lines[:100]:
+        src = m.get("source", "?")
+        text = (m.get("text") or "").strip()[:120]
+        out.append(f"  L{m['line_no']} [{src}]  {text}")
+    if len(lines) > 100:
+        out.append(f"  ... and {len(lines) - 100} more.")
+    if missing:
+        out.append(
+            f"Missing: {len(missing)} line-hash(es) no longer present in the file."
+        )
+    return "\n".join(out)
+
+
 # ── Tool: List wiki topics ──
 
 

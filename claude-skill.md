@@ -144,6 +144,57 @@ The build flips to `completed` automatically once all chunk dimensions are fille
 
 When `list_conflicts()` returns entries, surface them to the user with both sides and call `resolve_conflict(conflict_id, choice)` with their decision. **Never silently pick a side.**
 
+## Note views (lenses over a single raw file)
+
+SmartNote exposes two related concepts in the Note page sidebar:
+
+- **Enrich-tags** — the AI classifier's taxonomy (`work`, `learn`, `todo`, …). The next `ingest_notes(delegate_enrich=True)` pass uses this list as its classification axes.
+- **Self-views** — user-curated lenses over a single raw file. Membership is anchored by `line_hash` (same function as bookmarks), so it survives line-number shifts. Three sources: `rule` (keyword/regex), `ai` (semantic match), `manual` (hand-picked). Manual adds and manual exclusions always win over rule/ai.
+
+### Enrich-tag tools
+
+| Tool | Use for |
+|------|---------|
+| `list_tags()` | Current taxonomy + segment counts |
+| `add_enrich_tag(name, desc="")` | New bucket; next enrich will classify into it |
+| `delete_enrich_tag(name)` | Remove a bucket (existing segments keep their tag until next full enrich) |
+| `get_tag_segments(tag_name)` | All segments under a tag |
+
+Never delete a tag without confirming with the user — it shifts the classifier's axes.
+
+### Self-view tools
+
+| Tool | Use for |
+|------|---------|
+| `list_note_views(raw_path)` | All views for a file + rule summary |
+| `create_note_view(raw_path, name, keywords?, regex?, ai_query?, populate=True)` | Create and optionally run rules + AI match |
+| `update_note_view(view_id, name?, keywords?, regex?, ai_query?)` | Rename or change rules (rule fields are replaced atomically — pass all you want to keep) |
+| `delete_note_view(view_id)` | Remove the lens (source file untouched) |
+| `populate_note_view(view_id, replace=True)` | Rerun rules + AI match; manual state respected |
+| `add_note_view_members(view_id, lines=[...])` | Manually add by raw line text (hashed client-side) |
+| `remove_note_view_members(view_id, lines=[...])` | Mark as user-excluded (won't be re-added by a future populate) |
+| `list_note_view_members(view_id, raw_path=?)` | Resolve to live line numbers; reports hashes that no longer match the file |
+
+### Playbook
+
+**"Organize my notes about X into a view":**
+```
+create_note_view(raw_path, name="X", ai_query="X and related terms", populate=True)
+list_note_view_members(view_id)   # show hits, ask user to confirm
+```
+
+**"This view is missing …":** `add_note_view_members(view_id, lines=[<exact line text>])`
+
+**"That row shouldn't be in the view":** `remove_note_view_members(...)` — uses `exclude`, so a future populate won't resurrect it.
+
+**"Refine the view":** `update_note_view(...)` then `populate_note_view(view_id, replace=True)`.
+
+### Guarantees to respect
+
+- Saving the raw file (via `/note/save`) auto-runs populate for every view on that file — do **not** call `populate_note_view` on every save; only after rule changes.
+- `replace=True` on populate wipes rule/ai rows but never manual rows or excluded rows.
+- Auto-views for enrich-tags are read-only in the UI. Don't try to add/remove members of them — manage the tag taxonomy instead.
+
 ## Rules for Claude Code
 
 1. **Search before answer** when the user's question could plausibly be in their notes.

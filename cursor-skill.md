@@ -106,6 +106,53 @@ At the start of a session where the task involves the user's preferences or long
 When the user states a durable preference ("always prefer X over Y"):
 - `append_meta_memory(text="prefer X over Y because ...", kind="rule", scope="global")`
 
+## Note views (lenses over a single raw file)
+
+SmartNote splits the Note page sidebar into two groups:
+
+- **Enrich-tags** — AI classifier taxonomy. Adding a tag here changes what the next `ingest_notes(delegate_enrich=True)` pass classifies into.
+- **Self-views** — user-owned lenses over a single raw file. Members are anchored by `line_hash` so they survive edits. Sources: `rule` (keyword/regex), `ai` (semantic match via retrieval), `manual` (hand-picked). Manual state always wins.
+
+### Enrich-tag tools
+
+- `list_tags()` — current taxonomy
+- `add_enrich_tag(name, desc="")` — add a new bucket
+- `delete_enrich_tag(name)` — remove a bucket (confirm with user first)
+- `get_tag_segments(tag_name)` — segments under a tag
+
+### Self-view tools
+
+- `list_note_views(raw_path)` — list views + rules for a file
+- `create_note_view(raw_path, name, keywords?, regex?, ai_query?, populate=True)` — create + populate in one call
+- `update_note_view(view_id, name?, keywords?, regex?, ai_query?)` — rule fields replace atomically (pass all you want to keep)
+- `delete_note_view(view_id)` — remove lens (source file untouched)
+- `populate_note_view(view_id, replace=True)` — rerun rules + AI; manual state preserved
+- `add_note_view_members(view_id, lines=[...])` — manually add by raw line text
+- `remove_note_view_members(view_id, lines=[...])` — mark as excluded (survives future populates)
+- `list_note_view_members(view_id, raw_path=?)` — resolve to live line numbers
+
+### Patterns
+
+**User asks to group content by topic:**
+```
+create_note_view(raw_path, name="<topic>", ai_query="<topic + synonyms>", populate=True)
+list_note_view_members(view_id)    # verify with user
+```
+
+**User refines the view:**
+```
+add_note_view_members(view_id, lines=[...])     # missing rows
+remove_note_view_members(view_id, lines=[...])  # unwanted rows — uses exclude
+update_note_view(view_id, ai_query="refined query")
+populate_note_view(view_id, replace=True)
+```
+
+### Guarantees
+
+- File saves auto-repopulate every view additively — don't call `populate_note_view` after every save.
+- Manual adds and exclusions are never overwritten by rule/ai populate.
+- Auto-views for enrich-tags are read-only; don't try to add/remove members — manage the tag taxonomy instead.
+
 ## Rules for Cursor
 
 1. **Search before answer** when the user's question could live in their KB.

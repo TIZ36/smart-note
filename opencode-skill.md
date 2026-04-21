@@ -140,6 +140,57 @@ apply_rules_silently(rules)
 append_meta_memory(text="...", kind="rule", scope="global")
 ```
 
+## Note views (lenses over a single raw file)
+
+SmartNote's Note page sidebar splits into:
+
+- **Enrich-tags** — AI classifier taxonomy. The next `ingest_notes(delegate_enrich=True)` pass uses this list as its buckets.
+- **Self-views** — user lenses over a single raw file. Membership is anchored by `line_hash` so it survives edits. Three sources: `rule` (keyword/regex), `ai` (semantic match), `manual` (hand-picked). Manual state is authoritative over rule/ai.
+
+### Enrich-tag tools
+
+| Tool | Use for |
+|------|---------|
+| `list_tags()` | Current taxonomy + counts |
+| `add_enrich_tag(name, desc="")` | New bucket; next enrich classifies into it |
+| `delete_enrich_tag(name)` | Remove a bucket (confirm with user) |
+| `get_tag_segments(tag_name)` | All segments under a tag |
+
+### Self-view tools
+
+| Tool | Use for |
+|------|---------|
+| `list_note_views(raw_path)` | Views + rule summaries for a file |
+| `create_note_view(raw_path, name, keywords?, regex?, ai_query?, populate=True)` | Create and optionally populate |
+| `update_note_view(view_id, name?, keywords?, regex?, ai_query?)` | Rule fields replace as a unit — pass all you want to keep |
+| `delete_note_view(view_id)` | Remove lens; source file untouched |
+| `populate_note_view(view_id, replace=True)` | Re-run rules + AI; manual state preserved |
+| `add_note_view_members(view_id, lines=[...])` | Manual add by raw line text |
+| `remove_note_view_members(view_id, lines=[...])` | Mark as excluded (survives future populate) |
+| `list_note_view_members(view_id, raw_path=?)` | Resolve to live line numbers + report missing hashes |
+
+### Patterns
+
+**Group content by topic into a view:**
+```
+create_note_view(raw_path, name=<topic>, ai_query=<topic + related terms>, populate=True)
+list_note_view_members(view_id)   # verify with user
+```
+
+**Iterate with user feedback:**
+```
+add_note_view_members(view_id, lines=[...])     # rows the user points out as missing
+remove_note_view_members(view_id, lines=[...])  # rows the user calls out as wrong — uses exclude
+update_note_view(view_id, ai_query=<refined>)
+populate_note_view(view_id, replace=True)
+```
+
+### Guarantees
+
+- Saving the raw file auto-runs populate for every view additively — don't pile on your own populate calls after every save.
+- `replace=True` on populate wipes rule/ai rows but never manual rows or user-excluded rows.
+- Enrich-tag auto-views are read-only in the UI. Manage the taxonomy (`add_enrich_tag` / `delete_enrich_tag`), don't try to curate their members directly.
+
 ## Rules for OpenCode
 
 1. **Search before answer** when the user's question could live in their KB.
