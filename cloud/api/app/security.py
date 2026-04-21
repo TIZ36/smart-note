@@ -32,7 +32,11 @@ class NewApiKey:
 
 
 def mint_api_key() -> NewApiKey:
-    prefix = secrets.token_urlsafe(6)[:8]
+    # prefix = 12 hex chars (48 bits) — hex guarantees the only '_' in
+    # the full key is the secret boundary, which is what parse_api_key
+    # relies on. The prefix isn't secret; it's just an indexed lookup
+    # key so the server can find the stored hash quickly.
+    prefix = secrets.token_hex(6)
     secret = secrets.token_urlsafe(24)
     full = f"sn_live_{prefix}_{secret}"
     return NewApiKey(full_key=full, prefix=prefix, secret_hash=_hash_secret(secret))
@@ -41,13 +45,19 @@ def mint_api_key() -> NewApiKey:
 def parse_api_key(key: str) -> tuple[str, str] | None:
     """Split a full key into (prefix, secret). Returns None on malformed input.
 
-    Shape: `sn_live_<prefix>_<secret>` where secret may itself contain '_',
-    so we split from the left only three times.
+    Shape: `sn_live_<hex-prefix>_<secret>`. Prefix is hex so the first
+    four underscore-separated segments exactly match `sn / live /
+    prefix / <everything-else>`; the secret portion may contain '_' or
+    '-' since it's base64url.
     """
     parts = key.split("_", 3)
     if len(parts) != 4 or parts[0] != "sn" or parts[1] != "live":
         return None
-    return parts[2], parts[3]
+    prefix, secret = parts[2], parts[3]
+    # Defensive: if someone paste-injects a malformed key, catch early.
+    if not prefix or not secret:
+        return None
+    return prefix, secret
 
 
 def verify_secret(secret: str, stored_hash: str) -> bool:

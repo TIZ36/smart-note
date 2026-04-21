@@ -1,0 +1,5 @@
+mcp[cli]>=1.2
+httpx>=0.27
+# Sibling SDK — installed in editable mode so local changes to the SDK
+# are picked up immediately without reinstall.
+-e ../sdk-py

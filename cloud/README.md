@@ -18,6 +18,7 @@ cloud/
   api/         FastAPI service — REST v1 endpoints, Supabase auth, Postgres
   sdk-py/      Python SDK (Client, auto token renewal)
   sdk-ts/      TypeScript SDK
+  mcp/         MCP bridge — lets Claude Code / Cursor / OpenCode use this
   console/     Next.js admin console (deferred to W7)
   migrations/  Postgres schema migrations (SQL files, run via psql or sqitch)
   infra/       docker-compose + deployment scaffolding
