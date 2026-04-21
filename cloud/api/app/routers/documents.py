@@ -30,6 +30,15 @@ class DocumentCreate(BaseModel):
     metadata: dict | None = None
 
 
+class DocumentPatch(BaseModel):
+    # Partial update for sync callers. Changing `content` clears
+    # `ingested_at` so the caller can decide whether to re-run ingest.
+    name: str | None = None
+    content: str | None = None
+    kind: str | None = None
+    metadata: dict | None = None
+
+
 class DocumentOut(BaseModel):
     id: str
     workspace_id: str
@@ -38,17 +47,23 @@ class DocumentOut(BaseModel):
     byte_size: int
     ingested_at: str | None = None
     created_at: str
+    updated_at: str | None = None
+    metadata: dict | None = None
 
 
 def _row_to_out(r) -> DocumentOut:
+    # asyncpg Records expose keys() but not dict.get(); normalize first.
+    d = dict(r)
     return DocumentOut(
-        id=str(r["id"]),
-        workspace_id=str(r["workspace_id"]),
-        name=r["name"],
-        kind=r["kind"],
-        byte_size=r["byte_size"],
-        ingested_at=r["ingested_at"].isoformat() if r["ingested_at"] else None,
-        created_at=r["created_at"].isoformat(),
+        id=str(d["id"]),
+        workspace_id=str(d["workspace_id"]),
+        name=d["name"],
+        kind=d["kind"],
+        byte_size=d["byte_size"],
+        ingested_at=d["ingested_at"].isoformat() if d.get("ingested_at") else None,
+        created_at=d["created_at"].isoformat(),
+        updated_at=d["updated_at"].isoformat() if d.get("updated_at") else None,
+        metadata=d.get("metadata"),
     )
 
 
@@ -144,15 +159,98 @@ async def ingest_document(
 @router.get("", dependencies=[Depends(require_scope("documents:read"))])
 async def list_documents(
     identity: Identity = Depends(require_scope("documents:read")),
+    since: str | None = Query(default=None, description="ISO timestamp; return docs updated after this"),
+    smartnote_type: str | None = Query(default=None, description="metadata.smartnote_type filter (note|wiki_topic|smart_table)"),
+) -> dict:
+    where = ["workspace_id = $1"]
+    args: list = [UUID(identity.workspace_id)]
+    if since:
+        args.append(since)
+        where.append(f"updated_at > ${len(args)}::timestamptz")
+    if smartnote_type:
+        args.append(smartnote_type)
+        where.append(f"metadata->>'smartnote_type' = ${len(args)}")
+    sql = (
+        "SELECT id, workspace_id, name, kind, byte_size, ingested_at, "
+        "       created_at, updated_at, metadata "
+        "FROM documents WHERE " + " AND ".join(where) +
+        " ORDER BY updated_at DESC"
+    )
+    async with pool().acquire() as conn:
+        rows = await conn.fetch(sql, *args)
+    return {"documents": [_row_to_out(r).model_dump() for r in rows]}
+
+
+@router.patch(
+    "/{document_id}",
+    response_model=DocumentOut,
+    dependencies=[Depends(require_scope("documents:write"))],
+)
+async def patch_document(
+    document_id: str,
+    req: DocumentPatch,
+    identity: Identity = Depends(require_scope("documents:write")),
+) -> DocumentOut:
+    updates = req.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(400, "nothing to update")
+    sets = ["updated_at = now()"]
+    args: list = []
+    if "name" in updates:
+        args.append(updates["name"]); sets.append(f"name = ${len(args)}")
+    if "kind" in updates:
+        args.append(updates["kind"]); sets.append(f"kind = ${len(args)}")
+    if "metadata" in updates:
+        args.append(updates["metadata"] or {}); sets.append(f"metadata = ${len(args)}")
+    if "content" in updates and updates["content"] is not None:
+        content = updates["content"]
+        args.append(content); sets.append(f"content = ${len(args)}")
+        args.append(len(content.encode("utf-8"))); sets.append(f"byte_size = ${len(args)}")
+        # Clear ingest timestamp — chunks from the old content no longer
+        # reflect the doc; caller should re-ingest (or leave it stale).
+        sets.append("ingested_at = NULL")
+    args.append(UUID(document_id))
+    doc_pos = len(args)
+    args.append(UUID(identity.workspace_id))
+    ws_pos = len(args)
+
+    sql = (
+        "UPDATE documents SET " + ", ".join(sets) +
+        f" WHERE id = ${doc_pos} AND workspace_id = ${ws_pos} "
+        "RETURNING id, workspace_id, name, kind, byte_size, ingested_at, "
+        "          created_at, updated_at, metadata"
+    )
+    async with pool().acquire() as conn:
+        row = await conn.fetchrow(sql, *args)
+    if not row:
+        raise HTTPException(404, "document not found")
+    return _row_to_out(row)
+
+
+@router.delete(
+    "/{document_id}",
+    dependencies=[Depends(require_scope("documents:write"))],
+)
+async def delete_document(
+    document_id: str,
+    identity: Identity = Depends(require_scope("documents:write")),
 ) -> dict:
     async with pool().acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT id, workspace_id, name, kind, byte_size, ingested_at, "
-            "       created_at "
-            "FROM documents WHERE workspace_id = $1 ORDER BY created_at DESC",
-            UUID(identity.workspace_id),
-        )
-    return {"documents": [_row_to_out(r).model_dump() for r in rows]}
+        # Also delete document_ref memories tied to this document so the
+        # workspace doesn't accumulate orphan chunks from past versions.
+        async with conn.transaction():
+            await conn.execute(
+                "DELETE FROM memories WHERE workspace_id = $1 "
+                "AND kind = 'document_ref' AND structured->>'document_id' = $2",
+                UUID(identity.workspace_id), document_id,
+            )
+            result = await conn.execute(
+                "DELETE FROM documents WHERE id = $1 AND workspace_id = $2",
+                UUID(document_id), UUID(identity.workspace_id),
+            )
+    if not result.endswith(" 1"):
+        raise HTTPException(404, "document not found")
+    return {"deleted": True, "id": document_id}
 
 
 @router.get("/{document_id}", dependencies=[Depends(require_scope("documents:read"))])
