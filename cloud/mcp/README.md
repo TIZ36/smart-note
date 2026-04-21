@@ -29,9 +29,20 @@ Every tool runs against the workspace the API key is scoped to.
 
 Prereqs:
 - Python 3.10+
-- The SmartNote Cloud API running (see `cloud/README.md`) and an API key
-  (`sn_live_…`). For local dev, `./cloud/scripts/quickstart.sh` gives
-  you a workspace + key end-to-end.
+- The SmartNote Cloud API running — `./cloud/scripts/quickstart.sh` from
+  the repo root brings up the docker stack and proves it works.
+
+**Mint an API key** (takes 1s once the stack is up):
+
+```bash
+./cloud/scripts/issue_key.sh            # prints the sn_live_… secret ONCE
+# or with a custom workspace name:
+./cloud/scripts/issue_key.sh my-project
+```
+
+The secret is shown only once — save it immediately (put it in your
+MCP config, `.envrc`, or password manager). If you lose it, mint a
+fresh one; revocation and rotation come with the console (W7).
 
 Install:
 ```bash

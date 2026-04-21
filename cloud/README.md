@@ -41,7 +41,19 @@ Services:
 - `embed`    — self-hosted sentence-transformers (reuses repo's `local_embedding/`)
 - `api`      — FastAPI gateway on :8000
 
-Health-check everything: `curl http://localhost:8000/v1/health`.
+Health-check everything: `curl http://localhost:58000/v1/health`.
+
+## Get an API key (for MCP clients / SDK scripts)
+
+Once the stack is up, mint a workspace + API key with:
+
+```bash
+./cloud/scripts/issue_key.sh           # default workspace name
+./cloud/scripts/issue_key.sh my-name   # custom name
+```
+
+The secret is shown **once**. Paste it into your agent's MCP config
+(see `cloud/mcp/README.md`) or export `SMARTNOTE_API_KEY` for scripts.
 
 ## Design decisions (locked)
 
