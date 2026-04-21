@@ -91,6 +91,11 @@ export type AppSettings = {
   // AI ingestion
   ingest_ai_enabled: boolean;
   ingest_ai_model: string;
+  // SmartNote Cloud sync — bidirectional sync of notes/wiki/smart tables
+  // to the cloud API. Empty URL + key = feature off even if flag is true.
+  cloud_sync_enabled?: boolean;
+  cloud_sync_url?: string;
+  cloud_sync_api_key?: string;
 };
 
 export type GraphNode = {

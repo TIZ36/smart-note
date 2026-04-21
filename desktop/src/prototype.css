@@ -7057,6 +7057,52 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   border-top: 1px solid var(--color-border);
 }
 
+/* Cloud sync status panel under Settings → Cloud Sync */
+.proto-cloud-sync-status {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--color-accent) 3%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.proto-cloud-sync-counts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+.proto-cloud-sync-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.proto-cloud-sync-kind {
+  text-transform: capitalize;
+  min-width: 100px;
+  color: var(--color-text-primary);
+  font-weight: 500;
+}
+.proto-cloud-sync-count {
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 30px;
+}
+.proto-cloud-sync-time {
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+.proto-cloud-sync-conflicts {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--color-warning, #d48b00);
+  margin-top: 4px;
+}
+
 /* Views sidebar — left rail in the note body. Two modes: expanded
    (~220px list with view list + member jump-nav) and collapsed (32px mini
    rail with letter avatars). Collapsed state is persisted in localStorage

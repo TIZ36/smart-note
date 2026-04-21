@@ -6,6 +6,7 @@ import * as api from "@/lib/api";
 import type { AppSettings } from "@/lib/types";
 import { cn } from "@/lib/cn";
 import { useTheme, type ThemeMode } from "@/hooks/useTheme";
+import { CloudSyncSection } from "./CloudSyncSection";
 
 const EASE_OUT_QUART = [0.25, 1, 0.5, 1] as const;
 
@@ -304,6 +305,10 @@ export function SettingsPanel() {
               )}
             </AnimatePresence>
           </section>
+
+          <div className="proto-form-divider" />
+
+          <CloudSyncSection settings={settings} update={update} />
 
           <div className="proto-form-divider" />
 

@@ -1192,3 +1192,45 @@ export async function fetchWikiGraph(): Promise<WikiGraphData> {
   const res = await fetch(`${BASE}/wiki-graph`);
   return res.json();
 }
+
+// ── SmartNote Cloud sync ────────────────────────────────────────
+
+export type CloudSyncStatus = {
+  enabled: boolean;
+  configured: boolean;
+  cloud_url: string;
+  entities: { local_kind: string; count: number; last_push: string | null; last_pull: string | null }[];
+  conflicts: number;
+};
+
+export async function fetchCloudSyncStatus(): Promise<CloudSyncStatus> {
+  const res = await fetch(`${BASE}/sync/status`);
+  if (!res.ok) throw new Error(`sync status: ${res.status}`);
+  return res.json();
+}
+
+export async function testCloudSync(): Promise<{ ok: boolean; workspace?: unknown; error?: string }> {
+  const res = await fetch(`${BASE}/sync/test`, { method: "POST" });
+  return res.json();
+}
+
+export async function triggerSyncFull(): Promise<unknown> {
+  const res = await fetch(`${BASE}/sync/full`, { method: "POST" });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `sync failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function triggerSyncPush(): Promise<unknown> {
+  const res = await fetch(`${BASE}/sync/push`, { method: "POST" });
+  if (!res.ok) throw new Error(`sync push: ${res.status}`);
+  return res.json();
+}
+
+export async function triggerSyncPull(): Promise<unknown> {
+  const res = await fetch(`${BASE}/sync/pull`, { method: "POST" });
+  if (!res.ok) throw new Error(`sync pull: ${res.status}`);
+  return res.json();
+}
