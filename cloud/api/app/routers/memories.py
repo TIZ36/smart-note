@@ -14,6 +14,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from app import usage
 from app.db import pool
 from app.deps import Identity, require_scope
 from app.embeddings import embed_one, format_vector_literal
@@ -33,6 +34,19 @@ class MemoryCreate(BaseModel):
     source_refs: list[dict[str, Any]] = Field(default_factory=list)
     confidence: float = 1.0
     pinned: bool = False
+    supersedes: str | None = None        # optional explicit supersession
+
+
+class MemoryPatch(BaseModel):
+    # Partial update — only fields explicitly provided are changed.
+    # Updating `content` re-embeds. Passing `pinned=False` clears pin, etc.
+    content: str | None = None
+    scope: str | None = None
+    structured: dict[str, Any] | None = None
+    tags: list[str] | None = None
+    source_refs: list[dict[str, Any]] | None = None
+    confidence: float | None = None
+    pinned: bool | None = None
 
 
 class MemoryOut(BaseModel):
@@ -93,10 +107,10 @@ async def create_memory(
             """
             INSERT INTO memories(
               workspace_id, author_agent, kind, scope, content, structured,
-              embedding, confidence, pinned, source_refs, tags
+              embedding, confidence, pinned, source_refs, tags, supersedes
             ) VALUES (
               $1, $2, $3, $4, $5, $6,
-              $7::vector, $8, $9, $10, $11
+              $7::vector, $8, $9, $10, $11, $12
             )
             RETURNING id, workspace_id, author_agent, kind, scope, content,
                       structured, confidence, pinned, supersedes, source_refs,
@@ -107,13 +121,66 @@ async def create_memory(
             req.kind,
             req.scope,
             req.content,
-            req.structured,       # dict → jsonb via pool codec
+            req.structured,
             embedding_literal,
             req.confidence,
             req.pinned,
-            req.source_refs,      # list → jsonb via pool codec
+            req.source_refs,
             req.tags,
+            UUID(req.supersedes) if req.supersedes else None,
         )
+    await usage.bump(identity.workspace_id, memory_delta=1)
+    return _row_to_out(row)
+
+
+@router.patch(
+    "/{memory_id}",
+    response_model=MemoryOut,
+    dependencies=[Depends(require_scope("memories:write"))],
+)
+async def patch_memory(
+    memory_id: str,
+    req: MemoryPatch,
+    identity: Identity = Depends(require_scope("memories:write")),
+) -> MemoryOut:
+    # Build the partial update dynamically — only columns the caller
+    # explicitly set are touched. We allow swapping `pinned` off, so
+    # `.model_dump(exclude_unset=True)` is the right way to detect intent.
+    updates = req.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(400, "nothing to update")
+
+    sets = ["updated_at = now()"]
+    args: list[Any] = []
+    for col in ("content", "scope", "structured", "tags", "source_refs",
+                "confidence", "pinned"):
+        if col in updates:
+            args.append(updates[col])
+            sets.append(f"{col} = ${len(args)}")
+
+    # Re-embed if content changed.
+    if "content" in updates and updates["content"]:
+        vec = await embed_one(updates["content"])
+        if vec is not None:
+            args.append(format_vector_literal(vec))
+            sets.append(f"embedding = ${len(args)}::vector")
+
+    args.append(UUID(memory_id))
+    mem_id_pos = len(args)
+    args.append(UUID(identity.workspace_id))
+    ws_id_pos = len(args)
+
+    sql = (
+        "UPDATE memories SET " + ", ".join(sets) +
+        f" WHERE id = ${mem_id_pos} AND workspace_id = ${ws_id_pos} "
+        "RETURNING id, workspace_id, author_agent, kind, scope, content, "
+        "          structured, confidence, pinned, supersedes, source_refs, "
+        "          tags, created_at, updated_at"
+    )
+    async with pool().acquire() as conn:
+        row = await conn.fetchrow(sql, *args)
+    if not row:
+        raise HTTPException(404, "memory not found")
     return _row_to_out(row)
 
 
@@ -179,6 +246,7 @@ async def delete_memory(
     deleted = result.endswith(" 1")
     if not deleted:
         raise HTTPException(404, "memory not found")
+    await usage.bump(identity.workspace_id, memory_delta=-1)
     return {"deleted": True, "id": memory_id}
 
 

@@ -15,7 +15,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.db import close_pool, init_pool, run_migrations
-from app.routers import auth, dev, health, memories
+from app.routers import (
+    auth, dev, documents, health, memories, preferences, retrieve,
+    usage_route, workspaces,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("smartnote-cloud")
@@ -52,6 +55,11 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(memories.router)
+app.include_router(preferences.router)
+app.include_router(retrieve.router)
+app.include_router(documents.router)
+app.include_router(workspaces.router)
+app.include_router(usage_route.router)
 
 if get_settings().allow_dev_bootstrap:
     log.warning(
