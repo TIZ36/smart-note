@@ -2,7 +2,20 @@
 
 Official TypeScript client for the SmartNote Cloud API.
 
-**Status:** placeholder. Shipping alongside the Python SDK in W3–W4.
+**Status:** alpha — functional parity with the Python SDK.
+
+## Install
+
+```bash
+npm install @smartnote/client
+```
+
+## Build
+
+```bash
+npm install
+npm run build
+```
 
 Planned shape:
 

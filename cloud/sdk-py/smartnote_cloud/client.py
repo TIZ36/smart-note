@@ -43,13 +43,17 @@ class Client:
     # for clock skew + one round-trip, without thrashing the token endpoint.
     _REFRESH_MARGIN = 30
 
-    def __init__(self, api_key: str, base_url: str = "http://localhost:8000", timeout: float = 15.0):
+    def __init__(self, api_key: str, base_url: str = "http://localhost:58000", timeout: float = 15.0):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self._http = httpx.Client(timeout=timeout)
         self._jwt: str | None = None
         self._jwt_exp: int = 0
         self.memories = _MemoriesResource(self)
+        self.preferences = _PreferencesResource(self)
+        self.documents = _DocumentsResource(self)
+        self.retrieve = _RetrieveCallable(self)
+        self.usage = _UsageResource(self)
 
     # ── public ──────────────────────────────────────────
 
@@ -120,12 +124,14 @@ class _MemoriesResource:
         source_refs: list[dict] | None = None,
         confidence: float = 1.0,
         pinned: bool = False,
+        supersedes: str | None = None,
     ) -> dict:
         body = {
             "kind": kind, "content": content, "scope": scope,
             "structured": structured, "tags": tags or [],
             "source_refs": source_refs or [],
             "confidence": confidence, "pinned": pinned,
+            "supersedes": supersedes,
         }
         return self._c.request("POST", "/v1/memories", json=body).json()
 
@@ -141,8 +147,88 @@ class _MemoriesResource:
     def get(self, memory_id: str) -> dict:
         return self._c.request("GET", f"/v1/memories/{memory_id}").json()
 
+    def patch(self, memory_id: str, **updates: Any) -> dict:
+        """Partial update. Only pass fields you want to change — others
+        are left alone. Changing `content` re-embeds server-side."""
+        return self._c.request("PATCH", f"/v1/memories/{memory_id}", json=updates).json()
+
     def delete(self, memory_id: str) -> None:
         self._c.request("DELETE", f"/v1/memories/{memory_id}")
+
+
+class _PreferencesResource:
+    def __init__(self, client: Client):
+        self._c = client
+
+    def all(self) -> dict:
+        """Flat KV snapshot — `{key: {value, description, updated_at, ...}}`."""
+        return self._c.request("GET", "/v1/preferences").json().get("preferences", {})
+
+    def get(self, key: str) -> dict:
+        return self._c.request("GET", f"/v1/preferences/{key}").json()
+
+    def set(self, key: str, value: Any, *, description: str | None = None) -> dict:
+        return self._c.request(
+            "PUT", f"/v1/preferences/{key}",
+            json={"value": value, "description": description},
+        ).json()
+
+    def delete(self, key: str) -> None:
+        self._c.request("DELETE", f"/v1/preferences/{key}")
+
+
+class _DocumentsResource:
+    def __init__(self, client: Client):
+        self._c = client
+
+    def add(self, name: str, content: str, *, kind: str = "text", metadata: dict | None = None) -> dict:
+        return self._c.request(
+            "POST", "/v1/documents",
+            json={"name": name, "content": content, "kind": kind, "metadata": metadata},
+        ).json()
+
+    def ingest(self, document_id: str) -> dict:
+        return self._c.request("POST", f"/v1/documents/{document_id}/ingest").json()
+
+    def list(self) -> list[dict]:
+        return self._c.request("GET", "/v1/documents").json().get("documents", [])
+
+    def get(self, document_id: str) -> dict:
+        return self._c.request("GET", f"/v1/documents/{document_id}").json()
+
+
+class _RetrieveCallable:
+    """Callable resource — `client.retrieve("...")` is more ergonomic than
+    `client.retrieve.query("...")` for the top-level primitive."""
+
+    def __init__(self, client: Client):
+        self._c = client
+
+    def __call__(
+        self, query: str, *,
+        kinds: list[str] | None = None,
+        scope: str | None = None,
+        tags: list[str] | None = None,
+        topk: int = 10,
+        vector_weight: float = 0.7,
+        lexical_weight: float = 0.3,
+    ) -> dict:
+        body: dict[str, Any] = {
+            "query": query, "topk": topk,
+            "vector_weight": vector_weight, "lexical_weight": lexical_weight,
+        }
+        if kinds: body["kinds"] = kinds
+        if scope: body["scope"] = scope
+        if tags: body["tags"] = tags
+        return self._c.request("POST", "/v1/retrieve", json=body).json()
+
+
+class _UsageResource:
+    def __init__(self, client: Client):
+        self._c = client
+
+    def current(self) -> dict:
+        return self._c.request("GET", "/v1/usage").json()
 
 
 def _safe_json(resp: httpx.Response) -> Any:
