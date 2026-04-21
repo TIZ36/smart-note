@@ -426,6 +426,48 @@ CREATE TABLE IF NOT EXISTS note_view_member (
 
 CREATE INDEX IF NOT EXISTS idx_note_view_member_view ON note_view_member(view_id);
 
+-- SmartNote Cloud sync state. Tracks the mapping between local entities
+-- (notes, wiki topics, smart tables) and their cloud `document`
+-- counterparts so the sync engine can do incremental pushes / pulls
+-- without re-uploading everything every cycle.
+--
+-- local_kind:   'note' | 'wiki_topic' | 'smart_table'
+-- local_id:     the natural local identifier
+--               — notes: absolute file path
+--               — wiki_topic: topic name
+--               — smart_table: table name
+-- cloud_doc_id: UUID of the /v1/documents row on the cloud
+-- local_hash:   sha256 of the serialized content at last push/pull
+-- remote_hash:  server-reported hash at last sync (for drift detection)
+-- last_pushed_at / last_pulled_at are separate so we can tell which
+-- direction last touched the row.
+CREATE TABLE IF NOT EXISTS sync_state (
+  local_kind      TEXT NOT NULL,
+  local_id        TEXT NOT NULL,
+  cloud_doc_id    TEXT,
+  local_hash      TEXT NOT NULL DEFAULT '',
+  remote_hash     TEXT NOT NULL DEFAULT '',
+  remote_updated_at TEXT,
+  last_pushed_at  TEXT,
+  last_pulled_at  TEXT,
+  PRIMARY KEY (local_kind, local_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sync_state_cloud ON sync_state(cloud_doc_id);
+
+-- Snapshots of the "loser" side whenever the LWW rule displaces local
+-- content. Keeps a recovery trail in case the user wants the overwritten
+-- version back.
+CREATE TABLE IF NOT EXISTS sync_conflicts (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  local_kind      TEXT NOT NULL,
+  local_id        TEXT NOT NULL,
+  cloud_doc_id    TEXT,
+  direction       TEXT NOT NULL,         -- 'push_overwrote_remote' | 'pull_overwrote_local'
+  lost_content    TEXT NOT NULL,
+  created_at      TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Runtime-editable app settings. Seeded from env on first launch, mutated by
 -- the Settings UI via POST /settings — changes take effect on the running
 -- backend without a restart (the Settings singleton is refreshed in place).

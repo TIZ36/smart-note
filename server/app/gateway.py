@@ -3669,6 +3669,9 @@ class SettingsUpdateRequest(BaseModel):
     prompt_cache_mode: str | None = None
     wiki_sources_dir: str | None = None
     ocr_langs: str | None = None
+    cloud_sync_enabled: bool | None = None
+    cloud_sync_url: str | None = None
+    cloud_sync_api_key: str | None = None
 
 
 @app.post("/settings")
@@ -3683,6 +3686,72 @@ def api_update_settings(req: SettingsUpdateRequest) -> dict:
         "applied": list(updates.keys()),
         "settings": current_settings_dict(),
     }
+
+
+# ── SmartNote Cloud sync ────────────────────────────────────────
+
+
+@app.get("/sync/status")
+def api_sync_status() -> dict:
+    """Snapshot for the Settings UI — enabled, cloud URL, per-kind counts,
+    last push/pull timestamps, open conflicts."""
+    from app import cloud_sync
+    return cloud_sync.sync_status()
+
+
+@app.post("/sync/test")
+def api_sync_test() -> dict:
+    """Probe cloud reachability + api key validity. Cheap enough to run
+    on every keystroke in the Settings panel if desired."""
+    from app import cloud_sync
+    return cloud_sync.test_connection()
+
+
+@app.post("/sync/push")
+def api_sync_push() -> dict:
+    """Push every local entity that has drifted from its recorded
+    sync_state. Returns a per-kind summary of actions taken."""
+    from app import cloud_sync
+    try:
+        return cloud_sync.push_all()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/sync/pull")
+def api_sync_pull() -> dict:
+    """Pull every remote document we care about (filtered by
+    smartnote_type) and apply it locally. LWW conflict policy with
+    losing snapshots saved to sync_conflicts."""
+    from app import cloud_sync
+    try:
+        return cloud_sync.pull_all()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/sync/full")
+def api_sync_full() -> dict:
+    """Serial push-then-pull. One call, both directions."""
+    from app import cloud_sync
+    try:
+        return cloud_sync.full_sync()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/sync/conflicts")
+def api_sync_conflicts(limit: int = 50) -> dict:
+    """Recent conflict snapshots for recovery UI."""
+    from app.db import connect as _connect
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT id, local_kind, local_id, cloud_doc_id, direction, "
+            "SUBSTR(lost_content, 1, 500) AS preview, LENGTH(lost_content) AS full_length, "
+            "created_at FROM sync_conflicts ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return {"conflicts": [dict(r) for r in rows]}
 
 
 @app.get("/ocr-langs")

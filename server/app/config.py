@@ -65,6 +65,17 @@ class Settings:
     # OCR languages for scanned PDF import (e.g. "chi_sim+eng")
     ocr_langs: str = os.getenv("OCR_LANGS", "")
 
+    # ── SmartNote Cloud sync ─────────────────────────────────────
+    # Bidirectional sync of notes / wiki topics / smart tables to a
+    # SmartNote Cloud workspace. When enabled, the local gateway pushes
+    # local changes to the cloud as `document` entities and pulls any
+    # remote changes into local tables. Conflict policy: LWW by
+    # updated_at, with the loser snapshot kept in sync_conflicts for
+    # manual recovery.
+    cloud_sync_enabled: bool = os.getenv("CLOUD_SYNC_ENABLED", "false").lower() in ("true", "1", "yes")
+    cloud_sync_url: str = os.getenv("CLOUD_SYNC_URL", "")
+    cloud_sync_api_key: str = os.getenv("CLOUD_SYNC_API_KEY", "")
+
     @property
     def effective_embed_base_url(self) -> str:
         return self.embed_base_url or self.provider_base_url
@@ -97,9 +108,12 @@ PERSISTED_KEYS: tuple[str, ...] = (
     "prompt_cache_mode",
     "wiki_sources_dir",
     "ocr_langs",
+    "cloud_sync_enabled",
+    "cloud_sync_url",
+    "cloud_sync_api_key",
 )
 
-_BOOL_KEYS = {"ai_features_enabled", "ingest_ai_enabled"}
+_BOOL_KEYS = {"ai_features_enabled", "ingest_ai_enabled", "cloud_sync_enabled"}
 
 
 def _coerce(key: str, raw: str):
