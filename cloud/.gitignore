@@ -1,0 +1,16 @@
+**/.venv/
+**/__pycache__/
+**/node_modules/
+**/dist/
+**/build/
+*.pyc
+*.egg-info/
+.coverage
+.pytest_cache/
+
+# Env & secrets — never commit real values
+infra/.env
+.env
+.env.local
+*.pem
+*.key

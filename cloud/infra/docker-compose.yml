@@ -1,0 +1,84 @@
+# SmartNote Cloud — local development stack
+#
+# One command: `docker compose up --build` from this directory.
+#
+# Services:
+#   postgres — Postgres 16 with pgvector extension pre-installed
+#   embed    — self-hosted sentence-transformers (reuses repo's
+#              `local_embedding/` image — we point `context` at it from here
+#              rather than copying files into cloud/, so there's no drift
+#              with the OSS desktop track. Plan A (clean fork) means we'll
+#              copy later if/when the cloud embedder diverges.)
+#   api      — FastAPI gateway (cloud/api/)
+
+name: smartnote-cloud
+
+services:
+  postgres:
+    # pgvector's official image is pre-built with the extension ready; we
+    # just `CREATE EXTENSION IF NOT EXISTS vector` from our migrations.
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-smartnote}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smartnote}
+      POSTGRES_DB: ${POSTGRES_DB:-smartnote}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-smartnote}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  embed:
+    # Reuses the OSS embedding service unchanged. Override MODEL_NAME at
+    # build time if a different sentence-transformer is desired:
+    #   docker compose build --build-arg MODEL_NAME=BAAI/bge-m3 embed
+    build:
+      context: ../../local_embedding
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      MODEL_NAME: ${EMBED_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+    ports:
+      - "${EMBED_PORT:-8009}:8009"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8009/health').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      # Context = cloud/ so the image can bundle both the api/ source and
+      # the sibling migrations/ directory in one build pass.
+      context: ..
+      dockerfile: api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      embed:
+        condition: service_started
+    environment:
+      # Composed from the compose env so a single .env drives everything.
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-smartnote}:${POSTGRES_PASSWORD:-smartnote}@postgres:5432/${POSTGRES_DB:-smartnote}
+      EMBED_URL: http://embed:8009
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
+      SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET:-}
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      ALLOW_DEV_BOOTSTRAP: ${ALLOW_DEV_BOOTSTRAP:-true}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
