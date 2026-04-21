@@ -1,13 +1,15 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Database, Tag, FolderOpen, Shuffle, ArrowDownToLine } from "lucide-react";
+import { Database, FolderOpen, Shuffle, ArrowDownToLine } from "lucide-react";
 import { NoteEditor, type LineMeta } from "../editor/NoteEditor";
-import { NoteSegments } from "./NoteSegments";
 import { IngestDialog } from "./IngestDialog";
 import { PackBadge } from "./PackBadge";
 import { ReorganizeDialog } from "./ReorganizeDialog";
 import { BookmarksButton } from "./BookmarksButton";
 import { QuickSearch } from "./QuickSearch";
+import { NoteViewDialog } from "./NoteViewDialog";
+import { NoteViewSidebar, type SidebarViewItem } from "./NoteViewSidebar";
+import { Plus, Minus } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { pickRawFile, saveRawPathForHotkey } from "@/lib/electron";
 import * as api from "@/lib/api";
@@ -27,14 +29,48 @@ type Props = {
   onTagsChanged?: () => void;
 };
 
+/* Build a short, human-readable label for an AI segment entry in the
+   sidebar. Prefers topic_name (most specific), falls back to the first
+   line of summary, then to a bare line count. The sidebar already renders
+   line_start in its own column, so we don't repeat it here. */
+function buildAutoViewLabel(seg: api.NoteSegment): string {
+  const span = seg.line_end - seg.line_start + 1;
+  const spanSuffix = span > 1 ? `  · ${span}L` : "";
+  const topic = (seg.topic_name || "").trim();
+  if (topic) return `${topic}${spanSuffix}`;
+  const summary = (seg.summary || "").split("\n")[0].trim();
+  if (summary) return `${summary.slice(0, 80)}${spanSuffix}`;
+  return `(segment${spanSuffix})`;
+}
+
 export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIngestComplete, ingestBusy, ingestSteps, ingestResult, buildVersion, tags, onTagsChanged }: Props) {
   const [showIngest, setShowIngest] = useState(false);
   const [showReorganize, setShowReorganize] = useState(false);
   const [showQuickSearch, setShowQuickSearch] = useState(false);
+
+  // ── View state ──
+  // `views` is the list of persisted custom lenses for the current file.
+  // `activeViewId === null` means the default (unfiltered) view is active.
+  // `viewLines` is the resolved member set for the active view: line numbers
+  // (1-based) that belong to it, plus a parallel hash map for "add/remove
+  // selected lines" actions.
+  const [views, setViews] = useState<api.NoteView[]>([]);
+  // activeKey encodes both kinds of views so one state covers both tabs:
+  //   null         → Default (unfiltered source)
+  //   "user:<id>"  → user-created view (CRUD-able)
+  //   "tag:<name>" → AI-derived auto-view (from tag_segments, read-only)
+  const [activeKey, setActiveKey] = useState<string | null>(null);
+  const [viewLines, setViewLines] = useState<api.ViewResolvedLine[]>([]);
+  const [viewDialogOpen, setViewDialogOpen] = useState(false);
+  const [viewDialogInitial, setViewDialogInitial] = useState<api.NoteView | null>(null);
+  const [editorSelection, setEditorSelection] = useState<{ lines: number[]; texts: string[] }>({ lines: [], texts: [] });
+  // All AI-classified segments (flat list); used to derive auto-views and
+  // their member line numbers. Loaded once and refreshed when ingestResult
+  // changes (same cadence as the old tag strip).
+  const [tagSegments, setTagSegments] = useState<api.NoteSegment[]>([]);
   const [activeBuild, setActiveBuild] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [scrollTarget, setScrollTarget] = useState<{ start: number; end: number } | null>(null);
-  const [showTags, setShowTags] = useState(() => localStorage.getItem("smartnote-show-tags") !== "false");
   const [recentDone, setRecentDone] = useState(false);
   const [lineMetaRows, setLineMetaRows] = useState<api.NoteLineMeta[]>([]);
   const [pendingPacks, setPendingPacks] = useState<number>(0);
@@ -111,6 +147,250 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
   }, [rawPath, refreshNoteState]);
 
   useEffect(() => { refreshNoteState(); }, [refreshNoteState, packsRefreshKey]);
+
+  // ── Views: load list whenever the file changes ──
+  const refreshViews = useCallback(async () => {
+    if (!rawPath) { setViews([]); return; }
+    try {
+      const { views } = await api.fetchViews(rawPath);
+      setViews(views);
+    } catch {
+      setViews([]);
+    }
+  }, [rawPath]);
+
+  // Load AI-classified segments — powers the auto-views in the sidebar
+  // (formerly the tag strip). Refreshes on the same cadence as tags/builds.
+  useEffect(() => {
+    api.fetchAllTagSegments()
+      .then((d) => setTagSegments(d.segments))
+      .catch(() => setTagSegments([]));
+  }, [ingestResult, buildVersion]);
+
+  useEffect(() => {
+    setActiveKey(null);
+    setViewLines([]);
+    refreshViews();
+  }, [rawPath, refreshViews]);
+
+  // Decode the active key into its kind + identifier once, so downstream
+  // memos don't each re-parse the string.
+  const activeKind: "default" | "user" | "auto" =
+    activeKey === null ? "default"
+      : activeKey.startsWith("user:") ? "user"
+      : "auto";
+  const activeUserId = activeKind === "user" ? Number(activeKey!.slice(5)) : null;
+  const activeTagName = activeKind === "auto" ? activeKey!.slice(4) : null;
+
+  const activeView = useMemo(
+    () => (activeUserId != null ? views.find((v) => v.id === activeUserId) || null : null),
+    [views, activeUserId],
+  );
+
+  // Resolve user-view members on the backend; auto-views derive members
+  // directly from tag_segments (no hashing needed — AI already gave line
+  // ranges for the active build).
+  useEffect(() => {
+    if (!rawPath) { setViewLines([]); return; }
+    if (activeKind === "default") { setViewLines([]); return; }
+    if (activeKind === "user" && activeUserId != null) {
+      let cancelled = false;
+      api.resolveView(activeUserId, rawPath).then((r) => {
+        if (!cancelled) setViewLines(r.lines);
+      }).catch(() => { if (!cancelled) setViewLines([]); });
+      return () => { cancelled = true; };
+    }
+    if (activeKind === "auto" && activeTagName) {
+      // Sidebar member list: one entry per segment (not per line) so the
+      // user sees the distinct topic_name / summary the AI attached to each
+      // range. Clicking jumps to the segment's first line. The editor's
+      // dim set is expanded to every line separately below.
+      const segs = tagSegments.filter(
+        (s) => s.tag === activeTagName && s.source_file === rawPath
+      );
+      const rows: api.ViewResolvedLine[] = segs
+        .slice()
+        .sort((a, b) => a.line_start - b.line_start)
+        .map((seg) => ({
+          line_no: seg.line_start,
+          line_hash: `tag:${activeTagName}:${seg.id}`,
+          text: buildAutoViewLabel(seg),
+          source: "ai" as const,
+        }));
+      setViewLines(rows);
+    }
+  }, [activeKind, activeUserId, activeTagName, rawPath, lineMetaRows, tagSegments]);
+
+  // Lines that should NOT be dimmed. For user views this is just the
+  // resolved member lines. For auto views we expand each segment's
+  // [line_start, line_end] so the whole range stays bright, even though
+  // the sidebar only shows one entry per segment.
+  const memberLineSet = useMemo<Set<number> | null>(() => {
+    if (activeKind === "default") return null;
+    if (activeKind === "auto" && activeTagName) {
+      const set = new Set<number>();
+      for (const seg of tagSegments) {
+        if (seg.tag !== activeTagName || seg.source_file !== rawPath) continue;
+        for (let n = seg.line_start; n <= seg.line_end; n++) set.add(n);
+      }
+      return set;
+    }
+    return new Set(viewLines.map((l) => l.line_no));
+  }, [activeKind, activeTagName, viewLines, tagSegments, rawPath]);
+
+  const memberHashSet = useMemo<Set<string>>(
+    () => new Set(viewLines.map((l) => l.line_hash)),
+    [viewLines],
+  );
+
+  // Build the sidebar's unified item list: AI auto-views (one per tag that
+  // has ≥1 segment in the current file) + user views. Auto-views appear
+  // only when they have members in this file — empty tags are hidden.
+  const sidebarItems = useMemo<SidebarViewItem[]>(() => {
+    const items: SidebarViewItem[] = [];
+    // Count segment lines per tag for the current file — drives the count
+    // badge. Tags without any current segments still show (they're taxonomy
+    // buckets waiting for the next enrich pass), just with a 0.
+    const tagCounts = new Map<string, { lines: number; summary?: string }>();
+    for (const seg of tagSegments) {
+      if (seg.source_file !== rawPath) continue;
+      const cur = tagCounts.get(seg.tag) || { lines: 0, summary: undefined };
+      cur.lines += Math.max(0, seg.line_end - seg.line_start + 1);
+      if (!cur.summary && seg.summary) cur.summary = seg.summary;
+      tagCounts.set(seg.tag, cur);
+    }
+    // Use the tag-table ordering as canonical, then append any tags that
+    // only exist as segments (shouldn't happen normally but defensive).
+    const orderedNames = [
+      ...tags.map((t) => t.name),
+      ...Array.from(tagCounts.keys()).filter((n) => !tags.some((t) => t.name === n)),
+    ];
+    for (const name of orderedNames) {
+      const meta = tagCounts.get(name);
+      const tagInfo = tags.find((t) => t.name === name);
+      items.push({
+        kind: "tag",
+        key: `tag:${name}`,
+        tag: name,
+        color: tagInfo?.color,
+        summary: meta?.summary,
+        memberCount: meta?.lines ?? 0,
+      });
+    }
+    for (const v of views) {
+      items.push({ kind: "user", key: `user:${v.id}`, view: v });
+    }
+    return items;
+  }, [views, tags, tagSegments, rawPath]);
+
+  // Enrich-tag CRUD — routes to the existing /tags API. onTagsChanged is
+  // how the parent (App) refreshes the tags list prop we receive.
+  const handleAddTag = useCallback(async (name: string, desc: string) => {
+    try { await api.addTag(name, desc); onTagsChanged?.(); }
+    catch (e) { console.warn("add tag failed:", e); }
+  }, [onTagsChanged]);
+
+  const handleDeleteTag = useCallback(async (name: string) => {
+    try {
+      await api.deleteTag(name);
+      if (activeKey === `tag:${name}`) setActiveKey(null);
+      onTagsChanged?.();
+    } catch (e) { console.warn("delete tag failed:", e); }
+  }, [activeKey, onTagsChanged]);
+
+  // Create or update a view. `runPopulate` kicks off a backend populate
+  // pass right after the CRUD call so the user sees results immediately.
+  const handleViewSubmit = useCallback(async (data: {
+    name: string;
+    rule: api.ViewRule;
+    display: api.ViewDisplay;
+    runPopulate: boolean;
+  }) => {
+    if (!rawPath) return;
+    try {
+      let view: api.NoteView;
+      if (viewDialogInitial) {
+        const { view: v } = await api.updateView(viewDialogInitial.id, {
+          name: data.name, rule: data.rule, display: data.display,
+        });
+        view = v;
+      } else {
+        const { view: v } = await api.createView(rawPath, data.name, data.rule, data.display);
+        view = v;
+      }
+      if (data.runPopulate) {
+        await api.populateView(view.id, { rule: data.rule, replace: true });
+      }
+      setViewDialogOpen(false);
+      setViewDialogInitial(null);
+      setActiveKey(`user:${view.id}`);
+      await refreshViews();
+    } catch (e) {
+      console.warn("view submit failed:", e);
+    }
+  }, [rawPath, viewDialogInitial, refreshViews]);
+
+  const handleDeleteView = useCallback(async (v: api.NoteView) => {
+    try {
+      await api.deleteView(v.id);
+      if (activeKey === `user:${v.id}`) setActiveKey(null);
+      await refreshViews();
+    } catch (e) { console.warn("delete view failed:", e); }
+  }, [activeKey, refreshViews]);
+
+  const handleRepopulate = useCallback(async (v: api.NoteView) => {
+    try {
+      await api.populateView(v.id, { replace: true });
+      await refreshViews();
+      if (activeKey === `user:${v.id}`) {
+        const r = await api.resolveView(v.id, rawPath);
+        setViewLines(r.lines);
+      }
+    } catch (e) { console.warn("repopulate failed:", e); }
+  }, [activeKey, rawPath, refreshViews]);
+
+  // Add / remove the editor's currently-selected lines to/from the active
+  // view. Uses the same line_hash convention as bookmarks so edits that
+  // move lines around still keep membership intact.
+  const handleAddSelectionToView = useCallback(async () => {
+    if (!activeView || editorSelection.lines.length === 0) return;
+    const add = await Promise.all(
+      editorSelection.texts.map(async (t, i) => ({
+        line_hash: await api.lineHash(t),
+        line_preview: t.trim().slice(0, 200),
+        line_no: editorSelection.lines[i],
+      }))
+    );
+    try {
+      await api.setViewMembers(activeView.id, { add });
+      if (rawPath) {
+        const r = await api.resolveView(activeView.id, rawPath);
+        setViewLines(r.lines);
+      }
+      refreshViews();
+    } catch (e) { console.warn("add selection failed:", e); }
+  }, [activeView, editorSelection, rawPath, refreshViews]);
+
+  const handleRemoveSelectionFromView = useCallback(async () => {
+    if (!activeView || editorSelection.lines.length === 0) return;
+    const ops = await Promise.all(
+      editorSelection.texts.map(async (t) => ({
+        line_hash: await api.lineHash(t),
+        line_preview: t.trim().slice(0, 200),
+      }))
+    );
+    try {
+      // Use `exclude` (not `remove`): this marks the rows as user-excluded
+      // so a future populate pass doesn't re-add them. Pure delete would let
+      // rule/ai hits resurrect them on the next re-populate.
+      await api.setViewMembers(activeView.id, { exclude: ops });
+      if (rawPath) {
+        const r = await api.resolveView(activeView.id, rawPath);
+        setViewLines(r.lines);
+      }
+      refreshViews();
+    } catch (e) { console.warn("remove selection failed:", e); }
+  }, [activeView, editorSelection, rawPath, refreshViews]);
 
   // External-edit detection: poll /note/load every 20s. If the file was
   // changed outside SmartNote, the backend creates an 'external' pack which
@@ -263,14 +543,6 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
           </AnimatePresence>
           <button
             type="button"
-            onClick={() => { const next = !showTags; setShowTags(next); localStorage.setItem("smartnote-show-tags", String(next)); }}
-            className={cn("proto-note-header-icon-btn", showTags && "proto-note-header-icon-btn-active")}
-            title={showTags ? "Hide tags" : "Show tags"}
-          >
-            <Tag size={14} strokeWidth={2} />
-          </button>
-          <button
-            type="button"
             onClick={() => setShowReorganize(true)}
             className="proto-note-header-icon-btn"
             title="Reorganize note by tag — destructive rewrite with snapshot"
@@ -296,33 +568,76 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
         </div>
       </div>
 
-      {/* Tags strip + Editor */}
+      {/* Editor body — sidebar (views) + editor area. The old tag strip
+          has been folded into the sidebar as "AI" auto-views. */}
       <div className="proto-note-body">
-        <AnimatePresence initial={false}>
-          {showTags && (
-            <motion.div
-              className="proto-note-tags-strip"
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: "auto", opacity: 1, overflow: "visible" }}
-              exit={{ height: 0, opacity: 0, overflow: "hidden" }}
-              transition={{ duration: 0.15, ease: [0.25, 1, 0.5, 1] }}
-              style={{ overflow: "hidden" }}
-            >
-              <NoteSegments refreshKey={`${ingestResult?.message ?? ""}|${buildVersion ?? 0}`} tags={tags} onScrollToLine={(start, end) => setScrollTarget({ start, end })} onTagsChanged={onTagsChanged} />
-            </motion.div>
-          )}
-        </AnimatePresence>
+        <div className="proto-note-body-main">
+          <NoteViewSidebar
+            items={sidebarItems}
+            activeKey={activeKey}
+            onChange={(k) => setActiveKey(k)}
+            activeMembers={viewLines}
+            onJumpToLine={(line) => setScrollTarget({ start: line, end: line })}
+            onNewView={() => { setViewDialogInitial(null); setViewDialogOpen(true); }}
+            onEditView={(v) => { setViewDialogInitial(v); setViewDialogOpen(true); }}
+            onRepopulateView={handleRepopulate}
+            onDeleteView={handleDeleteView}
+            onAddTag={handleAddTag}
+            onDeleteTag={handleDeleteTag}
+          />
         <div className="proto-note-editor-area">
           <NoteEditor
             filePath={rawPath}
             onSave={handleSave}
             onDirty={setDirty}
             scrollToRange={scrollTarget}
-            lineMeta={lineMeta}
+            lineMeta={activeView && activeView.display.show_ts === false ? undefined : lineMeta}
             onToggleBookmark={handleToggleBookmark}
+            memberLines={memberLineSet}
+            dimMode={activeView?.display.dim_mode || "opacity"}
+            dimLevel={activeView?.display.dim_level || "medium"}
+            onSelectionChange={setEditorSelection}
           />
           {rawPath && (
             <div className="proto-note-floating-stack">
+              {/* Add/remove selection → only meaningful for user views.
+                  Auto-views are read-only (AI classification owns them). */}
+              {activeView && activeKind === "user" && editorSelection.lines.length > 0 && (
+                <div className="proto-view-selection-actions">
+                  {(() => {
+                    const selHashes = editorSelection.lines; // proxy — we don't have hashes here
+                    const anyNotMember = editorSelection.lines.some((n) => !memberLineSet?.has(n));
+                    const anyMember = editorSelection.lines.some((n) => memberLineSet?.has(n));
+                    void selHashes; void memberHashSet;
+                    return (
+                      <>
+                        {anyNotMember && (
+                          <button
+                            type="button"
+                            className="proto-bookmarks-badge"
+                            onClick={handleAddSelectionToView}
+                            title={`Add ${editorSelection.lines.length} line(s) to "${activeView.name}"`}
+                            aria-label="Add to view"
+                          >
+                            <Plus size={14} strokeWidth={2} />
+                          </button>
+                        )}
+                        {anyMember && (
+                          <button
+                            type="button"
+                            className="proto-bookmarks-badge"
+                            onClick={handleRemoveSelectionFromView}
+                            title={`Remove ${editorSelection.lines.length} line(s) from "${activeView.name}"`}
+                            aria-label="Remove from view"
+                          >
+                            <Minus size={14} strokeWidth={2} />
+                          </button>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
               <button
                 type="button"
                 className="proto-bookmarks-badge"
@@ -346,6 +661,7 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
             </div>
           )}
         </div>
+        </div>
       </div>
 
       {showIngest && (
@@ -365,6 +681,13 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
         open={showQuickSearch}
         onClose={() => setShowQuickSearch(false)}
         onJumpToLine={(line) => setScrollTarget({ start: line, end: line })}
+      />
+
+      <NoteViewDialog
+        open={viewDialogOpen}
+        initial={viewDialogInitial}
+        onClose={() => { setViewDialogOpen(false); setViewDialogInitial(null); }}
+        onSubmit={handleViewSubmit}
       />
 
       <ReorganizeDialog

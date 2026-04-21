@@ -6945,6 +6945,494 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   .proto-skills-skeleton-row { animation: none; opacity: 0.4; }
 }
 
+/* View create/edit dialog */
+.proto-view-dialog { width: min(560px, calc(100vw - 48px)); }
+.proto-view-dialog-body {
+  padding: 16px 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.proto-view-field { display: flex; flex-direction: column; gap: 5px; }
+.proto-view-field-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+.proto-view-field-sublabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+.proto-view-input, .proto-view-textarea {
+  width: 100%;
+  background: var(--color-bg-secondary, transparent);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--color-text-primary);
+  outline: none;
+  transition: border-color 0.1s;
+}
+.proto-view-input:focus, .proto-view-textarea:focus {
+  border-color: var(--color-accent);
+}
+.proto-view-input-mono { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; }
+.proto-view-textarea { resize: vertical; min-height: 42px; }
+.proto-view-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--color-accent) 2%, transparent);
+}
+.proto-view-section-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.proto-view-section-hint {
+  font-weight: 400;
+  color: var(--color-text-muted);
+  text-transform: none;
+  letter-spacing: 0;
+  margin-left: auto;
+  font-size: 11px;
+}
+.proto-view-knobs { display: flex; gap: 12px; flex-wrap: wrap; }
+.proto-view-knob {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  flex: 1;
+  min-width: 120px;
+}
+.proto-view-knob select {
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  padding: 5px 8px;
+  font-size: 12px;
+  color: var(--color-text-primary);
+  font-family: inherit;
+}
+.proto-view-toggles {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding-top: 2px;
+}
+.proto-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+.proto-view-toggle input[type="checkbox"] {
+  accent-color: var(--color-accent);
+  width: 14px;
+  height: 14px;
+}
+.proto-view-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--color-border);
+}
+
+/* Views sidebar — left rail in the note body. Two modes: expanded
+   (~220px list with view list + member jump-nav) and collapsed (32px mini
+   rail with letter avatars). Collapsed state is persisted in localStorage
+   so the user's space preference survives reloads. */
+.proto-note-body-main {
+  display: flex;
+  flex: 1;
+  min-height: 0;          /* let children own vertical scroll */
+  overflow: hidden;
+}
+.proto-view-sidebar {
+  width: 220px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-primary);
+  border-right: 1px solid var(--color-border);
+  min-height: 0;
+}
+.proto-view-sidebar-collapsed {
+  width: 36px;
+  align-items: center;
+  padding-top: 6px;
+  gap: 6px;
+}
+.proto-view-sidebar-toggle {
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  margin-top: 2px;
+}
+.proto-view-sidebar-toggle:hover {
+  color: var(--color-text-primary);
+  background: color-mix(in oklab, var(--color-accent) 10%, transparent);
+}
+.proto-view-sidebar-mini {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 0;
+}
+.proto-view-sidebar-mini-btn {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: color 0.1s, background 0.1s, border-color 0.1s;
+}
+.proto-view-sidebar-mini-btn:hover {
+  color: var(--color-text-primary);
+  background: color-mix(in oklab, var(--color-accent) 10%, transparent);
+}
+.proto-view-sidebar-mini-btn-active {
+  color: var(--color-accent);
+  border-color: color-mix(in oklab, var(--color-accent) 40%, transparent);
+  background: color-mix(in oklab, var(--color-accent) 12%, transparent);
+}
+.proto-view-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--color-border);
+}
+.proto-view-sidebar-title { flex: 1; }
+.proto-view-sidebar-header-actions { display: flex; gap: 2px; }
+.proto-view-sidebar-icon-btn {
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 3px;
+  border-radius: 3px;
+  transition: color 0.1s, background 0.1s;
+}
+.proto-view-sidebar-icon-btn:hover {
+  color: var(--color-text-primary);
+  background: color-mix(in oklab, var(--color-text-primary) 8%, transparent);
+}
+.proto-view-sidebar-list {
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  gap: 1px;
+  flex: none;
+}
+.proto-view-sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: color 0.1s, background 0.1s;
+}
+.proto-view-sidebar-item:hover {
+  color: var(--color-text-primary);
+  background: color-mix(in oklab, var(--color-accent) 8%, transparent);
+}
+.proto-view-sidebar-item-active {
+  color: var(--color-text-primary);
+  background: color-mix(in oklab, var(--color-accent) 14%, transparent);
+}
+.proto-view-sidebar-item-icon { color: var(--color-text-muted); flex: none; }
+.proto-view-sidebar-subheader {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 10px 8px 4px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.proto-view-sidebar-subheader > span { flex: 1; }
+.proto-view-sidebar-subheader-btn {
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.1s, background 0.1s;
+}
+.proto-view-sidebar-subheader-btn:hover {
+  color: var(--color-text-primary);
+  background: color-mix(in oklab, var(--color-accent) 14%, transparent);
+}
+.proto-view-sidebar-inline-add {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 8px 6px;
+}
+.proto-view-sidebar-inline-add input {
+  flex: 1;
+  min-width: 0;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 12px;
+  color: var(--color-text-primary);
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.1s;
+}
+.proto-view-sidebar-inline-add input:focus { border-color: var(--color-accent); }
+.proto-view-sidebar-inline-add button {
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 3px;
+  border-radius: 3px;
+  flex: none;
+  transition: color 0.1s, background 0.1s;
+}
+.proto-view-sidebar-inline-add button:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  background: color-mix(in oklab, var(--color-accent) 12%, transparent);
+}
+.proto-view-sidebar-inline-add button:disabled { opacity: 0.35; cursor: default; }
+.proto-view-sidebar-sub-empty {
+  padding: 4px 12px 6px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+.proto-view-sidebar-item-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: none;
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-border) 60%, transparent);
+}
+.proto-view-sidebar-mini-btn-auto {
+  border-color: color-mix(in oklab, var(--color-accent) 25%, transparent);
+}
+.proto-view-sidebar-item-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.proto-view-sidebar-item-count {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--color-accent) 10%, transparent);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+.proto-view-sidebar-item-active .proto-view-sidebar-item-count {
+  color: var(--color-accent);
+  background: color-mix(in oklab, var(--color-accent) 20%, transparent);
+}
+.proto-view-sidebar-item-wrap { position: relative; display: flex; }
+.proto-view-sidebar-item-wrap .proto-view-sidebar-item { flex: 1; }
+.proto-view-sidebar-item-menu-btn {
+  opacity: 0;
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted);
+  padding: 4px;
+  cursor: pointer;
+  border-radius: 3px;
+  align-self: center;
+  margin-right: 4px;
+  transition: opacity 0.1s, background 0.1s, color 0.1s;
+}
+.proto-view-sidebar-item-wrap:hover .proto-view-sidebar-item-menu-btn,
+.proto-view-sidebar-item-menu-btn-open { opacity: 1; }
+.proto-view-sidebar-item-menu-btn:hover {
+  color: var(--color-text-primary);
+  background: color-mix(in oklab, var(--color-text-primary) 8%, transparent);
+}
+.proto-view-sidebar-item-menu {
+  position: absolute;
+  top: 100%;
+  right: 4px;
+  margin-top: 2px;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  z-index: 20;
+  min-width: 140px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+}
+.proto-view-sidebar-item-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--color-text-primary);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: left;
+}
+.proto-view-sidebar-item-menu button:hover {
+  background: color-mix(in oklab, var(--color-accent) 12%, transparent);
+}
+.proto-view-sidebar-item-menu-danger { color: var(--color-error, #e5484d) !important; }
+.proto-view-sidebar-section {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  border-top: 1px solid var(--color-border);
+  margin-top: 4px;
+}
+.proto-view-sidebar-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.proto-view-sidebar-members {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 6px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.proto-view-sidebar-member {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  min-width: 0;
+}
+.proto-view-sidebar-member:hover {
+  background: color-mix(in oklab, var(--color-accent) 10%, transparent);
+}
+.proto-view-sidebar-member-line {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10px;
+  color: var(--color-text-muted);
+  flex: none;
+  min-width: 24px;
+  text-align: right;
+}
+.proto-view-sidebar-member-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+}
+.proto-view-sidebar-src { flex: none; }
+.proto-view-sidebar-src-ai     { color: var(--color-accent); }
+.proto-view-sidebar-src-rule   { color: var(--color-text-muted); }
+.proto-view-sidebar-src-manual { color: var(--color-warning, #d48b00); }
+.proto-view-sidebar-empty {
+  padding: 16px 12px;
+  color: var(--color-text-muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+/* Selection actions that float in the same stack as bookmarks/pack badge,
+   shown only when a view is active and the user has lines selected. */
+.proto-view-selection-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* View-mode dimming — non-member lines fade (and optionally frost) so the
+   user sees the full document but the view's subset visually dominates.
+   Member lines are just plain cm-line; we only style the NON-members. */
+.proto-editor-container[data-dim-mode] .cm-view-dim {
+  transition: opacity 0.15s ease, filter 0.15s ease;
+}
+.proto-editor-container[data-dim-level="light"] .cm-view-dim { opacity: 0.55; }
+.proto-editor-container[data-dim-level="medium"] .cm-view-dim { opacity: 0.28; }
+.proto-editor-container[data-dim-level="heavy"] .cm-view-dim  { opacity: 0.14; }
+.proto-editor-container[data-dim-mode="frost"] .cm-view-dim {
+  filter: blur(1.4px) saturate(0.6);
+}
+/* Hover briefly restores a dimmed line so the user can read non-member
+   context without leaving the view. */
+.proto-editor-container[data-dim-mode] .cm-view-dim:hover {
+  opacity: 1;
+  filter: none;
+}
+
 /* Quick Search palette — Shift+Shift */
 .proto-quicksearch-overlay {
   position: fixed;

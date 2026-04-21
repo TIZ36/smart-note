@@ -19,6 +19,21 @@ type Props = {
   lineMeta?: LineMeta;
   /** Cmd+B toggles a bookmark on the active line. Parent handles storage. */
   onToggleBookmark?: (lineNo: number, lineText: string) => void;
+  /**
+   * When provided, the editor is in "view mode": lines whose 1-based line
+   * number is NOT in this set are dimmed (and optionally frosted). Edits
+   * remain native — CM writes to the real document positions. `null`/
+   * undefined disables dimming (default-view rendering).
+   */
+  memberLines?: Set<number> | null;
+  /** "opacity" = simple fade, "frost" = blur + fade. Default: "opacity". */
+  dimMode?: "opacity" | "frost";
+  /** How hard to dim non-members. Default: "medium". */
+  dimLevel?: "light" | "medium" | "heavy";
+  /** Fires when the line-spanning selection changes. Reports the lines the
+   *  selection touches (1-based) and their current text, so callers can
+   *  hash them for membership actions. */
+  onSelectionChange?: (info: { lines: number[]; texts: string[] }) => void;
 };
 
 /* Right-aligned inline widget that surfaces per-line metadata — ts label
@@ -179,6 +194,34 @@ function formatLineTs(ts?: string | null): string {
   }
 }
 
+/* View-mode dimming — dims lines whose 1-based number is NOT in the set.
+   When the set is null, dimming is disabled entirely. Classes live on the
+   line so CSS can do opacity + optional blur via a modifier class set on
+   the editor root. */
+const setDimLines = StateEffect.define<Set<number> | null>();
+const dimLinesField = StateField.define<DecorationSet>({
+  create() { return Decoration.none; },
+  update(deco, tr) {
+    let next: Set<number> | null | undefined;
+    for (const e of tr.effects) {
+      if (e.is(setDimLines)) next = e.value;
+    }
+    if (next === undefined) {
+      return tr.docChanged ? deco.map(tr.changes) : deco;
+    }
+    if (!next) return Decoration.none;
+    const decos = [];
+    const total = tr.state.doc.lines;
+    for (let i = 1; i <= total; i++) {
+      if (next.has(i)) continue;
+      const line = tr.state.doc.line(i);
+      decos.push(Decoration.line({ class: "cm-view-dim" }).range(line.from));
+    }
+    return Decoration.set(decos);
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
 /* Highlight effect for scroll-to-range (multiple lines) */
 const setHighlightRange = StateEffect.define<LineRange | null>();
 const highlightRangeField = StateField.define<DecorationSet>({
@@ -273,9 +316,15 @@ const editorTheme = EditorView.theme({
   },
 });
 
-export function NoteEditor({ filePath, onSave, onDirty, scrollToRange, lineMeta, onToggleBookmark }: Props) {
+export function NoteEditor({
+  filePath, onSave, onDirty, scrollToRange, lineMeta, onToggleBookmark,
+  memberLines, dimMode = "opacity", dimLevel = "medium",
+  onSelectionChange,
+}: Props) {
   const onToggleBookmarkRef = useRef(onToggleBookmark);
   onToggleBookmarkRef.current = onToggleBookmark;
+  const onSelectionChangeRef = useRef(onSelectionChange);
+  onSelectionChangeRef.current = onSelectionChange;
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [loading, setLoading] = useState(true);
@@ -363,6 +412,28 @@ export function NoteEditor({ filePath, onSave, onDirty, scrollToRange, lineMeta,
           onDirty?.(isDirty);
           if (isDirty) scheduleAutoSave();
         }
+        // Report the set of lines touched by the primary selection.
+        // For a collapsed caret, that's just the current line (so "add
+        // current line to view" works without forcing the user to select
+        // the whole line).
+        if (update.selectionSet || update.docChanged) {
+          const cb = onSelectionChangeRef.current;
+          if (cb) {
+            const sel = update.state.selection.main;
+            const doc = update.state.doc;
+            const fromLine = doc.lineAt(sel.from).number;
+            const toLine = doc.lineAt(sel.to).number;
+            const lines: number[] = [];
+            const texts: string[] = [];
+            for (let n = fromLine; n <= toLine; n++) {
+              const l = doc.line(n);
+              if (!l.text.trim()) continue;  // skip blanks — no identity
+              lines.push(n);
+              texts.push(l.text);
+            }
+            cb({ lines, texts });
+          }
+        }
       });
 
       const state = EditorState.create({
@@ -384,6 +455,7 @@ export function NoteEditor({ filePath, onSave, onDirty, scrollToRange, lineMeta,
           editorTheme,
           highlightRangeField,
           lineMetaField,
+          dimLinesField,
           EditorView.lineWrapping,
         ],
       });
@@ -456,6 +528,13 @@ export function NoteEditor({ filePath, onSave, onDirty, scrollToRange, lineMeta,
     view.dispatch({ effects: setLineMetaEffect.of(lineMeta ?? null) });
   }, [lineMeta]);
 
+  // Push view membership into the editor whenever it changes.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({ effects: setDimLines.of(memberLines ?? null) });
+  }, [memberLines]);
+
   // Scroll to a line range when requested
   useEffect(() => {
     if (!scrollToRange || !viewRef.current) return;
@@ -477,8 +556,13 @@ export function NoteEditor({ filePath, onSave, onDirty, scrollToRange, lineMeta,
     return () => clearTimeout(timer);
   }, [scrollToRange]);
 
+  const dimModeActive = Boolean(memberLines);
   return (
-    <div className="proto-editor-container">
+    <div
+      className="proto-editor-container"
+      data-dim-mode={dimModeActive ? dimMode : undefined}
+      data-dim-level={dimModeActive ? dimLevel : undefined}
+    >
       <div className="proto-editor-pane">
         {loading && (
           <div className="proto-editor-loading">

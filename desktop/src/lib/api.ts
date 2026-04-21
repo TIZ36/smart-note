@@ -940,6 +940,124 @@ export async function setLineMark(
   return res.json();
 }
 
+// ── Note views (topical lenses over a single raw file) ──────────
+
+export type ViewRule = {
+  keywords?: string[];
+  regex?: string;
+  ai_query?: string;
+};
+
+export type ViewDisplay = {
+  // Per-view display knobs; everything is optional and falls back to the
+  // app-wide defaults when absent. Colors still come from the app theme.
+  dim_level?: "light" | "medium" | "heavy";    // how hard to dim non-members
+  dim_mode?: "opacity" | "frost";              // blur vs. just fade
+  show_tags?: boolean;
+  show_ts?: boolean;
+  show_bookmarks?: boolean;
+  density?: "comfortable" | "compact";
+};
+
+export type NoteView = {
+  id: number;
+  raw_path: string;
+  name: string;
+  rule: ViewRule;
+  display: ViewDisplay;
+  sort_order: number;
+  member_count?: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ViewResolvedLine = {
+  line_no: number;
+  line_hash: string;
+  text: string;
+  source: "rule" | "ai" | "manual";
+};
+
+export async function fetchViews(rawPath: string): Promise<{ views: NoteView[] }> {
+  const res = await fetch(`${BASE}/note/views?raw_path=${encodeURIComponent(rawPath)}`);
+  if (!res.ok) throw new Error(`views: ${res.status}`);
+  return res.json();
+}
+
+export async function createView(
+  rawPath: string,
+  name: string,
+  rule?: ViewRule,
+  display?: ViewDisplay,
+): Promise<{ view: NoteView }> {
+  const res = await fetch(`${BASE}/note/views`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ raw_path: rawPath, name, rule, display }),
+  });
+  if (!res.ok) throw new Error(`create view: ${res.status}`);
+  return res.json();
+}
+
+export async function updateView(
+  viewId: number,
+  patch: { name?: string; rule?: ViewRule; display?: ViewDisplay; sort_order?: number },
+): Promise<{ view: NoteView }> {
+  const res = await fetch(`${BASE}/note/views/${viewId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) throw new Error(`update view: ${res.status}`);
+  return res.json();
+}
+
+export async function deleteView(viewId: number): Promise<{ ok: boolean }> {
+  const res = await fetch(`${BASE}/note/views/${viewId}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`delete view: ${res.status}`);
+  return res.json();
+}
+
+export async function populateView(
+  viewId: number,
+  opts: { rule?: ViewRule; replace?: boolean } = {},
+): Promise<{ ok: boolean; rule_hits?: number; ai_hits?: number; total_hits?: number }> {
+  const res = await fetch(`${BASE}/note/views/${viewId}/populate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(opts),
+  });
+  if (!res.ok) throw new Error(`populate: ${res.status}`);
+  return res.json();
+}
+
+export async function setViewMembers(
+  viewId: number,
+  ops: {
+    add?: { line_hash: string; line_preview?: string }[];
+    remove?: string[];
+    exclude?: { line_hash: string; line_preview?: string }[];
+  },
+): Promise<{ count: number }> {
+  const res = await fetch(`${BASE}/note/views/${viewId}/members`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(ops),
+  });
+  if (!res.ok) throw new Error(`view members: ${res.status}`);
+  return res.json();
+}
+
+export async function resolveView(
+  viewId: number,
+  rawPath?: string,
+): Promise<{ lines: ViewResolvedLine[]; missing: string[] }> {
+  const q = rawPath ? `?raw_path=${encodeURIComponent(rawPath)}` : "";
+  const res = await fetch(`${BASE}/note/views/${viewId}/resolve${q}`);
+  if (!res.ok) throw new Error(`resolve view: ${res.status}`);
+  return res.json();
+}
+
 export async function fetchPacks(rawPath?: string, status: "pending" | "applied" | "discarded" | "all" = "pending"): Promise<{ packs: IngestPack[]; pending_count: number }> {
   const q = new URLSearchParams({ status, ...(rawPath ? { raw_path: rawPath } : {}) });
   const res = await fetch(`${BASE}/packs?${q.toString()}`);
