@@ -1,17 +1,27 @@
-# SmartNote Cloud — MCP bridge
+# SmartNote Cloud — MCP
 
-An MCP server that lets **Claude Code / Cursor / OpenCode / any other
-MCP-compatible agent** read and write your SmartNote Cloud memory,
-preferences, and documents.
+The cloud API exposes MCP natively over HTTP at `/mcp`. Any MCP client
+with streamable-HTTP support (Claude Code, Cursor, OpenCode recent
+versions) can connect with just a URL + an `Authorization: Bearer` API
+key. **No local install, no absolute paths, no spawned processes.**
 
-This is the fastest way to dogfood the cloud service — point your agent
-at this server, it speaks MCP natively, no custom integration needed.
+This folder also ships a stdio-transport server for advanced users who
+want to run SmartNote MCP offline or pre-load it into environments
+without remote-MCP support. See the "stdio fallback" section at the
+bottom.
+
+## Get an API key
+
+```bash
+./cloud/scripts/issue_key.sh [workspace-name]
+# → prints an sn_live_... secret exactly once; save it.
+```
 
 ## What's exposed
 
 | Tool | Purpose |
 |------|---------|
-| `search_memory(query, kinds?, topk?)` | Hybrid vector + lexical search over memories (pinned items always first) |
+| `search_memory(query, kinds?, topk?)` | Hybrid vector + lexical search over memories (pinned first) |
 | `add_memory(content, kind, tags?, structured?, pinned?)` | Record a new memory |
 | `list_memories(kind?, scope?, limit?)` | Browse memories, newest first |
 | `get_memory(id)` | Full details of a single memory |
@@ -19,101 +29,58 @@ at this server, it speaks MCP natively, no custom integration needed.
 | `delete_memory(id)` | Delete permanently |
 | `set_preference(key, value, description?)` | Durable user preference (supersedes prior value) |
 | `get_preference(key)` / `list_preferences()` / `delete_preference(key)` | Preference CRUD |
-| `add_document(name, content, ingest=true)` | Upload + chunk-and-embed a document |
+| `add_document(name, content, ingest=true)` | Upload + chunk + embed |
 | `list_documents()` | Inventory |
 | `get_usage()` | Workspace usage counters |
 
-Every tool runs against the workspace the API key is scoped to.
+Every tool scopes to the workspace the API key is bound to.
 
-## Setup
-
-Prereqs:
-- Python 3.10+
-- The SmartNote Cloud API running — `./cloud/scripts/quickstart.sh` from
-  the repo root brings up the docker stack and proves it works.
-
-**Mint an API key** (takes 1s once the stack is up):
-
-```bash
-./cloud/scripts/issue_key.sh            # prints the sn_live_… secret ONCE
-# or with a custom workspace name:
-./cloud/scripts/issue_key.sh my-project
-```
-
-The secret is shown only once — save it immediately (put it in your
-MCP config, `.envrc`, or password manager). If you lose it, mint a
-fresh one; revocation and rotation come with the console (W7).
-
-Install:
-```bash
-cd cloud/mcp
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-Smoke-test:
-```bash
-SMARTNOTE_API_KEY=sn_live_... SMARTNOTE_BASE_URL=http://localhost:58000 \
-  python server.py
-# Should print "Running with transport 'stdio'" and wait.
-# Ctrl-C to exit; a real MCP client connects over stdio.
-```
-
-## Wiring it into your agents
+## Wiring it into agents (HTTP — recommended)
 
 ### Claude Code
 
-Project-scoped config at `.mcp.json` in your repo root:
+Project-scoped config at `.mcp.json`:
 
 ```json
 {
   "mcpServers": {
     "smartnote-cloud": {
-      "command": "/absolute/path/to/smartnote/cloud/mcp/.venv/bin/python",
-      "args": ["/absolute/path/to/smartnote/cloud/mcp/server.py"],
-      "env": {
-        "SMARTNOTE_API_KEY": "sn_live_...",
-        "SMARTNOTE_BASE_URL": "http://localhost:58000"
+      "url": "http://localhost:58000/mcp/",
+      "headers": {
+        "Authorization": "Bearer sn_live_..."
       }
     }
   }
 }
 ```
 
-Or user-scoped via CLI:
+When you deploy the cloud stack to a real host, change the URL; the
+shape is identical. For remote mounts over the CLI:
 
 ```bash
-claude mcp add --transport stdio --scope user smartnote-cloud \
-  --env SMARTNOTE_API_KEY=sn_live_... \
-  --env SMARTNOTE_BASE_URL=http://localhost:58000 \
-  -- /absolute/path/to/smartnote/cloud/mcp/.venv/bin/python \
-     /absolute/path/to/smartnote/cloud/mcp/server.py
+claude mcp add --transport http --scope user smartnote-cloud \
+  --header "Authorization: Bearer sn_live_..." \
+  http://your-host/mcp/
 ```
-
-Verify with `claude mcp list` and `/mcp` inside Claude Code.
 
 ### Cursor
 
-Add to `~/.cursor/mcp.json` (user-level) or `.cursor/mcp.json` in a
-workspace:
+Add to `~/.cursor/mcp.json`:
 
 ```json
 {
   "mcpServers": {
     "smartnote-cloud": {
-      "command": "/absolute/path/to/smartnote/cloud/mcp/.venv/bin/python",
-      "args": ["/absolute/path/to/smartnote/cloud/mcp/server.py"],
-      "env": {
-        "SMARTNOTE_API_KEY": "sn_live_...",
-        "SMARTNOTE_BASE_URL": "http://localhost:58000"
+      "url": "http://localhost:58000/mcp/",
+      "headers": {
+        "Authorization": "Bearer sn_live_..."
       }
     }
   }
 }
 ```
 
-Restart Cursor; confirm `smartnote-cloud` is healthy in the MCP tools panel.
+Restart Cursor; verify in the MCP tools panel.
 
 ### OpenCode
 
@@ -124,13 +91,44 @@ In `opencode.json`:
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
     "smartnote-cloud": {
-      "type": "local",
-      "command": [
-        "/absolute/path/to/smartnote/cloud/mcp/.venv/bin/python",
-        "/absolute/path/to/smartnote/cloud/mcp/server.py"
-      ],
-      "enabled": true,
-      "environment": {
+      "type": "remote",
+      "url": "http://localhost:58000/mcp/",
+      "headers": {
+        "Authorization": "Bearer sn_live_..."
+      },
+      "enabled": true
+    }
+  }
+}
+```
+
+## Trailing slash matters
+
+Mount path is `/mcp/` — include the trailing slash in your config URL.
+Starlette redirects `/mcp` → `/mcp/` (307), which some MCP clients
+don't follow cleanly.
+
+## Stdio fallback (`server.py` in this folder)
+
+If your client can't do remote MCP, the sibling `server.py` in this
+folder is a stdio bridge that talks to the same cloud API. Install:
+
+```bash
+cd cloud/mcp
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Config example (Claude Code):
+
+```json
+{
+  "mcpServers": {
+    "smartnote-cloud": {
+      "command": "/absolute/path/to/smartnote/cloud/mcp/.venv/bin/python",
+      "args": ["/absolute/path/to/smartnote/cloud/mcp/server.py"],
+      "env": {
         "SMARTNOTE_API_KEY": "sn_live_...",
         "SMARTNOTE_BASE_URL": "http://localhost:58000"
       }
@@ -139,38 +137,5 @@ In `opencode.json`:
 }
 ```
 
-Restart and verify with `opencode mcp list`.
-
-## Environment variables
-
-| Var | Default | Purpose |
-|-----|---------|---------|
-| `SMARTNOTE_API_KEY` | _(required)_ | Workspace-scoped API key from the console / dev-bootstrap |
-| `SMARTNOTE_BASE_URL` | `http://localhost:58000` | Cloud API base URL — switch to your prod URL when you deploy |
-| `SMARTNOTE_AGENT` | _(unset)_ | Optional label included in writes so you can tell which agent wrote which memory |
-
-## Scopes
-
-The minimum scopes this bridge needs on the API key:
-
-- `memories:read`, `memories:write`
-- `retrieve`
-- `documents:read`, `documents:write`, `documents:ingest`
-
-The `admin` scope covers all of these. For production, mint a scoped
-key per agent via the console.
-
-## Writing memories vs preferences
-
-- **`set_preference`** for durable settings the user states directly
-  ("reply in Chinese", "commit in English"). Supersedes keep the audit
-  trail clean.
-- **`add_memory(kind="fact")`** for stable truths about the user
-  ("runs on macOS", "Python is primary language").
-- **`add_memory(kind="episode")`** for "this happened" notes that might
-  decay — e.g. session summaries.
-- **`add_memory(kind="procedure")`** for multi-step workflows the user
-  wants the agent to reuse.
-
-When in doubt, add with `kind="fact"` and rely on `search_memory` to
-surface the right piece later.
+The HTTP path is preferred — same tools, zero install, works identically
+once you deploy the cloud API to a real host.

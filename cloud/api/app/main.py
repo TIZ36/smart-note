@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.db import close_pool, init_pool, run_migrations
+from app.mcp_http import build_mcp_asgi, mcp as mcp_server
 from app.routers import (
     auth, dev, documents, health, memories, preferences, retrieve,
     usage_route, workspaces,
@@ -29,12 +30,14 @@ async def lifespan(_: FastAPI):
     log.info("starting up; connecting to Postgres")
     await init_pool()
     await run_migrations()
-    log.info("ready")
-    try:
+    # FastMCP's session manager owns its own anyio task group — it
+    # must be entered as part of the app's lifespan or `/mcp` requests
+    # explode with "Task group is not initialized".
+    async with mcp_server.session_manager.run():
+        log.info("ready")
         yield
-    finally:
-        await close_pool()
-        log.info("shutdown complete")
+    await close_pool()
+    log.info("shutdown complete")
 
 
 app = FastAPI(
@@ -60,6 +63,12 @@ app.include_router(retrieve.router)
 app.include_router(documents.router)
 app.include_router(workspaces.router)
 app.include_router(usage_route.router)
+
+# Mount the MCP streamable-HTTP endpoint at /mcp. Clients connect with:
+#   url:     https://<host>/mcp
+#   headers: Authorization: Bearer sn_live_...
+# No local process, no stdio, no absolute paths.
+app.mount("/mcp", build_mcp_asgi())
 
 if get_settings().allow_dev_bootstrap:
     log.warning(

@@ -52,8 +52,22 @@ Once the stack is up, mint a workspace + API key with:
 ./cloud/scripts/issue_key.sh my-name   # custom name
 ```
 
-The secret is shown **once**. Paste it into your agent's MCP config
-(see `cloud/mcp/README.md`) or export `SMARTNOTE_API_KEY` for scripts.
+The secret is shown **once**. For MCP clients (Claude Code / Cursor /
+OpenCode), paste it straight into your config alongside the MCP URL:
+
+```json
+{
+  "mcpServers": {
+    "smartnote-cloud": {
+      "url": "http://localhost:58000/mcp/",
+      "headers": { "Authorization": "Bearer sn_live_..." }
+    }
+  }
+}
+```
+
+No local process, no absolute paths. See `cloud/mcp/README.md` for
+per-agent config snippets.
 
 ## Design decisions (locked)
 
