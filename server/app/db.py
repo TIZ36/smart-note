@@ -390,6 +390,42 @@ CREATE TABLE IF NOT EXISTS note_file_state (
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Note views: topical lenses over a single raw file. A view defines a subset
+-- of lines (by line_hash) that share a topic. Edits in a view still write to
+-- the source file; only the lens (membership + display prefs) is persisted
+-- here. `rule_json` holds optional auto-populate rules (keywords, regex,
+-- ai_query); `display_json` holds per-view UI prefs (dim_level, show_tags,
+-- show_ts, show_bookmarks, density).
+CREATE TABLE IF NOT EXISTS note_view (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  raw_path TEXT NOT NULL,
+  name TEXT NOT NULL,
+  rule_json TEXT NOT NULL DEFAULT '{}',
+  display_json TEXT NOT NULL DEFAULT '{}',
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_note_view_path ON note_view(raw_path, sort_order);
+
+-- Members of a view, anchored by line_hash so membership survives line moves.
+-- `source` records how the line entered the view: 'rule' = keyword/regex
+-- match, 'ai' = semantic match, 'manual' = user-added. `excluded=1` means the
+-- user has explicitly kicked a rule/ai hit out of the view.
+CREATE TABLE IF NOT EXISTS note_view_member (
+  view_id INTEGER NOT NULL,
+  line_hash TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'manual',
+  excluded INTEGER NOT NULL DEFAULT 0,
+  line_preview TEXT NOT NULL DEFAULT '',
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(view_id, line_hash),
+  FOREIGN KEY(view_id) REFERENCES note_view(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_note_view_member_view ON note_view_member(view_id);
+
 -- Runtime-editable app settings. Seeded from env on first launch, mutated by
 -- the Settings UI via POST /settings — changes take effect on the running
 -- backend without a restart (the Settings singleton is refreshed in place).

@@ -44,6 +44,7 @@ from app.versioning import (
 )
 from app import skill
 from app import packs
+from app import views as note_views
 from app import smart_table
 
 
@@ -4454,11 +4455,37 @@ class NoteSaveRequest(BaseModel):
 
 @app.post("/note/save")
 def api_note_save(req: NoteSaveRequest) -> dict:
-    """Write file + create pending ingest pack + stamp per-line metadata."""
+    """Write file + create pending ingest pack + stamp per-line metadata.
+    Also re-runs each view's populate pass against the updated file so
+    newly appended lines that match a view's rules are auto-classified.
+    Populate runs additively (replace=False), so manual adds and manual
+    exclusions are preserved."""
     try:
-        return packs.on_save(req.raw_path, req.content, note=req.note)
+        result = packs.on_save(req.raw_path, req.content, note=req.note)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+    # Auto-classify: let each view pick up any new matching lines. Failures
+    # here are non-fatal — the save itself already succeeded.
+    auto_classify: list[dict] = []
+    try:
+        for v in note_views.list_views(req.raw_path):
+            rule = v.get("rule") or {}
+            if not (rule.get("keywords") or rule.get("regex") or rule.get("ai_query")):
+                continue
+            try:
+                r = note_views.populate(v["id"], replace=False)
+                auto_classify.append({
+                    "view_id": v["id"],
+                    "name": v["name"],
+                    "total_hits": r.get("total_hits", 0),
+                })
+            except Exception:
+                continue
+    except Exception:
+        pass
+    result["auto_classify"] = auto_classify
+    return result
 
 
 @app.get("/note/load")
@@ -4500,6 +4527,94 @@ def api_note_line_mark(req: LineMarkRequest) -> dict:
         line_preview=req.line_preview,
         line_no=req.line_no,
     )
+
+
+# ── Note views (topical lenses over a single raw file) ──────────
+
+
+class NoteViewCreate(BaseModel):
+    raw_path: str
+    name: str
+    rule: dict | None = None
+    display: dict | None = None
+
+
+class NoteViewUpdate(BaseModel):
+    name: str | None = None
+    rule: dict | None = None
+    display: dict | None = None
+    sort_order: int | None = None
+
+
+class NoteViewMemberOp(BaseModel):
+    line_hash: str
+    line_preview: str | None = None
+
+
+class NoteViewMembersRequest(BaseModel):
+    add: list[NoteViewMemberOp] | None = None
+    remove: list[str] | None = None
+    exclude: list[NoteViewMemberOp] | None = None
+
+
+class NoteViewPopulateRequest(BaseModel):
+    rule: dict | None = None
+    replace: bool = False
+
+
+@app.get("/note/views")
+def api_note_views_list(raw_path: str = Query(...)) -> dict:
+    return {"views": note_views.list_views(raw_path)}
+
+
+@app.post("/note/views")
+def api_note_views_create(req: NoteViewCreate) -> dict:
+    v = note_views.create_view(
+        raw_path=req.raw_path,
+        name=req.name,
+        rule=req.rule,
+        display=req.display,
+    )
+    return {"view": v}
+
+
+@app.patch("/note/views/{view_id}")
+def api_note_views_update(view_id: int, req: NoteViewUpdate) -> dict:
+    v = note_views.update_view(
+        view_id,
+        name=req.name,
+        rule=req.rule,
+        display=req.display,
+        sort_order=req.sort_order,
+    )
+    if not v:
+        raise HTTPException(status_code=404, detail="view not found")
+    return {"view": v}
+
+
+@app.delete("/note/views/{view_id}")
+def api_note_views_delete(view_id: int) -> dict:
+    note_views.delete_view(view_id)
+    return {"ok": True}
+
+
+@app.post("/note/views/{view_id}/populate")
+def api_note_views_populate(view_id: int, req: NoteViewPopulateRequest) -> dict:
+    return note_views.populate(view_id, rule=req.rule, replace=req.replace)
+
+
+@app.post("/note/views/{view_id}/members")
+def api_note_views_members(view_id: int, req: NoteViewMembersRequest) -> dict:
+    add = [m.model_dump() for m in (req.add or [])]
+    exclude = [m.model_dump() for m in (req.exclude or [])]
+    return note_views.set_members(
+        view_id, add=add, remove=req.remove, exclude=exclude,
+    )
+
+
+@app.get("/note/views/{view_id}/resolve")
+def api_note_views_resolve(view_id: int, raw_path: str | None = None) -> dict:
+    return note_views.resolve(view_id, raw_path=raw_path)
 
 
 # ── Pack queue ───────────────────────────────────────────────────
