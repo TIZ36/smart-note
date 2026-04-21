@@ -37,10 +37,20 @@ for i in $(seq 1 120); do
   sleep 1
 done
 
+# Build a scratch venv so the demo runs even on externally-managed
+# Python installs (Homebrew on macOS, system Python on Debian/Ubuntu,
+# PEP 668). Reused on subsequent runs — deps install only once.
+VENV="$REPO_ROOT/cloud/.venv"
+if [ ! -d "$VENV" ]; then
+  echo "→ creating scratch venv at cloud/.venv"
+  python3 -m venv "$VENV"
+fi
+"$VENV/bin/pip" install --quiet --upgrade pip >/dev/null
+"$VENV/bin/pip" install --quiet httpx >/dev/null
+
 echo "→ running end-to-end demo"
 cd "$REPO_ROOT"
-python3 -m pip install --quiet httpx >/dev/null
-BASE="http://localhost:${API_PORT:-58000}" python3 cloud/scripts/demo.py
+BASE="http://localhost:${API_PORT:-58000}" "$VENV/bin/python" cloud/scripts/demo.py
 
 cat <<'EOF'
 
