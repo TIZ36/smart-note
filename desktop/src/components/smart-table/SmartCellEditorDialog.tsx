@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { X, Save, Link as LinkIcon, Upload, Loader2, Image as ImageIcon } from "lucide-react";
+import { X, Save, Link as LinkIcon, Upload, Loader2, Image as ImageIcon, Pencil, Eye } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
+import ReactMarkdown from "react-markdown";
+import { cn } from "@/lib/cn";
 import type { SmartColumn, SmartRow } from "@/lib/api";
+import { MarkdownEditor } from "./MarkdownEditor";
 
 /* Full-fidelity cell editor modal.
 
@@ -42,26 +45,22 @@ export function SmartCellEditorDialog({
   const [linkUrl, setLinkUrl] = useState(initialUrl);
   const [linkLabel, setLinkLabel] = useState(initialLabel);
   const [localError, setLocalError] = useState("");
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [mode, setMode] = useState<"edit" | "preview">("edit");
+  // Stable key so the CodeMirror instance remounts only when the target
+  // cell actually changes — not on every re-render.
+  const editorKey = `${row?.id ?? "x"}:${column?.id ?? "x"}`;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Reset state whenever the dialog opens against a different cell.
+  // CodeMirror handles its own focus; we just reset the auxiliary
+  // state. `mode` reverts to edit every time so preview isn't sticky.
   useEffect(() => {
     if (!open) return;
     setText(initialText);
     setLinkUrl(initialUrl);
     setLinkLabel(initialLabel);
     setLocalError("");
-    // Give the browser a tick to finish mount before focus; otherwise
-    // framer-motion's opacity transition clobbers the caret position.
-    const tid = window.setTimeout(() => {
-      textareaRef.current?.focus();
-      textareaRef.current?.select();
-    }, 60);
-    return () => window.clearTimeout(tid);
-    // Intentionally only on `open` + `row.id:column.id` — we don't want
-    // to reset state while the dialog is live just because the parent
-    // re-rendered with a new snapshot.
+    setMode("edit");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, row?.id, column?.id]);
 
@@ -137,15 +136,43 @@ export function SmartCellEditorDialog({
 
           <div className="proto-smart-cell-dialog-body">
             {type === "text" && (
-              <textarea
-                ref={textareaRef}
-                className="proto-smart-cell-textarea"
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                placeholder="Empty"
-                spellCheck={false}
-                rows={10}
-              />
+              <div className="proto-smart-cell-md-wrap">
+                <div className="proto-smart-cell-md-toolbar">
+                  <div className="proto-smart-cell-md-tabs">
+                    <button
+                      type="button"
+                      className={cn("proto-smart-cell-md-tab", mode === "edit" && "proto-smart-cell-md-tab-active")}
+                      onClick={() => setMode("edit")}
+                    >
+                      <Pencil size={11} /> Edit
+                    </button>
+                    <button
+                      type="button"
+                      className={cn("proto-smart-cell-md-tab", mode === "preview" && "proto-smart-cell-md-tab-active")}
+                      onClick={() => setMode("preview")}
+                    >
+                      <Eye size={11} /> Preview
+                    </button>
+                  </div>
+                </div>
+                {mode === "edit" ? (
+                  <MarkdownEditor
+                    key={editorKey}
+                    initialValue={text}
+                    onChange={(v) => setText(v)}
+                    autoFocus
+                  />
+                ) : (
+                  <div className="proto-smart-cell-md-preview">
+                    {text.trim()
+                      ? <ReactMarkdown>{text}</ReactMarkdown>
+                      : <span className="proto-smart-table-cell-empty">Empty — nothing to preview.</span>}
+                  </div>
+                )}
+                <p className="proto-smart-cell-md-hint">
+                  Supports Markdown — bold, italic, lists, code, headings, links.
+                </p>
+              </div>
             )}
 
             {type === "link" && (

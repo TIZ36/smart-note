@@ -6806,6 +6806,61 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   -webkit-box-orient: vertical;
   line-clamp: 4;
 }
+
+/* Markdown-rendered cell preview. react-markdown emits <p>/<h*>/etc.;
+   we reset margins to near zero so the clamp math still works, and
+   force everything to inline-ish layout so lists/headings don't blow
+   the row height before the clamp kicks in. */
+.proto-smart-table-cell-md {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  line-clamp: 4;
+  overflow: hidden;
+  word-break: break-word;
+  white-space: normal;
+  min-width: 0;
+}
+.proto-smart-table-cell-md > * { margin: 0; }
+.proto-smart-table-cell-md p,
+.proto-smart-table-cell-md h1,
+.proto-smart-table-cell-md h2,
+.proto-smart-table-cell-md h3,
+.proto-smart-table-cell-md h4 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.45;
+  display: inline;
+}
+.proto-smart-table-cell-md strong { font-weight: 700; color: var(--color-text-primary); }
+.proto-smart-table-cell-md em { font-style: italic; }
+.proto-smart-table-cell-md code {
+  font-size: 11px;
+  padding: 1px 4px;
+  background: color-mix(in oklab, var(--color-text-primary) 8%, transparent);
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+.proto-smart-table-cell-md ul,
+.proto-smart-table-cell-md ol {
+  margin: 0;
+  padding-left: 16px;
+  display: inline-block;
+}
+.proto-smart-table-cell-md li { margin: 0; }
+.proto-smart-table-cell-md a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+.proto-smart-table-cell-md pre {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+}
 .proto-smart-table-cell-clickable {
   cursor: pointer;
   user-select: none;
@@ -6853,22 +6908,107 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   flex-direction: column;
   gap: 12px;
 }
-.proto-smart-cell-textarea {
-  width: 100%;
-  min-height: 220px;
+/* Markdown editor inside the cell dialog */
+.proto-smart-cell-md-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.proto-smart-cell-md-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.proto-smart-cell-md-tabs {
+  display: inline-flex;
+  background: color-mix(in oklab, var(--color-text-primary) 6%, transparent);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+.proto-smart-cell-md-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: none;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--color-text-muted);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: color 0.1s, background 0.1s;
+}
+.proto-smart-cell-md-tab:hover { color: var(--color-text-primary); }
+.proto-smart-cell-md-tab-active {
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+.proto-smart-cell-md-editor {
+  min-height: 240px;
   max-height: 50vh;
-  resize: vertical;
-  padding: 10px 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.proto-smart-cell-md-editor .cm-editor {
+  min-height: 240px;
+  max-height: 50vh;
+  flex: 1;
+}
+.proto-smart-cell-md-preview {
+  min-height: 240px;
+  max-height: 50vh;
+  overflow-y: auto;
+  padding: 12px 14px;
   border: 1px solid var(--color-border);
   border-radius: 8px;
-  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
-  color: var(--color-text-primary);
   background: var(--color-bg-primary);
-  outline: none;
-  transition: border-color 0.1s;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  line-height: 1.55;
 }
-.proto-smart-cell-textarea:focus {
-  border-color: var(--color-accent);
+.proto-smart-cell-md-preview h1 { font-size: 1.4em; margin: 0.4em 0 0.2em; }
+.proto-smart-cell-md-preview h2 { font-size: 1.2em; margin: 0.4em 0 0.2em; }
+.proto-smart-cell-md-preview h3 { font-size: 1.05em; margin: 0.3em 0 0.15em; }
+.proto-smart-cell-md-preview p  { margin: 0.3em 0; }
+.proto-smart-cell-md-preview ul,
+.proto-smart-cell-md-preview ol { margin: 0.3em 0; padding-left: 22px; }
+.proto-smart-cell-md-preview code {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  padding: 1px 4px;
+  background: color-mix(in oklab, var(--color-text-primary) 8%, transparent);
+  border-radius: 3px;
+}
+.proto-smart-cell-md-preview pre {
+  background: color-mix(in oklab, var(--color-text-primary) 5%, transparent);
+  border-radius: 6px;
+  padding: 10px;
+  overflow-x: auto;
+}
+.proto-smart-cell-md-preview pre code {
+  background: transparent;
+  padding: 0;
+}
+.proto-smart-cell-md-preview a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+.proto-smart-cell-md-preview a:hover { text-decoration: underline; }
+.proto-smart-cell-md-preview blockquote {
+  border-left: 3px solid color-mix(in oklab, var(--color-accent) 40%, transparent);
+  margin: 0.4em 0;
+  padding: 0 0 0 10px;
+  color: var(--color-text-secondary);
+}
+.proto-smart-cell-md-hint {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin: 0;
 }
 .proto-smart-cell-field {
   display: flex;
