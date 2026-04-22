@@ -17,6 +17,12 @@ function serverRoot() {
   return path.join(__dirname, "..", "..", "server");
 }
 
+/** Cloud infra root — where docker-compose.yml lives. */
+function cloudInfraRoot() {
+  if (process.env.CLOUD_INFRA_ROOT) return path.resolve(process.env.CLOUD_INFRA_ROOT);
+  return path.join(__dirname, "..", "..", "cloud", "infra");
+}
+
 function pythonBin() {
   const venv = path.join(serverRoot(), ".venv", "bin", "python");
   if (fs.existsSync(venv)) return venv;
@@ -844,4 +850,90 @@ ipcMain.handle("save_raw_path_for_hotkey", async (_, { rawPath }) => {
   } catch {}
   prefs.rawPath = rawPath;
   fs.writeFileSync(prefsFile, JSON.stringify(prefs, null, 2), "utf8");
+});
+
+// ── Cloud stack lifecycle (docker compose) ─────────────────────────
+//
+// The cloud stack is opt-in and lives at cloud/infra/docker-compose.yml.
+// Users reported it "disappearing" — usually means:
+//   1. docker compose down was run (by them or by our test scripts)
+//   2. Docker Desktop's resource saver paused containers
+//   3. Host rebooted; Docker Desktop restarted but containers that were
+//      explicitly stopped don't come back on their own.
+//
+// These handlers let the UI detect + restart the stack without the user
+// dropping to a terminal. Nothing touches user data — `up -d` is a no-op
+// when the stack is already healthy.
+
+function runDockerCompose(args) {
+  return new Promise((resolve) => {
+    const cwd = cloudInfraRoot();
+    if (!fs.existsSync(path.join(cwd, "docker-compose.yml"))) {
+      resolve({ ok: false, error: "docker-compose.yml not found at " + cwd });
+      return;
+    }
+    // Seed .env if missing — compose defaults reference it.
+    const envFile = path.join(cwd, ".env");
+    if (!fs.existsSync(envFile)) {
+      const example = path.join(cwd, ".env.example");
+      if (fs.existsSync(example)) {
+        try { fs.copyFileSync(example, envFile); } catch { /* best effort */ }
+      }
+    }
+    const proc = spawn("docker", ["compose", ...args], {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    proc.stdout.on("data", (d) => { stdout += d.toString(); });
+    proc.stderr.on("data", (d) => { stderr += d.toString(); });
+    proc.on("error", (err) => {
+      resolve({ ok: false, error: `docker not found: ${err.message}. Is Docker Desktop installed and running?` });
+    });
+    proc.on("close", (code) => {
+      if (code === 0) resolve({ ok: true, output: stdout || stderr });
+      else resolve({ ok: false, error: stderr || stdout || `docker compose exited with ${code}` });
+    });
+  });
+}
+
+ipcMain.handle("cloud_stack_status", async () => {
+  const r = await runDockerCompose(["ps", "--format", "json"]);
+  if (!r.ok) return { ok: false, error: r.error, services: [] };
+  // `docker compose ps --format json` streams one JSON object per line.
+  const services = [];
+  for (const line of (r.output || "").split("\n")) {
+    const t = line.trim();
+    if (!t) continue;
+    try {
+      const obj = JSON.parse(t);
+      services.push({
+        name: obj.Name || obj.Service,
+        service: obj.Service,
+        state: obj.State,          // "running" | "exited" | ...
+        status: obj.Status,        // human-readable "Up 3 hours (healthy)"
+        health: obj.Health || "",
+      });
+    } catch { /* skip malformed line */ }
+  }
+  return { ok: true, services };
+});
+
+ipcMain.handle("cloud_stack_start", async (_, payload = {}) => {
+  // `up -d` without --build is the fast path: Docker only builds when
+  // no image exists yet (first launch after a fresh clone) or when the
+  // Dockerfile / sources changed. --build forces a rebuild every time
+  // which reruns pip install etc. (5+ min on a slow link) — we only
+  // want that when the user explicitly asks via the "Rebuild" action.
+  const args = ["up", "-d"];
+  if (payload && payload.rebuild) args.push("--build");
+  return runDockerCompose(args);
+});
+
+ipcMain.handle("cloud_stack_stop", async () => {
+  // `stop` (not `down`) preserves the network + volumes so a later
+  // `start` is instant. If the user really wants to wipe, they can
+  // run `docker compose down -v` manually.
+  return runDockerCompose(["stop"]);
 });

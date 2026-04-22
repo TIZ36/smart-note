@@ -160,3 +160,33 @@ export function onHotkeyPasted(
 ): () => void {
   return getDesktop().onHotkeyPasted(handler);
 }
+
+// ── Cloud stack lifecycle (docker compose) ─────────────────────────
+
+export type CloudStackService = {
+  name: string;
+  service: string;
+  state: string;          // "running" | "exited" | "restarting" | ...
+  status: string;         // "Up 3 hours (healthy)" etc.
+  health?: string;
+};
+
+export type CloudStackStatus = {
+  ok: boolean;
+  services: CloudStackService[];
+  error?: string;
+};
+
+export async function fetchCloudStackStatus(): Promise<CloudStackStatus> {
+  return getDesktop().invoke("cloud_stack_status") as Promise<CloudStackStatus>;
+}
+
+export async function startCloudStack(
+  opts: { rebuild?: boolean } = {},
+): Promise<{ ok: boolean; output?: string; error?: string }> {
+  return getDesktop().invoke("cloud_stack_start", opts) as Promise<{ ok: boolean; output?: string; error?: string }>;
+}
+
+export async function stopCloudStack(): Promise<{ ok: boolean; output?: string; error?: string }> {
+  return getDesktop().invoke("cloud_stack_stop") as Promise<{ ok: boolean; output?: string; error?: string }>;
+}

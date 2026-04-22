@@ -2,12 +2,17 @@ import { useCallback, useEffect, useState } from "react";
 import {
   CheckCircle2, AlertTriangle, Loader2, Save, Upload, Download, RefreshCw,
   X, CloudOff, FileText, BookOpen, Table, Sparkles, Copy, Ban, Layers,
+  Play, Power, Hammer,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/cn";
 import * as api from "@/lib/api";
 import type { AppSettings } from "@/lib/types";
-import { readSettings, writeSettings } from "@/lib/electron";
+import {
+  readSettings, writeSettings,
+  fetchCloudStackStatus, startCloudStack, stopCloudStack,
+  type CloudStackService,
+} from "@/lib/electron";
 import { CloudIconAnimated } from "./CloudIconAnimated";
 import {
   useCloudSyncUpload, startUpload, cancelUpload, progressOf,
@@ -48,9 +53,29 @@ export function CloudSyncPage() {
   const [pulling, setPulling] = useState(false);
   const [pullError, setPullError] = useState("");
 
+  // Cloud stack lifecycle (docker compose) — separate from the API
+  // reachability test. `stackServices` tells us what containers exist
+  // and whether they're up; when all are down/missing we surface a
+  // one-click "Start stack" banner instead of a useless test-fail.
+  const [stackServices, setStackServices] = useState<CloudStackService[] | null>(null);
+  const [stackBusy, setStackBusy] = useState<"start" | "stop" | "rebuild" | null>(null);
+  const [stackError, setStackError] = useState("");
+
   // ── Load / refresh ─────────────────────────────────────────
 
+  const refreshStack = useCallback(async () => {
+    try {
+      const r = await fetchCloudStackStatus();
+      setStackServices(r.ok ? r.services : []);
+      if (!r.ok && r.error) setStackError(r.error);
+    } catch (e) {
+      setStackServices([]);
+      setStackError(String(e));
+    }
+  }, []);
+
   const refresh = useCallback(async () => {
+    void refreshStack();
     try {
       const [s, p] = await Promise.all([
         api.fetchCloudSyncStatus().catch(() => null),
@@ -148,6 +173,43 @@ export function CloudSyncPage() {
     // loop finishes, so no explicit await here.
   }
 
+  async function handleStackStart(rebuild = false) {
+    if (stackBusy) return;
+    setStackBusy(rebuild ? "rebuild" : "start");
+    setStackError("");
+    try {
+      const r = await startCloudStack({ rebuild });
+      if (!r.ok) setStackError(r.error || "start failed");
+      // Poll for health so the banner dismisses automatically once
+      // the API responds, without the user clicking Refresh.
+      const started = Date.now();
+      while (Date.now() - started < 120_000) {
+        await new Promise((res) => setTimeout(res, 1500));
+        try {
+          const tr = await api.testCloudSync({ url, api_key: apiKey });
+          if (tr.ok) break;
+        } catch { /* keep polling */ }
+      }
+      await refreshStack();
+      await refresh();
+    } finally {
+      setStackBusy(null);
+    }
+  }
+
+  async function handleStackStop() {
+    if (stackBusy) return;
+    setStackBusy("stop");
+    setStackError("");
+    try {
+      const r = await stopCloudStack();
+      if (!r.ok) setStackError(r.error || "stop failed");
+      await refreshStack();
+    } finally {
+      setStackBusy(null);
+    }
+  }
+
   async function handlePull() {
     if (pulling) return;
     setPulling(true);
@@ -201,6 +263,68 @@ export function CloudSyncPage() {
               </p>
             </div>
           </div>
+
+          {/* Stack-down banner — most common reason "Test connection"
+              fails is the docker stack isn't running (sleep, reboot,
+              an earlier `docker compose down`). Surface this before the
+              user digs through credentials looking for a typo. */}
+          {stackServices !== null && (() => {
+            const runningCount = stackServices.filter((s) => s.state === "running").length;
+            const total = stackServices.length;
+            const allDown = total === 0 || runningCount === 0;
+            const partial = runningCount > 0 && runningCount < total;
+            if (!allDown && !partial) return null;
+            return (
+              <div className={cn(
+                "proto-cloud-stack-banner",
+                allDown ? "proto-cloud-stack-banner-down" : "proto-cloud-stack-banner-partial",
+              )}>
+                <div className="proto-cloud-stack-banner-body">
+                  <Power size={14} />
+                  <div>
+                    <div className="proto-cloud-stack-banner-title">
+                      {allDown
+                        ? (total === 0 ? "Cloud stack not running" : "Cloud stack is stopped")
+                        : `Cloud stack only partially up (${runningCount}/${total})`}
+                    </div>
+                    <div className="proto-cloud-stack-banner-desc">
+                      {total === 0
+                        ? "No containers found. First launch will build the images (~2 min for the embedding model)."
+                        : "Docker containers exist but aren't running. Click Start to bring them back up."}
+                    </div>
+                  </div>
+                </div>
+                <div className="proto-cloud-stack-banner-actions">
+                  <button
+                    type="button"
+                    className="proto-btn proto-btn-primary"
+                    onClick={() => handleStackStart(false)}
+                    disabled={!!stackBusy}
+                  >
+                    {stackBusy === "start" ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+                    {stackBusy === "start" ? "Starting…" : "Start stack"}
+                  </button>
+                  {total > 0 && (
+                    <button
+                      type="button"
+                      className="proto-btn"
+                      onClick={() => handleStackStart(true)}
+                      disabled={!!stackBusy}
+                      title="Rebuild images from source. Slow — only use after dependency changes."
+                    >
+                      {stackBusy === "rebuild" ? <Loader2 size={14} className="animate-spin" /> : <Hammer size={14} />}
+                      Rebuild
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+          {stackError && (
+            <div className="proto-cloud-sync-note proto-cloud-sync-note-error">
+              <AlertTriangle size={12} /> {stackError}
+            </div>
+          )}
 
           {/* Credentials card */}
           <section className="proto-cloud-sync-card">
@@ -267,6 +391,37 @@ export function CloudSyncPage() {
               <div className="proto-form-hint" style={{ marginTop: 8, color: "var(--color-warning, #d48b00)" }}>
                 <AlertTriangle size={11} style={{ verticalAlign: "-1px", marginRight: 4 }} />
                 Unsaved credentials — Upload / Pull use the persisted values until you Save.
+              </div>
+            )}
+            {stackServices && stackServices.length > 0 && (
+              <div className="proto-cloud-stack-strip">
+                <span className="proto-cloud-stack-strip-title">Stack:</span>
+                {stackServices.map((s) => (
+                  <span
+                    key={s.service}
+                    className={cn(
+                      "proto-cloud-stack-chip",
+                      s.state === "running" && "proto-cloud-stack-chip-running",
+                      s.state === "exited" && "proto-cloud-stack-chip-down",
+                    )}
+                    title={s.status}
+                  >
+                    <span className="proto-cloud-stack-chip-dot" />
+                    {s.service}
+                  </span>
+                ))}
+                {stackServices.some((s) => s.state === "running") && (
+                  <button
+                    type="button"
+                    className="proto-cloud-stack-strip-action"
+                    onClick={handleStackStop}
+                    disabled={!!stackBusy}
+                    title="Stop the containers. Data + volumes preserved; Start brings them back instantly."
+                  >
+                    {stackBusy === "stop" ? <Loader2 size={11} className="animate-spin" /> : <Power size={11} />}
+                    Stop
+                  </button>
+                )}
               </div>
             )}
           </section>
