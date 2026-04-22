@@ -71,6 +71,11 @@ async def retrieve(
 
     where = ["m.workspace_id = $1"]
     args: list[Any] = [UUID(identity.workspace_id)]
+    # Lifecycle filter: default retrieval scopes to visible memories
+    # (active + draft, plus pinned regardless of status). Archived rows
+    # are intentionally skipped — pulling them back in requires an
+    # explicit include-archived flag (not exposed yet; future work).
+    where.append("(m.status IN ('active', 'draft') OR m.pinned = true)")
     if req.kinds:
         args.append(req.kinds)
         where.append(f"m.kind = ANY(${len(args)})")
@@ -121,6 +126,24 @@ async def retrieve(
 
     # Telemetry (best-effort, non-blocking).
     await usage.bump(identity.workspace_id, retrieve_delta=1)
+
+    # Access instrumentation (MLflow-style "metrics" on each memory):
+    # bump access_count + last_accessed_at on every memory returned.
+    # Powers future lifecycle decay + adaptive ranking. Best-effort;
+    # failure here must not affect retrieval output.
+    if rows:
+        hit_ids = [r["id"] for r in rows]
+        try:
+            async with pool().acquire() as conn:
+                await conn.execute(
+                    "UPDATE memories SET access_count = access_count + 1, "
+                    "last_accessed_at = now() WHERE id = ANY($1::uuid[])",
+                    hit_ids,
+                )
+        except Exception:
+            # Column may not exist yet (pre-005 migration). Ignore —
+            # next startup will apply the migration.
+            pass
 
     return RetrieveResponse(
         query_embedded=qvec is not None,

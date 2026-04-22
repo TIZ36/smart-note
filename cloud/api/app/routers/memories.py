@@ -229,6 +229,113 @@ async def get_memory(
     return _row_to_out(row)
 
 
+@router.post(
+    "/decay",
+    dependencies=[Depends(require_scope("memories:write"))],
+)
+async def decay_memories(
+    identity: Identity = Depends(require_scope("memories:write")),
+    stale_days: int = 30,
+    archive_days: int = 90,
+) -> dict:
+    """MLflow-stages-style batch decay. Runs on demand (or via a cron
+    the customer sets up); advances rows across the lifecycle based on
+    `last_accessed_at`:
+
+      active + no access for `stale_days`  → stale
+      stale  + no access for `archive_days` → archived
+
+    Pinned rows are untouched regardless of age. Draft rows are also
+    untouched (they're waiting for user approval, not decay). Returns
+    per-transition counts so an audit job can tell what happened."""
+    workspace = UUID(identity.workspace_id)
+    async with pool().acquire() as conn:
+        async with conn.transaction():
+            stale = await conn.execute(
+                "UPDATE memories SET status = 'stale' "
+                "WHERE workspace_id = $1 AND status = 'active' "
+                "AND pinned = false "
+                "AND (last_accessed_at IS NULL OR last_accessed_at < now() - ($2 || ' days')::interval)",
+                workspace, str(stale_days),
+            )
+            archived = await conn.execute(
+                "UPDATE memories SET status = 'archived' "
+                "WHERE workspace_id = $1 AND status = 'stale' "
+                "AND pinned = false "
+                "AND (last_accessed_at IS NULL OR last_accessed_at < now() - ($2 || ' days')::interval)",
+                workspace, str(archive_days),
+            )
+    # conn.execute for UPDATE returns 'UPDATE N'
+    def _count(cmd: str) -> int:
+        parts = cmd.split()
+        return int(parts[-1]) if parts and parts[-1].isdigit() else 0
+    return {
+        "ok": True,
+        "stale_days": stale_days,
+        "archive_days": archive_days,
+        "moved_to_stale": _count(stale),
+        "moved_to_archived": _count(archived),
+    }
+
+
+@router.get(
+    "/insights",
+    dependencies=[Depends(require_scope("memories:read"))],
+)
+async def memory_insights(
+    identity: Identity = Depends(require_scope("memories:read")),
+    limit: int = 10,
+) -> dict:
+    """Quick snapshot modeled on MLflow's run-comparison view — for
+    one workspace, surface the stats that matter:
+
+      * top retrieved — what actually gets used
+      * never retrieved — candidates for decay
+      * recently added — what's fresh
+      * counts by status — lifecycle distribution
+    """
+    workspace = UUID(identity.workspace_id)
+    async with pool().acquire() as conn:
+        top = await conn.fetch(
+            "SELECT id, kind, content, access_count, last_accessed_at "
+            "FROM memories WHERE workspace_id = $1 AND access_count > 0 "
+            "ORDER BY access_count DESC, last_accessed_at DESC LIMIT $2",
+            workspace, limit,
+        )
+        never = await conn.fetch(
+            "SELECT id, kind, content, created_at "
+            "FROM memories WHERE workspace_id = $1 AND access_count = 0 "
+            "ORDER BY created_at ASC LIMIT $2",
+            workspace, limit,
+        )
+        recent = await conn.fetch(
+            "SELECT id, kind, content, created_at "
+            "FROM memories WHERE workspace_id = $1 "
+            "ORDER BY created_at DESC LIMIT $2",
+            workspace, limit,
+        )
+        status_counts = await conn.fetch(
+            "SELECT status, COUNT(*) AS n FROM memories "
+            "WHERE workspace_id = $1 GROUP BY status",
+            workspace,
+        )
+    def _trim(r, keys):
+        d = {k: r[k] for k in keys}
+        if "content" in d and isinstance(d["content"], str):
+            d["content"] = d["content"][:200]
+        for k in ("created_at", "last_accessed_at"):
+            if k in d and d[k]:
+                d[k] = d[k].isoformat()
+        d["id"] = str(d["id"])
+        return d
+    return {
+        "top_retrieved": [_trim(r, ["id", "kind", "content", "access_count", "last_accessed_at"]) for r in top],
+        "never_retrieved": [_trim(r, ["id", "kind", "content", "created_at"]) for r in never],
+        "recent": [_trim(r, ["id", "kind", "content", "created_at"]) for r in recent],
+        "status_counts": {r["status"]: r["n"] for r in status_counts},
+    }
+
+
 @router.delete(
     "/{memory_id}",
     dependencies=[Depends(require_scope("memories:write"))],
