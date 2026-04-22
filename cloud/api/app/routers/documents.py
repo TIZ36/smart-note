@@ -10,9 +10,10 @@ async jobs + richer chunking.
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app import usage
@@ -83,7 +84,7 @@ async def create_document(
             "  metadata, byte_size) "
             "VALUES($1, $2, $3, $4, $5, $6) "
             "RETURNING id, workspace_id, name, kind, byte_size, ingested_at, "
-            "          created_at",
+            "          created_at, updated_at, metadata",
             UUID(identity.workspace_id),
             req.name,
             req.kind,
@@ -165,8 +166,13 @@ async def list_documents(
     where = ["workspace_id = $1"]
     args: list = [UUID(identity.workspace_id)]
     if since:
-        args.append(since)
-        where.append(f"updated_at > ${len(args)}::timestamptz")
+        # asyncpg wants a datetime, not an ISO string. Python 3.11+
+        # handles trailing 'Z' but older stacks don't — normalize.
+        try:
+            args.append(datetime.fromisoformat(since.replace("Z", "+00:00")))
+        except ValueError:
+            raise HTTPException(400, f"invalid 'since' timestamp: {since!r}")
+        where.append(f"updated_at > ${len(args)}")
     if smartnote_type:
         args.append(smartnote_type)
         where.append(f"metadata->>'smartnote_type' = ${len(args)}")

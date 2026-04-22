@@ -60,6 +60,13 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _sanitize_content(text: str) -> str:
+    """Postgres TEXT columns can't hold NUL bytes, and some scraped
+    wiki files (esp. Chinese copies from PDFs) carry stray \\x00s.
+    Strip them before sending; nothing user-meaningful is lost."""
+    return text.replace("\x00", "") if "\x00" in text else text
+
+
 def _cfg() -> tuple[str, str]:
     url = (getattr(app_settings, "cloud_sync_url", "") or "").rstrip("/")
     key = getattr(app_settings, "cloud_sync_api_key", "") or ""
@@ -134,7 +141,7 @@ class LocalEntity:
 
 def _serialize_note(path: str) -> LocalEntity | None:
     try:
-        content = Path(path).read_text(encoding="utf-8")
+        content = _sanitize_content(Path(path).read_text(encoding="utf-8"))
     except OSError:
         return None
     # Drop filenames to their basename for the cloud UI; full path
@@ -154,26 +161,29 @@ def _serialize_note(path: str) -> LocalEntity | None:
 
 
 def _discover_notes() -> list[str]:
-    """Which notes does this install sync? We take every file path the
-    local DB has per-line metadata for — that's the set of files the user
-    has actually written through /note/save, which is the meaningful
-    'my notes' set. Catches manual opens too (PackBadge adds entries on
-    load)."""
+    """Which notes does this install sync? Three sources unioned:
+      - note_lines.file_path  (every file the user has saved through
+        /note/save)
+      - ingest_packs.raw_path (files ingested but not yet saved)
+      - sync_state rows with local_kind='note'  (files that arrived
+        via pull and wouldn't otherwise be known locally yet)
+    The last one is crucial: once a note is pulled from the cloud we
+    need to keep syncing it even before the user opens and saves it
+    locally."""
+    paths: set[str] = set()
     with connect() as conn:
-        rows = conn.execute(
-            "SELECT DISTINCT file_path FROM note_lines"
-        ).fetchall()
-    paths = [r[0] for r in rows if r[0]]
-    # Include any raw_path referenced by ingest_packs too (covers files
-    # that were ingested but haven't had a /note/save yet).
-    with connect() as conn:
-        more = conn.execute(
-            "SELECT DISTINCT raw_path FROM ingest_packs"
-        ).fetchall()
-    for r in more:
-        if r[0] and r[0] not in paths:
-            paths.append(r[0])
-    return paths
+        for r in conn.execute("SELECT DISTINCT file_path FROM note_lines").fetchall():
+            if r[0]:
+                paths.add(r[0])
+        for r in conn.execute("SELECT DISTINCT raw_path FROM ingest_packs").fetchall():
+            if r[0]:
+                paths.add(r[0])
+        for r in conn.execute(
+            "SELECT local_id FROM sync_state WHERE local_kind = 'note'"
+        ).fetchall():
+            if r[0]:
+                paths.add(r[0])
+    return sorted(paths)
 
 
 def _serialize_smart_table(table_name: str) -> LocalEntity | None:
@@ -217,15 +227,84 @@ def _discover_smart_tables() -> list[str]:
         return []
 
 
+def _wiki_root() -> Path | None:
+    """Where on disk wiki source docs live. Can be empty if the user
+    never set it — in which case wiki sync is a no-op."""
+    raw = getattr(app_settings, "wiki_sources_dir", "") or ""
+    if not raw:
+        return None
+    p = Path(raw).expanduser()
+    return p if p.exists() else None
+
+
 def _discover_wiki_topics() -> list[str]:
-    # TODO: next pass — enumerate wiki docs under wiki_sources_dir and
-    # sync them like notes. Leaving empty for now keeps the first sync
-    # fast and avoids half-baked wiki serialization.
-    return []
+    """Recursively find every .md / .markdown under wiki_sources_dir,
+    plus any files pulled previously (tracked in sync_state). The
+    local_id is the absolute file path — same shape as notes, just a
+    separate namespace so the pull path can write them into
+    wiki_sources_dir instead of treating them as general notes."""
+    paths: set[str] = set()
+    root = _wiki_root()
+    if root:
+        for ext in ("*.md", "*.markdown"):
+            for f in root.rglob(ext):
+                if f.is_file():
+                    paths.add(str(f.resolve()))
+    with connect() as conn:
+        for r in conn.execute(
+            "SELECT local_id FROM sync_state WHERE local_kind = 'wiki_topic'"
+        ).fetchall():
+            if r[0]:
+                paths.add(r[0])
+    return sorted(paths)
 
 
-def _serialize_wiki_topic(topic: str) -> LocalEntity | None:
-    return None
+def _serialize_wiki_topic(path: str) -> LocalEntity | None:
+    try:
+        content = _sanitize_content(Path(path).read_text(encoding="utf-8"))
+    except OSError:
+        return None
+    root = _wiki_root()
+    # Relative path for display ("foo/bar.md") when possible; absolute
+    # otherwise. Always full path in metadata so pull knows where to land.
+    rel = path
+    if root:
+        try:
+            rel = str(Path(path).relative_to(root))
+        except ValueError:
+            pass
+    return LocalEntity(
+        kind="wiki_topic",
+        local_id=path,
+        name=rel,
+        content=content,
+        metadata={
+            "smartnote_type": "wiki_topic",
+            "local_path": path,
+            "wiki_root": str(root) if root else "",
+            "relative_path": rel,
+            "content_md5": hashlib.md5(content.encode("utf-8")).hexdigest(),
+        },
+    )
+
+
+def _apply_remote_wiki_topic(local_id: str, content: str) -> None:
+    """Write the remote wiki doc to its absolute local path. We do
+    create missing parent directories here (unlike notes) because wiki
+    content lives under a known root — creating a nested topic
+    directory is expected behavior."""
+    root = _wiki_root()
+    path = Path(local_id)
+    # Safety: refuse to land outside wiki_root if one is configured.
+    if root and root not in path.resolve().parents and path != root / path.name:
+        try:
+            path.resolve().relative_to(root.resolve())
+        except ValueError:
+            raise RuntimeError(
+                f"refusing to write wiki doc outside wiki_sources_dir: {path}"
+            )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
 
 
 # Registry: kind -> (discover, serialize, apply_local)
@@ -296,7 +375,7 @@ def _apply_remote_smart_table(local_id: str, content: str) -> None:
 _APPLIERS: dict[str, Callable[[str, str], None]] = {
     "note": _apply_remote_note,
     "smart_table": _apply_remote_smart_table,
-    "wiki_topic": lambda _id, _c: None,   # TODO
+    "wiki_topic": _apply_remote_wiki_topic,
 }
 
 
@@ -496,7 +575,13 @@ def _apply_remote(doc: dict) -> dict:
     elif kind == "smart_table":
         local_id = meta.get("table_name")
     elif kind == "wiki_topic":
-        local_id = meta.get("topic_name")
+        # Prefer exact local_path; if the doc came from a different
+        # machine with a different wiki_root, relocate under this
+        # machine's wiki_root using the relative_path field.
+        local_id = meta.get("local_path")
+        root = _wiki_root()
+        if root and meta.get("relative_path"):
+            local_id = str((root / meta["relative_path"]).resolve())
     else:
         local_id = None
     if not local_id:
