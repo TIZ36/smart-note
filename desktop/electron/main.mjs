@@ -526,12 +526,68 @@ ipcMain.handle("get_mvp_status", async () => ({
   embedding_mode: readEmbeddingMode(),
 }));
 
+/**
+ * Read settings with DB-over-.env precedence.
+ *
+ * The backend owns an `app_settings` table that's the authoritative store
+ * (edits made via the inline "Save credentials" button, MCP tools, or any
+ * POST /settings call land there directly — never touch .env). The .env
+ * file is just the bootstrap fallback for when the backend isn't running.
+ *
+ * So on read we try GET /settings first, only fall back to .env parsing
+ * if the backend is unreachable. This fixes the "I saved Cloud Sync creds
+ * but they're gone next launch" bug, which used to happen because the
+ * old read path never consulted the DB.
+ */
+async function fetchLiveSettings() {
+  return new Promise((resolve) => {
+    const req = http.request(
+      { host: "127.0.0.1", port: 8787, path: "/settings", method: "GET", timeout: 1000 },
+      (res) => {
+        let buf = "";
+        res.setEncoding("utf8");
+        res.on("data", (c) => { buf += c; });
+        res.on("end", () => {
+          if (res.statusCode !== 200) return resolve(null);
+          try { resolve(JSON.parse(buf)); } catch { resolve(null); }
+        });
+      },
+    );
+    req.on("error", () => resolve(null));
+    req.on("timeout", () => { req.destroy(); resolve(null); });
+    req.end();
+  });
+}
+
 ipcMain.handle("read_settings", async () => {
+  const live = await fetchLiveSettings();
+  if (live && typeof live === "object") {
+    // Backend is the source of truth. Coerce booleans since the backend
+    // returns them typed already but we defensively normalize.
+    return {
+      embedding_mode: live.embedding_mode ?? "local",
+      ai_features_enabled: live.ai_features_enabled !== false,
+      provider_base_url: live.provider_base_url ?? "https://api.openai.com/v1",
+      provider_api_key: live.provider_api_key ?? "",
+      provider_chat_model: live.provider_chat_model ?? "gpt-4o-mini",
+      embed_base_url: live.embed_base_url ?? "",
+      embed_api_key: live.embed_api_key ?? "",
+      provider_embed_model: live.provider_embed_model ?? "text-embedding-3-small",
+      ingest_ai_enabled: !!live.ingest_ai_enabled,
+      ingest_ai_model: live.ingest_ai_model ?? "",
+      cloud_sync_enabled: !!live.cloud_sync_enabled,
+      cloud_sync_url: live.cloud_sync_url ?? "",
+      cloud_sync_api_key: live.cloud_sync_api_key ?? "",
+    };
+  }
+  // Backend offline — fall back to .env. Covers first-launch and the case
+  // where the user opens Settings before the gateway has started.
   const envPath = path.join(serverRoot(), ".env");
   const content = fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf8") : "";
   const map = parseEnvFile(content);
   const ingestAi = map.get("INGEST_AI_ENABLED")?.toLowerCase() ?? "";
   const aiFeatures = map.get("AI_FEATURES_ENABLED")?.toLowerCase() ?? "true";
+  const cloudSyncEnabled = map.get("CLOUD_SYNC_ENABLED")?.toLowerCase() ?? "";
   return {
     embedding_mode: map.get("EMBEDDING_MODE") ?? "local",
     ai_features_enabled: !["false", "0", "no"].includes(aiFeatures),
@@ -543,6 +599,9 @@ ipcMain.handle("read_settings", async () => {
     provider_embed_model: map.get("PROVIDER_EMBED_MODEL") ?? "text-embedding-3-small",
     ingest_ai_enabled: ["true", "1", "yes"].includes(ingestAi),
     ingest_ai_model: map.get("INGEST_AI_MODEL") ?? "",
+    cloud_sync_enabled: ["true", "1", "yes"].includes(cloudSyncEnabled),
+    cloud_sync_url: map.get("CLOUD_SYNC_URL") ?? "",
+    cloud_sync_api_key: map.get("CLOUD_SYNC_API_KEY") ?? "",
   };
 });
 
@@ -551,6 +610,7 @@ ipcMain.handle("write_settings", async (_, { newSettings }) => {
   const existing = fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf8") : "";
   const aiEnabledStr = newSettings.ingest_ai_enabled ? "true" : "false";
   const aiFeaturesStr = newSettings.ai_features_enabled === false ? "false" : "true";
+  const cloudSyncEnabledStr = newSettings.cloud_sync_enabled ? "true" : "false";
   const updates = new Map([
     ["EMBEDDING_MODE", newSettings.embedding_mode],
     ["AI_FEATURES_ENABLED", aiFeaturesStr],
@@ -562,6 +622,11 @@ ipcMain.handle("write_settings", async (_, { newSettings }) => {
     ["PROVIDER_EMBED_MODEL", newSettings.provider_embed_model],
     ["INGEST_AI_ENABLED", aiEnabledStr],
     ["INGEST_AI_MODEL", newSettings.ingest_ai_model],
+    // Cloud sync — mirrored to .env so a restart with the backend down
+    // still boots with the right config.
+    ["CLOUD_SYNC_ENABLED", cloudSyncEnabledStr],
+    ["CLOUD_SYNC_URL", newSettings.cloud_sync_url ?? ""],
+    ["CLOUD_SYNC_API_KEY", newSettings.cloud_sync_api_key ?? ""],
   ]);
   const writtenKeys = new Set();
   const lines = [];
@@ -602,6 +667,9 @@ ipcMain.handle("write_settings", async (_, { newSettings }) => {
       provider_embed_model: newSettings.provider_embed_model,
       ingest_ai_enabled: !!newSettings.ingest_ai_enabled,
       ingest_ai_model: newSettings.ingest_ai_model,
+      cloud_sync_enabled: !!newSettings.cloud_sync_enabled,
+      cloud_sync_url: newSettings.cloud_sync_url ?? "",
+      cloud_sync_api_key: newSettings.cloud_sync_api_key ?? "",
     });
     applied = await new Promise((resolve) => {
       const req = http.request(
