@@ -17,8 +17,8 @@ from app.config import get_settings
 from app.db import close_pool, init_pool, run_migrations
 from app.mcp_http import build_mcp_asgi, mcp as mcp_server
 from app.routers import (
-    auth, dev, documents, health, memories, preferences, retrieve,
-    usage_route, workspaces,
+    auth, dev, documents, health, memories, preferences, proposals,
+    retrieve, usage_route, workspaces,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -57,6 +57,11 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(auth.router)
+# Proposals must register BEFORE memories — it's a subresource at
+# /v1/memories/proposals and would otherwise get shadowed by the
+# catch-all /v1/memories/{memory_id} route (FastAPI first-match wins,
+# and "proposals" would be parsed as a UUID and 422).
+app.include_router(proposals.router)
 app.include_router(memories.router)
 app.include_router(preferences.router)
 app.include_router(retrieve.router)

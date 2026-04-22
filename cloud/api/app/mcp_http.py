@@ -115,6 +115,20 @@ def _fail(r: httpx.Response, action: str) -> str:
     return f"{action} failed ({r.status_code}): {detail}"
 
 
+# ── Output formatting helpers ──────────────────────────────────
+#
+# Design: tool results are rendered inside the agent's conversation
+# UI (Cursor / Claude Code / etc.) directly below the user's message
+# bubble. Verbose text explodes that space. Default behavior across
+# list/search tools is compact — content truncated to ~60 chars, full
+# UUID at the end (copyable for get_memory). Agents that really need
+# full content inline pass verbose=True.
+
+def _truncate(text: str, limit: int = 60) -> str:
+    t = " ".join((text or "").split())
+    return t if len(t) <= limit else t[: limit - 1] + "…"
+
+
 # ── Tools ──────────────────────────────────────────────────────
 
 @mcp.tool()
@@ -122,14 +136,22 @@ async def search_memory(
     query: str,
     kinds: Optional[list[str]] = None,
     topk: int = 8,
+    verbose: bool = False,
 ) -> str:
-    """Search memories by meaning + keyword. Ranks by vector similarity
-    blended with substring match; pinned items always rank first.
+    """Search memories by meaning + keyword.
+
+    DEFAULT OUTPUT IS COMPACT: one chip per hit (short-id · kind · score
+    · 60-char preview). Full content is NOT inlined because tool output
+    is rendered under the user's message bubble in most agent UIs — long
+    dumps clutter the conversation. For full content, call
+    `get_memory(id)` with the short id shown here (8 hex chars prefix
+    is enough to disambiguate).
 
     Args:
         query: Natural-language description of what you're looking for.
         kinds: Optional filter (e.g. ["preference"], ["fact","episode"]).
         topk: Max results (default 8).
+        verbose: Set True to dump full content inline (legacy behavior).
     """
     body: dict[str, Any] = {"query": query, "topk": topk}
     if kinds:
@@ -141,13 +163,25 @@ async def search_memory(
     results = data.get("results") or []
     if not results:
         return f"No matches for: {query}"
-    lines = [f"Matches for: {query}"]
+    if verbose:
+        lines = [f"Matches for: {query}"]
+        for hit in results:
+            lines.append(
+                f"- [{hit['kind']}, score={hit.get('score', 0):.2f}] "
+                f"{hit['content']}  (id={hit['id']})"
+            )
+        return "\n".join(lines)
+    chips = []
     for hit in results:
-        lines.append(
-            f"- [{hit['kind']}, score={hit.get('score', 0):.2f}] "
-            f"{hit['content']}  (id={hit['id']})"
+        preview = _truncate(hit['content'], 60)
+        chips.append(
+            f"[{hit['kind']}·{hit.get('score', 0):.2f}] {preview} · id={hit['id']}"
         )
-    return "\n".join(lines)
+    return (
+        f"{len(results)} match(es) for \"{query}\":\n"
+        + "\n".join(chips)
+        + "\n\n→ get_memory(id) for full content"
+    )
 
 
 @mcp.tool()
@@ -179,9 +213,10 @@ async def list_memories(
     kind: Optional[str] = None,
     scope: Optional[str] = None,
     limit: int = 20,
+    verbose: bool = False,
 ) -> str:
-    """List memories newest-first. Prefer `search_memory` for hunting
-    specific content."""
+    """List memories newest-first. Compact by default. Prefer
+    `search_memory` when hunting for specific content."""
     params: dict[str, Any] = {"limit": limit}
     if kind: params["kind"] = kind
     if scope: params["scope"] = scope
@@ -191,10 +226,13 @@ async def list_memories(
     rows = r.json().get("memories") or []
     if not rows:
         return "No memories."
-    out = [f"Memories ({len(rows)}):"]
+    out = [f"{len(rows)} memor{'y' if len(rows) == 1 else 'ies'}:"]
     for row in rows:
-        pin = "📌 " if row.get("pinned") else ""
-        out.append(f"- {pin}[{row['kind']}] {row['content'][:120]}  (id={row['id']})")
+        pin = "📌" if row.get("pinned") else " "
+        body = row['content'] if verbose else _truncate(row['content'], 60)
+        out.append(f"{pin} [{row['kind']}] {body} · id={row['id']}")
+    if not verbose:
+        out.append("\n→ get_memory(id) for full content")
     return "\n".join(out)
 
 
@@ -344,6 +382,133 @@ async def list_documents() -> str:
         ingested = "ingested" if d.get("ingested_at") else "not ingested"
         out.append(f"- {d['name']}  ({d['byte_size']}B, {ingested}, id={d['id']})")
     return "\n".join(out)
+
+
+@mcp.tool()
+async def propose_memory(
+    content: str,
+    kind: str = "fact",
+    reason: Optional[str] = None,
+    scope: str = "global",
+    tags: Optional[list[str]] = None,
+    structured: Optional[dict[str, Any]] = None,
+    confidence: float = 0.5,
+) -> str:
+    """Submit a **low-confidence candidate** memory for review.
+
+    Use this instead of `add_memory` when you're NOT certain the user
+    wants this remembered — e.g. inferred preferences, guesses based
+    on one mention, things that could be noise. The proposal lands
+    with status='draft' in a queue; a reviewer (user or policy agent)
+    promotes the good ones via `accept_proposal` and archives the rest
+    via `reject_proposal`.
+
+    Args:
+        content: The natural-language memory text.
+        kind: one of fact | preference | procedure | episode | document_ref.
+        reason: Short sentence explaining why you think this is
+            worth remembering (shown to the reviewer — helps them
+            decide quickly). Examples: "user said 'I prefer X'",
+            "user repeated this decision in 3 sessions", "derived
+            from document-ref 'foo.md' chunk 12".
+        scope / tags / structured: same semantics as add_memory.
+        confidence: proposer's self-rated confidence (0.0-1.0). Default
+            0.5. On accept, confidence is bumped to 1.0 unless the
+            reviewer overrides.
+    """
+    body: dict[str, Any] = {
+        "content": content, "kind": kind, "scope": scope,
+        "tags": tags or [], "confidence": confidence,
+    }
+    if reason: body["reason"] = reason
+    if structured is not None: body["structured"] = structured
+    r = await _call("POST", "/v1/memories/proposals", json=body)
+    if r.status_code != 200:
+        return _fail(r, "propose_memory")
+    data = r.json()
+    lines = [f"Proposed {kind} memory id={data['id']} (status=draft)"]
+    similar = data.get("similar_existing") or []
+    if similar:
+        lines.append("")
+        lines.append("⚠ similar memories already exist — consider merging by setting supersedes on accept:")
+        for s in similar[:3]:
+            lines.append(f"  - {s['id']} (similarity={s['similarity']:.2f}) {s['content'][:80]}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def list_proposals(
+    kind: Optional[str] = None,
+    limit: int = 20,
+    verbose: bool = False,
+) -> str:
+    """List pending draft-status proposals awaiting review."""
+    params: dict[str, Any] = {"limit": limit}
+    if kind:
+        params["kind"] = kind
+    r = await _call("GET", "/v1/memories/proposals", params=params)
+    if r.status_code != 200:
+        return _fail(r, "list_proposals")
+    data = r.json()
+    rows = data.get("proposals") or []
+    total = data.get("total", len(rows))
+    if not rows:
+        return "Draft queue is empty."
+    out = [f"{len(rows)} of {total} draft(s):"]
+    for p in rows:
+        body = p['content'] if verbose else _truncate(p['content'], 60)
+        line = (
+            f"[{p['kind']}·{p['confidence']:.2f}·{p['author_agent']}] "
+            f"{body} · id={p['id']}"
+        )
+        if verbose and p.get("proposal_reason"):
+            line += f"\n  reason: {p['proposal_reason']}"
+        out.append(line)
+    if not verbose:
+        out.append("\n→ get_memory(id) for full content")
+    return "\n".join(out)
+
+
+@mcp.tool()
+async def accept_proposal(
+    proposal_id: str,
+    content: Optional[str] = None,
+    tags: Optional[list[str]] = None,
+    pinned: Optional[bool] = None,
+    supersedes: Optional[str] = None,
+) -> str:
+    """Promote a draft proposal to an active memory. Optionally edit
+    content / tags / pinned before accepting. Use `supersedes` to
+    chain onto an existing similar memory (the merge path) — the
+    similar-memory id comes back from `propose_memory` as
+    `similar_existing`.
+    """
+    body: dict[str, Any] = {}
+    if content is not None: body["content"] = content
+    if tags is not None: body["tags"] = tags
+    if pinned is not None: body["pinned"] = pinned
+    if supersedes: body["supersedes"] = supersedes
+    r = await _call("POST", f"/v1/memories/proposals/{proposal_id}/accept", json=body)
+    if r.status_code != 200:
+        return _fail(r, "accept_proposal")
+    data = r.json()
+    note = f" (supersedes {data['supersedes']})" if data.get("supersedes") else ""
+    return f"Accepted proposal id={data['id']} → status=active, confidence={data['confidence']}{note}"
+
+
+@mcp.tool()
+async def reject_proposal(
+    proposal_id: str,
+    reason: Optional[str] = None,
+) -> str:
+    """Archive a draft proposal — it won't appear in retrieval results.
+    Reason (optional) is appended to the row for auditing.
+    """
+    r = await _call("POST", f"/v1/memories/proposals/{proposal_id}/reject",
+                    json={"reason": reason} if reason else {})
+    if r.status_code != 200:
+        return _fail(r, "reject_proposal")
+    return f"Rejected proposal id={proposal_id} (archived)"
 
 
 @mcp.tool()

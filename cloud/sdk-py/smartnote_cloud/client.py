@@ -50,6 +50,7 @@ class Client:
         self._jwt: str | None = None
         self._jwt_exp: int = 0
         self.memories = _MemoriesResource(self)
+        self.proposals = _ProposalsResource(self)
         self.preferences = _PreferencesResource(self)
         self.documents = _DocumentsResource(self)
         self.retrieve = _RetrieveCallable(self)
@@ -154,6 +155,67 @@ class _MemoriesResource:
 
     def delete(self, memory_id: str) -> None:
         self._c.request("DELETE", f"/v1/memories/{memory_id}")
+
+
+class _ProposalsResource:
+    """Memory proposal queue — MLflow autolog-style low-confidence
+    candidates waiting for human/policy review before becoming active.
+    """
+
+    def __init__(self, client: "Client"):
+        self._c = client
+
+    def propose(
+        self, kind: str, content: str, *,
+        reason: str | None = None,
+        scope: str = "global",
+        tags: list[str] | None = None,
+        structured: dict | None = None,
+        confidence: float = 0.5,
+    ) -> dict:
+        body: dict[str, Any] = {
+            "kind": kind, "content": content, "scope": scope,
+            "tags": tags or [], "confidence": confidence,
+        }
+        if reason: body["reason"] = reason
+        if structured is not None: body["structured"] = structured
+        return self._c.request("POST", "/v1/memories/proposals", json=body).json()
+
+    def list(
+        self, *, kind: str | None = None, limit: int = 50, offset: int = 0,
+    ) -> dict:
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        if kind: params["kind"] = kind
+        return self._c.request("GET", "/v1/memories/proposals", params=params).json()
+
+    def accept(
+        self, proposal_id: str, *,
+        content: str | None = None,
+        tags: list[str] | None = None,
+        pinned: bool | None = None,
+        confidence: float | None = None,
+        supersedes: str | None = None,
+    ) -> dict:
+        body: dict[str, Any] = {}
+        if content is not None: body["content"] = content
+        if tags is not None: body["tags"] = tags
+        if pinned is not None: body["pinned"] = pinned
+        if confidence is not None: body["confidence"] = confidence
+        if supersedes is not None: body["supersedes"] = supersedes
+        return self._c.request(
+            "POST", f"/v1/memories/proposals/{proposal_id}/accept", json=body,
+        ).json()
+
+    def reject(self, proposal_id: str, *, reason: str | None = None) -> dict:
+        return self._c.request(
+            "POST", f"/v1/memories/proposals/{proposal_id}/reject",
+            json={"reason": reason} if reason else {},
+        ).json()
+
+    def batch_accept(self, ids: list[str]) -> dict:
+        return self._c.request(
+            "POST", "/v1/memories/proposals/batch-accept", json={"ids": ids},
+        ).json()
 
 
 class _PreferencesResource:

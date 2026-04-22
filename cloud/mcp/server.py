@@ -79,6 +79,16 @@ def _err(e: Exception) -> str:
     return f"error: {e}"
 
 
+# ── Output helper ──────────────────────────────────────────────
+# Same compact-by-default philosophy as cloud/api/app/mcp_http.py —
+# tool output lands in the agent's conversation UI under the user's
+# message bubble, so we truncate content and append full UUID at end.
+
+def _truncate(text: str, limit: int = 60) -> str:
+    t = " ".join((text or "").split())
+    return t if len(t) <= limit else t[: limit - 1] + "…"
+
+
 # ── Tools: memories ────────────────────────────────────────────
 
 @mcp.tool()
@@ -86,17 +96,21 @@ def search_memory(
     query: str,
     kinds: Optional[list[str]] = None,
     topk: int = 8,
+    verbose: bool = False,
 ) -> str:
     """Search the user's memories by meaning + keyword.
 
-    Prefer this over listing memories when you're trying to answer a
-    question — it ranks by vector similarity + substring match, with
-    pinned memories always first.
+    DEFAULT OUTPUT IS COMPACT — one line per hit, ~60-char preview,
+    full uuid at end for follow-up `get_memory(id)` calls. Tool
+    output gets rendered inside the agent's conversation bubble, so
+    dumping full content clutters the UI. Pass `verbose=True` only
+    when you actually need full content inline.
 
     Args:
         query: Natural-language description of what you're looking for.
         kinds: Optional filter (e.g. ["preference"], ["fact","episode"]).
-        topk: Max results to return (default 8).
+        topk: Max results (default 8).
+        verbose: Include full content inline (legacy behavior).
     """
     try:
         data = _sn().retrieve(query, kinds=kinds, topk=topk)
@@ -105,14 +119,23 @@ def search_memory(
     results = data.get("results", [])
     if not results:
         return f"No matches for: {query}"
-    lines = [f"Matches for: {query}"]
+    if verbose:
+        lines = [f"Matches for: {query}"]
+        for r in results:
+            lines.append(
+                f"- [{r['kind']}, score={r.get('score', 0):.2f}] {r['content']} · id={r['id']}"
+            )
+        return "\n".join(lines)
+    chips = []
     for r in results:
-        score = r.get("score", 0)
-        lines.append(
-            f"- [{r['kind']}, score={score:.2f}] {r['content']}"
-            + (f"  (id={r['id']})")
+        chips.append(
+            f"[{r['kind']}·{r.get('score', 0):.2f}] {_truncate(r['content'])} · id={r['id']}"
         )
-    return "\n".join(lines)
+    return (
+        f"{len(results)} match(es) for \"{query}\":\n"
+        + "\n".join(chips)
+        + "\n\n→ get_memory(id) for full content"
+    )
 
 
 @mcp.tool()
@@ -174,7 +197,7 @@ def list_memories(
     out = [f"Memories ({len(rows)}):"]
     for r in rows:
         pin = "📌 " if r.get("pinned") else ""
-        out.append(f"- {pin}[{r['kind']}] {r['content'][:120]}  (id={r['id']})")
+        out.append(f"{pin}[{r['kind']}] {_truncate(r['content'])} · id={r['id']}")
     return "\n".join(out)
 
 
