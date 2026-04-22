@@ -3731,6 +3731,22 @@ def api_sync_preview() -> dict:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class SyncPushOneRequest(BaseModel):
+    kind: str
+    local_id: str
+
+
+@app.post("/sync/push-one")
+def api_sync_push_one(req: SyncPushOneRequest) -> dict:
+    """Push a single (kind, local_id) pair. Used by the UI's per-item
+    progress loop so the user can cancel mid-batch."""
+    from app import cloud_sync
+    try:
+        return cloud_sync.push_one(req.kind, req.local_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/sync/push")
 def api_sync_push() -> dict:
     """Push every local entity that has drifted from its recorded

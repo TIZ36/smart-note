@@ -4,6 +4,7 @@ import { Sidebar } from "./components/layout/Sidebar";
 import { NihoParticles } from "./components/layout/NihoParticles";
 import { SearchPage } from "./components/search/SearchPage";
 import { SettingsPanel } from "./components/settings/SettingsPanel";
+import { CloudSyncPage } from "./components/cloud-sync/CloudSyncPage";
 import { InsightsPanel } from "./components/dashboard/InsightsPanel";
 import { SkillsPanel } from "./components/skills/SkillsPanel";
 import { WikiSourcesPanel } from "./components/wiki/WikiSourcesPanel";
@@ -197,6 +198,7 @@ export default function App() {
 
   function renderMainPanel() {
     if (activeChannel === "settings") return <SettingsPanel />;
+    if (activeChannel === "cloud-sync") return <CloudSyncPage />;
     if (activeChannel === "insights" || activeChannel === "dashboard" || activeChannel === "meta-memory") {
       return <InsightsPanel gatewayOnline={health.gatewayOnline} embeddingMode={health.embeddingMode} />;
     }

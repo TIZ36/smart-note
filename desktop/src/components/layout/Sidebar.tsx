@@ -3,6 +3,8 @@ import { Search, Settings, Loader2, FileEdit, BookOpen, Files, Inbox, Zap, Table
 import { cn } from "@/lib/cn";
 import type { ChannelId } from "@/lib/types";
 import { fetchSmartTables, type SmartTableSummary } from "@/lib/api";
+import { CloudIconAnimated } from "../cloud-sync/CloudIconAnimated";
+import { CLOUD_SYNC_PROGRESS_EVENT } from "../cloud-sync/CloudSyncPage";
 
 const SMART_TABLES_CHANGED_EVENT = "smart-tables-changed";
 
@@ -48,6 +50,23 @@ function NavItem({
 
 export function Sidebar({ activeChannel, onSelect, ingestBusy, wikiTopicCount = 0 }: Props) {
   const [tables, setTables] = useState<SmartTableSummary[]>([]);
+  const [cloudProgress, setCloudProgress] = useState(0);
+  const [cloudAnimating, setCloudAnimating] = useState(false);
+
+  // Listen for progress broadcasts from CloudSyncPage so the cloud nav
+  // icon fills up in real time as the user's upload progresses. A
+  // window-scoped event keeps this wire-up simple — no context
+  // provider / Zustand store just for one icon.
+  useEffect(() => {
+    function onProgress(e: Event) {
+      const ce = e as CustomEvent<{ progress: number; animating: boolean }>;
+      if (!ce.detail) return;
+      setCloudProgress(ce.detail.progress ?? 0);
+      setCloudAnimating(!!ce.detail.animating);
+    }
+    window.addEventListener(CLOUD_SYNC_PROGRESS_EVENT, onProgress);
+    return () => window.removeEventListener(CLOUD_SYNC_PROGRESS_EVENT, onProgress);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -136,6 +155,12 @@ export function Sidebar({ activeChannel, onSelect, ingestBusy, wikiTopicCount = 
 
       <div className="proto-sidebar-footer">
         <NavItem label="Skills" icon={<Zap size={15} strokeWidth={2} />} active={activeChannel === "skills"} onClick={() => onSelect("skills")} />
+        <NavItem
+          label="Cloud Sync"
+          icon={<CloudIconAnimated size={15} progress={cloudProgress} animating={cloudAnimating} />}
+          active={activeChannel === "cloud-sync"}
+          onClick={() => onSelect("cloud-sync")}
+        />
         <NavItem label="Insights" icon={<Inbox size={15} strokeWidth={2} />} active={activeChannel === "insights" || activeChannel === "dashboard" || activeChannel === "meta-memory"} onClick={() => onSelect("insights")} />
         <NavItem label="Settings" icon={<Settings size={15} strokeWidth={2} />} active={activeChannel === "settings"} onClick={() => onSelect("settings")} />
       </div>

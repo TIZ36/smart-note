@@ -1282,3 +1282,21 @@ export async function fetchCloudSyncPreview(): Promise<CloudSyncPreview> {
   if (!res.ok) throw new Error(`preview: ${res.status}`);
   return res.json();
 }
+
+export async function pushSyncOne(
+  kind: string,
+  localId: string,
+  signal?: AbortSignal,
+): Promise<{ action: string; cloud_doc_id?: string; error?: string }> {
+  const res = await fetch(`${BASE}/sync/push-one`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind, local_id: localId }),
+    signal,
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `push-one: ${res.status}`);
+  }
+  return res.json();
+}

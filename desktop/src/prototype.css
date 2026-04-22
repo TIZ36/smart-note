@@ -7057,6 +7057,184 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   border-top: 1px solid var(--color-border);
 }
 
+/* Cloud icon — hollow → filled as upload progresses. Two SVGs layered;
+   filled one is clip-path-inset from the top so it "fills up" visually. */
+.proto-cloud-icon {
+  position: relative;
+  color: var(--color-text-secondary);
+}
+.proto-cloud-icon > svg { position: absolute; inset: 0; }
+.proto-cloud-icon-animating {
+  animation: proto-cloud-pulse 1.6s ease-in-out infinite;
+}
+@keyframes proto-cloud-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.72; }
+}
+
+/* Cloud Sync dedicated page */
+.proto-cloud-sync-page-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--color-border);
+}
+.proto-cloud-sync-page-icon-wrap {
+  width: 56px; height: 56px;
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--color-accent) 10%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-accent);
+  flex: none;
+}
+.proto-cloud-sync-card {
+  padding: 18px 20px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-bg-primary);
+  margin-bottom: 16px;
+}
+.proto-cloud-sync-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  margin: 0 0 14px;
+}
+.proto-cloud-sync-guide-card {
+  background: color-mix(in oklab, var(--color-accent) 3%, transparent);
+}
+
+/* Kind grid — per-kind summary cards on the main page */
+.proto-cloud-sync-kind-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+.proto-cloud-sync-kind-card {
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-elevated);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.proto-cloud-sync-kind-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-secondary);
+}
+.proto-cloud-sync-kind-card-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+.proto-cloud-sync-kind-card-counts {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 18px;
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.proto-cloud-sync-kind-card-counts strong { font-weight: 600; }
+.proto-cloud-sync-kind-card-bytes {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  font-weight: 400;
+}
+.proto-cloud-sync-kind-card-meta {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+.proto-cloud-sync-kind-card-pending {
+  color: var(--color-warning, #d48b00);
+}
+
+/* Upload/pull action row */
+.proto-cloud-sync-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.proto-cloud-sync-refresh { padding: 6px 8px; }
+
+/* Progress bar during upload */
+.proto-cloud-sync-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.proto-cloud-sync-progress-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: color-mix(in oklab, var(--color-text-primary) 8%, transparent);
+  overflow: hidden;
+}
+.proto-cloud-sync-progress-fill {
+  height: 100%;
+  background: var(--color-cloud-fill, #7dd3fc);
+  border-radius: 3px;
+}
+.proto-cloud-sync-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+}
+.proto-cloud-sync-progress-count {
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+  min-width: 110px;
+}
+.proto-cloud-sync-progress-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-muted);
+  display: inline-flex;
+  align-items: center;
+}
+.proto-cloud-sync-cancel {
+  color: var(--color-error, #e5484d);
+  border-color: color-mix(in oklab, var(--color-error, #e5484d) 40%, transparent);
+}
+.proto-cloud-sync-cancel:hover {
+  background: color-mix(in oklab, var(--color-error, #e5484d) 10%, transparent);
+}
+
+.proto-cloud-sync-note {
+  margin-top: 12px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.proto-cloud-sync-note-success {
+  background: color-mix(in oklab, var(--color-accent) 10%, transparent);
+  color: var(--color-accent);
+}
+.proto-cloud-sync-note-warning {
+  background: color-mix(in oklab, var(--color-warning, #d48b00) 12%, transparent);
+  color: var(--color-warning, #d48b00);
+}
+.proto-cloud-sync-note-error {
+  background: color-mix(in oklab, var(--color-error, #e5484d) 12%, transparent);
+  color: var(--color-error, #e5484d);
+}
+
 /* Cloud sync onboarding — 3-step guide shown before credentials fill */
 .proto-cloud-sync-guide {
   margin-top: 14px;
