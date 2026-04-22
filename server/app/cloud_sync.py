@@ -200,8 +200,14 @@ def _serialize_smart_table(table_name: str) -> LocalEntity | None:
     }
     for sheet_meta in sheets:
         try:
-            sheet = smart_table.read_sheet(table_name, sheet_meta["name"])
-        except Exception:
+            # NB: the public API is `get_sheet`, not `read_sheet`. A
+            # typo here used to swallow the exception below and drop
+            # every sheet silently, so row/column edits never moved
+            # the content hash — local changes showed up as "no delta"
+            # in cloud sync. Keep this call right.
+            sheet = smart_table.get_sheet(table_name, sheet_meta["name"])
+        except Exception as e:
+            log.warning("serialize_smart_table: skipping sheet %s (%s)", sheet_meta.get("name"), e)
             continue
         payload["sheets"].append(sheet)
     # Sort keys for stable serialization — otherwise dict ordering
