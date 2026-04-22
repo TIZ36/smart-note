@@ -11,7 +11,7 @@ import type { AppSettings } from "@/lib/types";
 import {
   readSettings, writeSettings,
   fetchCloudStackStatus, startCloudStack, stopCloudStack,
-  type CloudStackService,
+  STACK_IPC_UNAVAILABLE, type CloudStackService,
 } from "@/lib/electron";
 import { CloudIconAnimated } from "./CloudIconAnimated";
 import {
@@ -60,14 +60,25 @@ export function CloudSyncPage() {
   const [stackServices, setStackServices] = useState<CloudStackService[] | null>(null);
   const [stackBusy, setStackBusy] = useState<"start" | "stop" | "rebuild" | null>(null);
   const [stackError, setStackError] = useState("");
+  // When the running Electron main process predates the stack IPC, we
+  // want to hide stack controls entirely (not error-spam the page).
+  const [stackIpcUnavailable, setStackIpcUnavailable] = useState(false);
 
   // ── Load / refresh ─────────────────────────────────────────
 
   const refreshStack = useCallback(async () => {
     try {
       const r = await fetchCloudStackStatus();
+      if (!r.ok && r.error === STACK_IPC_UNAVAILABLE) {
+        // Main-process predates the handlers. Hide stack controls
+        // rather than spamming the page with a technical error.
+        setStackIpcUnavailable(true);
+        setStackServices(null);
+        return;
+      }
+      setStackIpcUnavailable(false);
       setStackServices(r.ok ? r.services : []);
-      if (!r.ok && r.error) setStackError(r.error);
+      setStackError(r.ok ? "" : (r.error || ""));
     } catch (e) {
       setStackServices([]);
       setStackError(String(e));
@@ -264,11 +275,9 @@ export function CloudSyncPage() {
             </div>
           </div>
 
-          {/* Stack-down banner — most common reason "Test connection"
-              fails is the docker stack isn't running (sleep, reboot,
-              an earlier `docker compose down`). Surface this before the
-              user digs through credentials looking for a typo. */}
-          {stackServices !== null && (() => {
+          {/* Stack-down banner — only when IPC is available + we've
+              actually seen the services list. */}
+          {!stackIpcUnavailable && stackServices !== null && (() => {
             const runningCount = stackServices.filter((s) => s.state === "running").length;
             const total = stackServices.length;
             const allDown = total === 0 || runningCount === 0;
@@ -320,9 +329,16 @@ export function CloudSyncPage() {
               </div>
             );
           })()}
-          {stackError && (
+          {stackError && !stackIpcUnavailable && (
             <div className="proto-cloud-sync-note proto-cloud-sync-note-error">
               <AlertTriangle size={12} /> {stackError}
+            </div>
+          )}
+          {stackIpcUnavailable && (
+            <div className="proto-cloud-sync-note proto-cloud-sync-note-warning" style={{ marginBottom: 12 }}>
+              <AlertTriangle size={12} />
+              Stack controls unavailable — quit and relaunch the desktop app to
+              enable the Start / Stop buttons. (Sync itself keeps working.)
             </div>
           )}
 
@@ -393,7 +409,7 @@ export function CloudSyncPage() {
                 Unsaved credentials — Upload / Pull use the persisted values until you Save.
               </div>
             )}
-            {stackServices && stackServices.length > 0 && (
+            {!stackIpcUnavailable && stackServices && stackServices.length > 0 && (
               <div className="proto-cloud-stack-strip">
                 <span className="proto-cloud-stack-strip-title">Stack:</span>
                 {stackServices.map((s) => (

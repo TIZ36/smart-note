@@ -177,16 +177,48 @@ export type CloudStackStatus = {
   error?: string;
 };
 
+/** Sentinel value in `error` when the running Electron main process
+ *  predates the stack-lifecycle IPC handlers. The UI uses this to hide
+ *  stack controls silently instead of surfacing a scary "No handler
+ *  registered" error to the user. */
+export const STACK_IPC_UNAVAILABLE = "__stack_ipc_unavailable__";
+
+function isMissingHandlerError(err: unknown): boolean {
+  const msg = String((err as { message?: unknown })?.message || err);
+  return msg.includes("No handler registered");
+}
+
 export async function fetchCloudStackStatus(): Promise<CloudStackStatus> {
-  return getDesktop().invoke("cloud_stack_status") as Promise<CloudStackStatus>;
+  try {
+    return (await getDesktop().invoke("cloud_stack_status")) as CloudStackStatus;
+  } catch (e) {
+    if (isMissingHandlerError(e)) {
+      return { ok: false, error: STACK_IPC_UNAVAILABLE, services: [] };
+    }
+    return { ok: false, error: String(e), services: [] };
+  }
 }
 
 export async function startCloudStack(
   opts: { rebuild?: boolean } = {},
 ): Promise<{ ok: boolean; output?: string; error?: string }> {
-  return getDesktop().invoke("cloud_stack_start", opts) as Promise<{ ok: boolean; output?: string; error?: string }>;
+  try {
+    return (await getDesktop().invoke("cloud_stack_start", opts)) as { ok: boolean; output?: string; error?: string };
+  } catch (e) {
+    if (isMissingHandlerError(e)) {
+      return { ok: false, error: STACK_IPC_UNAVAILABLE };
+    }
+    return { ok: false, error: String(e) };
+  }
 }
 
 export async function stopCloudStack(): Promise<{ ok: boolean; output?: string; error?: string }> {
-  return getDesktop().invoke("cloud_stack_stop") as Promise<{ ok: boolean; output?: string; error?: string }>;
+  try {
+    return (await getDesktop().invoke("cloud_stack_stop")) as { ok: boolean; output?: string; error?: string };
+  } catch (e) {
+    if (isMissingHandlerError(e)) {
+      return { ok: false, error: STACK_IPC_UNAVAILABLE };
+    }
+    return { ok: false, error: String(e) };
+  }
 }
