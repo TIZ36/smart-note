@@ -1,38 +1,26 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   CheckCircle2, AlertTriangle, Loader2, Save, Upload, Download, RefreshCw,
   X, CloudOff, FileText, BookOpen, Table, Sparkles, Copy, Ban, Layers,
 } from "lucide-react";
-import { AnimatePresence, motion } from "framer-motion";
+import { motion } from "framer-motion";
 import { cn } from "@/lib/cn";
 import * as api from "@/lib/api";
 import type { AppSettings } from "@/lib/types";
 import { readSettings, writeSettings } from "@/lib/electron";
 import { CloudIconAnimated } from "./CloudIconAnimated";
+import {
+  useCloudSyncUpload, startUpload, cancelUpload, progressOf,
+  type UploadPhase,
+} from "./upload-state";
 
 /* Dedicated Cloud Sync page — promoted out of Settings.
 
-   Sections (top to bottom):
-     1. Header with big animated cloud icon (fills as upload progresses)
-     2. Credentials card (URL, API key, Test, Save)
-     3. Overview card (per-kind counts, last sync, conflicts)
-     4. Upload card (cancelable per-item upload loop + pull button)
-
-   The per-item upload loop drives both real progress feedback and
-   cancellability — we iterate the preview and POST /sync/push-one for
-   each item, checking an AbortController between calls.
-
-   The nav-icon fill is kept in sync via a window-scoped custom event
-   so the Sidebar component can listen without a context provider. */
-
-export const CLOUD_SYNC_PROGRESS_EVENT = "smartnote-cloud-sync-progress";
-
-type UploadState =
-  | { phase: "idle" }
-  | { phase: "uploading"; current: number; total: number; currentName: string }
-  | { phase: "canceled"; completed: number; total: number }
-  | { phase: "done"; completed: number; total: number }
-  | { phase: "error"; error: string };
+   Upload state lives in `./upload-state.ts` as an app-level singleton,
+   not inside this component. That's what makes the upload survive
+   page navigation: tabbing over to Search mid-upload and coming back
+   still shows the right progress, and the nav-icon fill stays live
+   via the same subscription. */
 
 type TestResult =
   | { ok: true; memory_count?: number }
@@ -55,10 +43,10 @@ export function CloudSyncPage() {
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
-  const [upload, setUpload] = useState<UploadState>({ phase: "idle" });
+  // Upload state is shared app-wide — survives navigating away + back.
+  const upload: UploadPhase = useCloudSyncUpload();
   const [pulling, setPulling] = useState(false);
   const [pullError, setPullError] = useState("");
-  const abortRef = useRef<AbortController | null>(null);
 
   // ── Load / refresh ─────────────────────────────────────────
 
@@ -101,6 +89,15 @@ export function CloudSyncPage() {
 
   useEffect(() => { void refresh(); }, [refresh]);
 
+  // When an upload finishes elsewhere (or completes while on this page),
+  // refresh status + preview so the UI reflects the new state without a
+  // manual Refresh click.
+  useEffect(() => {
+    if (upload.phase === "done" || upload.phase === "canceled" || upload.phase === "error") {
+      void refresh();
+    }
+  }, [upload.phase, refresh]);
+
   function updateField<K extends keyof AppSettings>(field: K, value: AppSettings[K]) {
     setSettings((p) => (p ? { ...p, [field]: value } : p));
   }
@@ -110,29 +107,6 @@ export function CloudSyncPage() {
   const enabled = settings?.cloud_sync_enabled !== false;
   const hasConfig = Boolean(url && apiKey);
   const dirty = persisted.url !== url || persisted.key !== apiKey || persisted.enabled !== enabled;
-
-  // ── Progress event broadcast for the Sidebar icon ──────────
-
-  const broadcast = useCallback((progress: number, animating: boolean) => {
-    window.dispatchEvent(new CustomEvent(CLOUD_SYNC_PROGRESS_EVENT, {
-      detail: { progress, animating },
-    }));
-  }, []);
-
-  useEffect(() => {
-    // Idle state also broadcasts so the icon resets when the page
-    // mounts after a completed upload elsewhere.
-    if (upload.phase === "uploading") {
-      const ratio = upload.total === 0 ? 0 : upload.current / upload.total;
-      broadcast(ratio, true);
-    } else if (upload.phase === "done") {
-      broadcast(1, false);
-      const t = setTimeout(() => broadcast(0, false), 2500);
-      return () => clearTimeout(t);
-    } else {
-      broadcast(0, false);
-    }
-  }, [upload, broadcast]);
 
   // ── Actions ────────────────────────────────────────────────
 
@@ -167,58 +141,11 @@ export function CloudSyncPage() {
     }
   }
 
-  /** Per-item upload loop with client-side cancel.
-   *  Flattens the preview into an ordered [kind, local_id] list, POSTs
-   *  /sync/push-one for each, checking the AbortController between
-   *  calls. Matches the "I can abort mid-upload" user request without
-   *  needing server-side resumability.  */
   async function handleUpload() {
-    if (!preview || upload.phase === "uploading") return;
-    const tasks: { kind: string; localId: string; name: string; size: number; status: string }[] = [];
-    for (const [kind, info] of Object.entries(preview.kinds)) {
-      for (const item of info.items) {
-        if (item.status === "unchanged") continue;
-        tasks.push({ kind, localId: item.local_id, name: item.name, size: item.size, status: item.status });
-      }
-    }
-    if (tasks.length === 0) return;
-
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
-    setUpload({ phase: "uploading", current: 0, total: tasks.length, currentName: tasks[0].name });
-
-    let completed = 0;
-    let errored: { name: string; error: string } | null = null;
-    for (const t of tasks) {
-      if (ctrl.signal.aborted) break;
-      setUpload({ phase: "uploading", current: completed, total: tasks.length, currentName: t.name });
-      try {
-        const r = await api.pushSyncOne(t.kind, t.localId, ctrl.signal);
-        if (r.action === "error") {
-          errored = { name: t.name, error: r.error || "unknown" };
-          break;
-        }
-      } catch (e) {
-        if (ctrl.signal.aborted || (e as { name?: string }).name === "AbortError") break;
-        errored = { name: t.name, error: String(e) };
-        break;
-      }
-      completed += 1;
-    }
-
-    abortRef.current = null;
-    if (ctrl.signal.aborted) {
-      setUpload({ phase: "canceled", completed, total: tasks.length });
-    } else if (errored) {
-      setUpload({ phase: "error", error: `failed on "${errored.name}": ${errored.error}` });
-    } else {
-      setUpload({ phase: "done", completed, total: tasks.length });
-    }
-    await refresh();
-  }
-
-  function cancelUpload() {
-    if (abortRef.current) abortRef.current.abort();
+    if (!preview) return;
+    await startUpload(preview);
+    // refresh is triggered by the upload-state effect above when the
+    // loop finishes, so no explicit await here.
   }
 
   async function handlePull() {
@@ -244,9 +171,7 @@ export function CloudSyncPage() {
   }
 
   const pendingCount = preview ? (preview.total_new + preview.total_changed) : 0;
-  const uploadProgress = upload.phase === "uploading"
-    ? (upload.total === 0 ? 0 : upload.current / upload.total)
-    : upload.phase === "done" ? 1 : 0;
+  const uploadProgress = progressOf(upload);
 
   // Kinds already synced at least once (from status.entities), or
   // pending-first-upload (from preview.kinds). Merge for a complete view.
@@ -532,7 +457,7 @@ function KindCard({ kind, synced, pending }: {
 }
 
 function UploadProgress({ state, onCancel }: {
-  state: Extract<UploadState, { phase: "uploading" }>;
+  state: Extract<UploadPhase, { phase: "uploading" }>;
   onCancel: () => void;
 }) {
   const pct = state.total === 0 ? 0 : Math.floor((state.current / state.total) * 100);

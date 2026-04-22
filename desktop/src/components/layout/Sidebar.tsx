@@ -4,7 +4,7 @@ import { cn } from "@/lib/cn";
 import type { ChannelId } from "@/lib/types";
 import { fetchSmartTables, type SmartTableSummary } from "@/lib/api";
 import { CloudIconAnimated } from "../cloud-sync/CloudIconAnimated";
-import { CLOUD_SYNC_PROGRESS_EVENT } from "../cloud-sync/CloudSyncPage";
+import { useCloudSyncUpload, progressOf, isAnimating } from "../cloud-sync/upload-state";
 
 const SMART_TABLES_CHANGED_EVENT = "smart-tables-changed";
 
@@ -50,23 +50,13 @@ function NavItem({
 
 export function Sidebar({ activeChannel, onSelect, ingestBusy, wikiTopicCount = 0 }: Props) {
   const [tables, setTables] = useState<SmartTableSummary[]>([]);
-  const [cloudProgress, setCloudProgress] = useState(0);
-  const [cloudAnimating, setCloudAnimating] = useState(false);
 
-  // Listen for progress broadcasts from CloudSyncPage so the cloud nav
-  // icon fills up in real time as the user's upload progresses. A
-  // window-scoped event keeps this wire-up simple — no context
-  // provider / Zustand store just for one icon.
-  useEffect(() => {
-    function onProgress(e: Event) {
-      const ce = e as CustomEvent<{ progress: number; animating: boolean }>;
-      if (!ce.detail) return;
-      setCloudProgress(ce.detail.progress ?? 0);
-      setCloudAnimating(!!ce.detail.animating);
-    }
-    window.addEventListener(CLOUD_SYNC_PROGRESS_EVENT, onProgress);
-    return () => window.removeEventListener(CLOUD_SYNC_PROGRESS_EVENT, onProgress);
-  }, []);
+  // Subscribe to the app-wide cloud-sync upload singleton — the Sidebar
+  // stays mounted across page navigation, so it tracks the cloud icon
+  // fill regardless of whether CloudSyncPage is the active view.
+  const upload = useCloudSyncUpload();
+  const cloudProgress = progressOf(upload);
+  const cloudAnimating = isAnimating(upload);
 
   useEffect(() => {
     let cancelled = false;
