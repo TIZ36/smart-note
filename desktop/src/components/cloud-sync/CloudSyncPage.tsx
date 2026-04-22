@@ -14,6 +14,7 @@ import {
   STACK_IPC_UNAVAILABLE, type CloudStackService,
 } from "@/lib/electron";
 import { CloudIconAnimated } from "./CloudIconAnimated";
+import { AgentInstallerCard } from "./AgentInstallerCard";
 import {
   useCloudSyncUpload, startUpload, cancelUpload, progressOf,
   type UploadPhase,
@@ -458,6 +459,11 @@ export function CloudSyncPage() {
               </div>
             </section>
           )}
+
+          {/* One-click MCP installer — most users bounce at "edit this
+              JSON file" step. Placing this right after Connection so
+              the aha happens within seconds of saving credentials. */}
+          {hasConfig && <AgentInstallerCard url={url} apiKey={apiKey} />}
 
           {/* Knowledge model — what syncs vs what doesn't */}
           {hasConfig && (

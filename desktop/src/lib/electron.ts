@@ -222,3 +222,82 @@ export async function stopCloudStack(): Promise<{ ok: boolean; output?: string; 
     return { ok: false, error: String(e) };
   }
 }
+
+// ── MCP config installer (one-click install to Cursor/Claude Code) ─
+
+export type McpInstallerAgentStatus = {
+  available: boolean;
+  path?: string;
+  exists?: boolean;
+  installed?: boolean;
+  malformed?: boolean;
+};
+
+export async function fetchMcpInstallerStatus(): Promise<{
+  ok: boolean;
+  agents: Record<string, McpInstallerAgentStatus>;
+}> {
+  try {
+    return (await getDesktop().invoke("mcp_installer_status")) as { ok: boolean; agents: Record<string, McpInstallerAgentStatus> };
+  } catch (e) {
+    if (isMissingHandlerError(e)) {
+      return { ok: false, agents: {} };
+    }
+    throw e;
+  }
+}
+
+export async function installMcpForAgent(
+  agent: string,
+  url: string,
+  apiKey: string,
+): Promise<{ ok: boolean; path?: string; replaced?: boolean; error?: string }> {
+  try {
+    return (await getDesktop().invoke("mcp_installer_install", { agent, url, apiKey })) as { ok: boolean; path?: string; replaced?: boolean; error?: string };
+  } catch (e) {
+    if (isMissingHandlerError(e)) {
+      return { ok: false, error: STACK_IPC_UNAVAILABLE };
+    }
+    return { ok: false, error: String(e) };
+  }
+}
+
+export async function uninstallMcpForAgent(
+  agent: string,
+): Promise<{ ok: boolean; removed?: boolean; error?: string }> {
+  try {
+    return (await getDesktop().invoke("mcp_installer_uninstall", { agent })) as { ok: boolean; removed?: boolean; error?: string };
+  } catch (e) {
+    if (isMissingHandlerError(e)) {
+      return { ok: false, error: STACK_IPC_UNAVAILABLE };
+    }
+    return { ok: false, error: String(e) };
+  }
+}
+
+// ── First-run onboarding ──
+
+export async function fetchFirstRunState(): Promise<{
+  isFirstRun: boolean;
+  sampleAlreadyInstalled: boolean;
+  sampleTargetPath: string;
+}> {
+  try {
+    return (await getDesktop().invoke("first_run_state")) as {
+      isFirstRun: boolean;
+      sampleAlreadyInstalled: boolean;
+      sampleTargetPath: string;
+    };
+  } catch {
+    // Stale main process — assume not first-run to avoid nagging.
+    return { isFirstRun: false, sampleAlreadyInstalled: false, sampleTargetPath: "" };
+  }
+}
+
+export async function installSampleNote(): Promise<{ ok: boolean; path?: string; error?: string }> {
+  try {
+    return (await getDesktop().invoke("install_sample_note")) as { ok: boolean; path?: string; error?: string };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}

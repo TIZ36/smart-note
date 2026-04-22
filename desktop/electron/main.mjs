@@ -8,6 +8,7 @@ import net from "net";
 import http from "http";
 import { spawn } from "child_process";
 import readline from "readline";
+import os from "os";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -936,4 +937,215 @@ ipcMain.handle("cloud_stack_stop", async () => {
   // `start` is instant. If the user really wants to wipe, they can
   // run `docker compose down -v` manually.
   return runDockerCompose(["stop"]);
+});
+
+// ── MCP config installer ───────────────────────────────────────────
+//
+// Writes SmartNote Cloud's MCP server entry into the target agent's
+// config file (Claude Code user-scope `~/.claude.json`, Cursor
+// user-scope `~/.cursor/mcp.json`, OpenCode `~/.config/opencode/opencode.json`).
+//
+// We intentionally merge into the existing config rather than
+// overwrite — other MCP servers the user registered must survive.
+// On conflict (entry with our reserved name already exists), the
+// handler returns `{ ok: true, replaced: true }` so the UI can show
+// "Updated existing config" rather than "Added new".
+
+function agentConfigPath(agent) {
+  const home = os.homedir();
+  switch (agent) {
+    case "claude-code":
+      // Claude Code stores user-scope MCP in ~/.claude.json (same
+      // file that holds other CLI settings). We only touch the
+      // mcpServers key.
+      return path.join(home, ".claude.json");
+    case "cursor":
+      return path.join(home, ".cursor", "mcp.json");
+    case "opencode":
+      return path.join(home, ".config", "opencode", "opencode.json");
+    default:
+      return null;
+  }
+}
+
+function readJsonSafe(file) {
+  try {
+    if (!fs.existsSync(file)) return null;
+    const raw = fs.readFileSync(file, "utf8");
+    if (!raw.trim()) return {};
+    return JSON.parse(raw);
+  } catch {
+    // File exists but isn't valid JSON — don't clobber it.
+    return { __malformed: true };
+  }
+}
+
+function writeJsonPretty(file, obj) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  // Backup existing before write so a merge bug can't lose the
+  // other MCP entries the user registered. One rolling `.bak` is
+  // enough; we're not versioning here.
+  if (fs.existsSync(file)) {
+    try { fs.copyFileSync(file, file + ".bak"); } catch { /* best effort */ }
+  }
+  fs.writeFileSync(file, JSON.stringify(obj, null, 2) + "\n", "utf8");
+}
+
+/**
+ * Compose the MCP server entry for a given agent.
+ *
+ * Claude Code & Cursor speak streamable-HTTP directly, so we emit
+ * the remote-URL form. OpenCode also supports it as `type: "remote"`.
+ * Either way the URL + Authorization header are the only required
+ * bits — no local Python process, no absolute paths to a venv.
+ */
+function buildMcpEntry(agent, url, apiKey) {
+  const endpoint = url.replace(/\/$/, "") + "/mcp/";
+  const headers = { Authorization: `Bearer ${apiKey}` };
+  switch (agent) {
+    case "opencode":
+      return {
+        type: "remote",
+        url: endpoint,
+        headers,
+        enabled: true,
+      };
+    default:
+      // Claude Code & Cursor share the same shape.
+      return { url: endpoint, headers };
+  }
+}
+
+ipcMain.handle("mcp_installer_status", async () => {
+  // Report which configs already contain our entry so the UI can
+  // flip the button from "Install" to "Reinstall" / "Already set".
+  const agents = ["claude-code", "cursor", "opencode"];
+  const out = {};
+  for (const agent of agents) {
+    const file = agentConfigPath(agent);
+    if (!file) { out[agent] = { available: false }; continue; }
+    const cfg = readJsonSafe(file);
+    const installed = Boolean(
+      cfg && !cfg.__malformed && (cfg.mcpServers || cfg.mcp)?.["smartnote-cloud"]
+    );
+    out[agent] = {
+      available: true,
+      path: file,
+      exists: fs.existsSync(file),
+      installed,
+      malformed: Boolean(cfg && cfg.__malformed),
+    };
+  }
+  return { ok: true, agents: out };
+});
+
+ipcMain.handle("mcp_installer_install", async (_, { agent, url, apiKey }) => {
+  if (!agent || !url || !apiKey) {
+    return { ok: false, error: "agent, url, and apiKey are required" };
+  }
+  const file = agentConfigPath(agent);
+  if (!file) return { ok: false, error: `unknown agent: ${agent}` };
+
+  const existing = readJsonSafe(file) ?? {};
+  if (existing.__malformed) {
+    return { ok: false, error: `${file} exists but is not valid JSON. Fix or delete it, then try again.` };
+  }
+
+  const entry = buildMcpEntry(agent, url, apiKey);
+  // OpenCode's config uses `mcp`, the others use `mcpServers`. Both
+  // are flat dicts keyed by server name.
+  const key = agent === "opencode" ? "mcp" : "mcpServers";
+  const next = { ...existing };
+  const prior = { ...(next[key] || {}) };
+  const replaced = Boolean(prior["smartnote-cloud"]);
+  prior["smartnote-cloud"] = entry;
+  next[key] = prior;
+
+  try {
+    writeJsonPretty(file, next);
+  } catch (e) {
+    return { ok: false, error: `failed to write ${file}: ${e.message}` };
+  }
+  return { ok: true, path: file, replaced };
+});
+
+ipcMain.handle("mcp_installer_uninstall", async (_, { agent }) => {
+  const file = agentConfigPath(agent);
+  if (!file) return { ok: false, error: `unknown agent: ${agent}` };
+  const existing = readJsonSafe(file);
+  if (!existing || existing.__malformed) return { ok: false, error: "config not found or malformed" };
+  const key = agent === "opencode" ? "mcp" : "mcpServers";
+  if (!existing[key] || !existing[key]["smartnote-cloud"]) {
+    return { ok: true, removed: false };
+  }
+  const next = { ...existing, [key]: { ...existing[key] } };
+  delete next[key]["smartnote-cloud"];
+  try {
+    writeJsonPretty(file, next);
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+  return { ok: true, removed: true };
+});
+
+// ── First-run sample note installer ────────────────────────────────
+//
+// Users report: opening the app the first time, there's no signal
+// what to do. The sample note bypasses "pick a file" friction — we
+// copy a curated sample into the user's Documents folder and return
+// the path so the renderer can immediately open it.
+
+function sampleSourcePath() {
+  // `sample-note.md` ships inside the electron directory so it's
+  // bundled with the app.
+  return path.join(__dirname, "sample-note.md");
+}
+
+function userSampleTargetPath() {
+  // Documents folder on macOS / Linux / Windows. `home` fallback
+  // covers esoteric setups.
+  const home = os.homedir();
+  const docs = path.join(home, "Documents");
+  const dir = fs.existsSync(docs) ? docs : home;
+  return path.join(dir, "smartnote-sample.md");
+}
+
+ipcMain.handle("first_run_state", async () => {
+  // "Has this user ever had a raw_path set?" is the cheapest signal
+  // for first-run. If prefs.json has rawPath, they've used the app
+  // before, so we don't foist a sample on them again.
+  const prefsFile = path.join(serverRoot(), "data", "prefs.json");
+  let isFirstRun = true;
+  try {
+    if (fs.existsSync(prefsFile)) {
+      const prefs = JSON.parse(fs.readFileSync(prefsFile, "utf8"));
+      if (prefs && typeof prefs.rawPath === "string" && prefs.rawPath.trim()) {
+        isFirstRun = false;
+      }
+    }
+  } catch { /* treat unreadable prefs as first-run */ }
+  const target = userSampleTargetPath();
+  return {
+    isFirstRun,
+    sampleAlreadyInstalled: fs.existsSync(target),
+    sampleTargetPath: target,
+  };
+});
+
+ipcMain.handle("install_sample_note", async () => {
+  const source = sampleSourcePath();
+  if (!fs.existsSync(source)) {
+    return { ok: false, error: `sample file missing at ${source}` };
+  }
+  const target = userSampleTargetPath();
+  try {
+    // Don't overwrite an existing sample — the user may have edited it.
+    if (!fs.existsSync(target)) {
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.copyFileSync(source, target);
+    }
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+  return { ok: true, path: target };
 });

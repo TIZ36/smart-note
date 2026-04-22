@@ -11,7 +11,7 @@ import { NoteViewDialog } from "./NoteViewDialog";
 import { NoteViewSidebar, type SidebarViewItem } from "./NoteViewSidebar";
 import { Plus, Minus } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { pickRawFile, saveRawPathForHotkey } from "@/lib/electron";
+import { pickRawFile, saveRawPathForHotkey, installSampleNote } from "@/lib/electron";
 import * as api from "@/lib/api";
 import type { IngestStep } from "@/App";
 
@@ -477,18 +477,38 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
     }
   }, [rawPath, refreshNoteState]);
 
+  async function handleTrySample() {
+    // Copies the curated sample file to the user's Documents dir and
+    // opens it — skips the "pick a file" friction that kills 80% of
+    // first-run flows. Sample is safe to edit / delete; re-running
+    // this CTA won't overwrite a user-edited copy.
+    const r = await installSampleNote();
+    if (r.ok && r.path) {
+      onSetRawPath(r.path);
+      saveRawPathForHotkey(r.path).catch(() => {});
+      const dir = r.path.replace(/\/[^/]+$/, "");
+      onSetNotePath(`${dir}/note.md`);
+    }
+  }
+
   if (!rawPath) {
     return (
       <div className="proto-editor-empty">
         <div className="proto-editor-empty-inner">
           <FolderOpen size={28} className="proto-editor-empty-icon" />
-          <h2 className="proto-editor-empty-title">Open a Note</h2>
+          <h2 className="proto-editor-empty-title">Start with SmartNote in 30 seconds</h2>
           <p className="proto-editor-empty-desc">
-            Select a raw note file (.md, .txt) as your knowledge source.
+            Try with a curated sample note, or point SmartNote at your own file (.md, .txt).
+            Your raw content is never rewritten — all AI enrichment is additive and reversible.
           </p>
-          <button type="button" onClick={handlePickFile} className="proto-btn proto-btn-primary">
-            Choose file
-          </button>
+          <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 8, flexWrap: "wrap" }}>
+            <button type="button" onClick={handleTrySample} className="proto-btn proto-btn-primary">
+              Try with sample notes
+            </button>
+            <button type="button" onClick={handlePickFile} className="proto-btn">
+              Use your own file
+            </button>
+          </div>
         </div>
       </div>
     );

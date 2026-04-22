@@ -7361,6 +7361,101 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   50% { opacity: 0.72; }
 }
 
+/* Agent installer — one-click MCP registration for Claude Code /
+   Cursor / OpenCode. Three-tile grid; each tile shows agent name,
+   config path hint, install state, and the CTA. */
+.proto-agent-installer-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+.proto-agent-installer-tile {
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: border-color 0.12s, background 0.12s;
+}
+.proto-agent-installer-tile-installed {
+  border-color: color-mix(in oklab, var(--color-accent) 40%, transparent);
+  background: color-mix(in oklab, var(--color-accent) 4%, var(--color-bg-primary));
+}
+.proto-agent-installer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.proto-agent-installer-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+.proto-agent-installer-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--color-accent) 18%, transparent);
+  color: var(--color-accent);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.proto-agent-installer-path {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10px;
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.proto-agent-installer-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.proto-agent-installer-actions > .proto-btn { flex: 1; justify-content: center; }
+.proto-agent-installer-remove {
+  flex: none !important;
+  padding: 6px;
+  color: var(--color-text-muted);
+}
+.proto-agent-installer-remove:hover:not(:disabled) {
+  color: var(--color-error, #e5484d);
+}
+.proto-agent-installer-flash {
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 5px;
+  text-align: center;
+}
+.proto-agent-installer-flash-ok {
+  background: color-mix(in oklab, var(--color-accent) 12%, transparent);
+  color: var(--color-accent);
+}
+.proto-agent-installer-flash-err {
+  background: color-mix(in oklab, var(--color-error, #e5484d) 10%, transparent);
+  color: var(--color-error, #e5484d);
+}
+.proto-agent-installer-warning {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--color-warning, #d48b00);
+}
+.proto-agent-installer-hint {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
 /* Cloud stack lifecycle UI — banner when docker compose is down +
    a small chip strip inside the Credentials card showing each
    service's live state. */
