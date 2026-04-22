@@ -3699,12 +3699,36 @@ def api_sync_status() -> dict:
     return cloud_sync.sync_status()
 
 
+class SyncTestRequest(BaseModel):
+    url: str | None = None
+    api_key: str | None = None
+
+
 @app.post("/sync/test")
-def api_sync_test() -> dict:
-    """Probe cloud reachability + api key validity. Cheap enough to run
-    on every keystroke in the Settings panel if desired."""
+def api_sync_test(req: SyncTestRequest | None = None) -> dict:
+    """Probe cloud reachability + api key validity.
+
+    Accepts optional body `{"url": "...", "api_key": "..."}` so the
+    Settings UI can test unsaved form values. Body omitted → falls
+    back to the persisted settings.
+    """
     from app import cloud_sync
-    return cloud_sync.test_connection()
+    if req is None:
+        return cloud_sync.test_connection()
+    return cloud_sync.test_connection(
+        override_url=req.url,
+        override_api_key=req.api_key,
+    )
+
+
+@app.get("/sync/preview")
+def api_sync_preview() -> dict:
+    """Dry-run: what would /sync/push upload? No cloud calls."""
+    from app import cloud_sync
+    try:
+        return cloud_sync.preview()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/sync/push")

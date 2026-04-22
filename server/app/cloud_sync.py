@@ -683,24 +683,97 @@ def full_sync() -> dict:
     }
 
 
-def test_connection() -> dict:
-    """Cheap 'is my API key valid?' probe. Returns workspace info on
-    success, a structured error on failure."""
-    try:
-        url, _ = _ensure_configured()
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
+def test_connection(
+    override_url: str | None = None,
+    override_api_key: str | None = None,
+) -> dict:
+    """Cheap "is my API key valid?" probe.
+
+    Accepts optional URL + key overrides so the Settings UI can test
+    the form values the user just typed without first having to hit
+    the main Save button. When overrides are omitted, falls back to
+    the persisted app_settings values.
+    """
+    url = (override_url or getattr(app_settings, "cloud_sync_url", "") or "").rstrip("/")
+    key = override_api_key or getattr(app_settings, "cloud_sync_api_key", "") or ""
+    if not url or not key:
+        return {
+            "ok": False,
+            "error": "Fill in both Cloud API URL and API Key, then try again.",
+        }
+    # 1. Reachability: hitting /v1/health is unauthenticated and cheap.
     try:
         r_health = httpx.get(f"{url}/v1/health", timeout=5.0)
         r_health.raise_for_status()
     except Exception as e:
-        return {"ok": False, "error": f"cloud unreachable: {e}"}
+        return {"ok": False, "error": f"cloud unreachable at {url}: {e}"}
+    # 2. Key validity: exchange for JWT, then GET /v1/usage which
+    # requires memories:read scope (smallest permissible). Don't touch
+    # the process-wide JWT cache — the form values may not match what
+    # we'll actually sync with later.
     try:
-        r = _cloud_request("GET", "/v1/me" if False else "/v1/usage")
+        t = httpx.post(f"{url}/v1/auth/token", json={"api_key": key}, timeout=10.0)
+        if t.status_code == 401:
+            return {"ok": False, "error": "API key rejected (401) — check for typos or revocation."}
+        t.raise_for_status()
+        jwt = t.json()["jwt"]
+        r = httpx.get(f"{url}/v1/usage", headers={"Authorization": f"Bearer {jwt}"}, timeout=10.0)
         r.raise_for_status()
     except Exception as e:
-        return {"ok": False, "error": f"api key rejected: {e}"}
+        return {"ok": False, "error": f"credentials rejected: {e}"}
     return {"ok": True, "workspace": r.json()}
+
+
+def preview() -> dict:
+    """Dry-run discovery + sizing — what would push_all() upload?
+
+    Runs the same discover + serialize steps but never calls the cloud.
+    Powers the "Review & upload" pane the Settings UI shows before the
+    first real sync, so users know exactly what leaves their machine.
+    """
+    per_kind: dict[str, dict] = {}
+    for kind, (discover, serialize) in _REGISTRY.items():
+        ids = discover()
+        items: list[dict] = []
+        total_bytes = 0
+        new_count = 0
+        changed_count = 0
+        for local_id in ids:
+            entity = serialize(local_id)
+            if not entity:
+                continue
+            size = len(entity.content.encode("utf-8"))
+            total_bytes += size
+            state = _get_state(kind, local_id)
+            h = _sha256(entity.content)
+            if not state or not state.cloud_doc_id:
+                status = "new"; new_count += 1
+            elif state.local_hash != h:
+                status = "changed"; changed_count += 1
+            else:
+                status = "unchanged"
+            items.append({
+                "local_id": local_id,
+                "name": entity.name,
+                "size": size,
+                "status": status,
+            })
+        per_kind[kind] = {
+            "count": len(items),
+            "new": new_count,
+            "changed": changed_count,
+            "unchanged": len(items) - new_count - changed_count,
+            "total_bytes": total_bytes,
+            "items": items[:50],            # keep response small; UI paginates if needed
+            "truncated": len(items) > 50,
+        }
+    totals = {
+        "total_items": sum(k["count"] for k in per_kind.values()),
+        "total_new": sum(k["new"] for k in per_kind.values()),
+        "total_changed": sum(k["changed"] for k in per_kind.values()),
+        "total_bytes": sum(k["total_bytes"] for k in per_kind.values()),
+    }
+    return {"kinds": per_kind, **totals}
 
 
 def sync_status() -> dict:

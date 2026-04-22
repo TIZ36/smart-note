@@ -7057,6 +7057,252 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   border-top: 1px solid var(--color-border);
 }
 
+/* Cloud sync onboarding — 3-step guide shown before credentials fill */
+.proto-cloud-sync-guide {
+  margin-top: 14px;
+  padding: 14px 14px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--color-accent) 3%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.proto-cloud-sync-guide-intro {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  font-weight: 500;
+}
+.proto-cloud-sync-step { display: flex; gap: 10px; align-items: flex-start; }
+.proto-cloud-sync-step-num {
+  flex: none;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: color-mix(in oklab, var(--color-accent) 20%, transparent);
+  color: var(--color-accent);
+  font-weight: 700;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+.proto-cloud-sync-step-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.proto-cloud-sync-step-title { font-size: 13px; font-weight: 600; color: var(--color-text-primary); }
+.proto-cloud-sync-step-body p { font-size: 12px; color: var(--color-text-secondary); margin: 0; }
+.proto-cloud-sync-hint-small { font-size: 11px; color: var(--color-text-muted); margin: 0; }
+.proto-cloud-sync-code {
+  font-size: 11px;
+  padding: 1px 4px;
+  background: var(--color-bg-elevated);
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+.proto-cloud-sync-copyrow {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.proto-cloud-sync-cmd {
+  flex: 1;
+  padding: 6px 10px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  color: var(--color-text-primary);
+  background: var(--color-bg-elevated);
+  white-space: nowrap;
+  overflow-x: auto;
+}
+.proto-cloud-sync-copy-btn {
+  background: var(--color-bg-primary);
+  border: none;
+  border-left: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 0 10px;
+  transition: color 0.1s, background 0.1s;
+}
+.proto-cloud-sync-copy-btn:hover {
+  color: var(--color-text-primary);
+  background: color-mix(in oklab, var(--color-accent) 10%, transparent);
+}
+.proto-cloud-sync-preset-btn { font-size: 11px; padding: 4px 10px; }
+.proto-cloud-sync-privacy {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  padding-top: 6px;
+  border-top: 1px dashed var(--color-border);
+  margin-top: 2px;
+}
+
+/* Credentials form — kept compact */
+.proto-cloud-sync-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+/* First-run preview panel */
+.proto-cloud-sync-firstrun {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.proto-cloud-sync-firstrun-head { display: flex; flex-direction: column; gap: 4px; }
+.proto-cloud-sync-firstrun-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+.proto-cloud-sync-firstrun-desc {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+.proto-cloud-sync-firstrun-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* Kind chips — {icon} Notes [18] */
+.proto-cloud-sync-kind-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.proto-cloud-sync-kind-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: color-mix(in oklab, var(--color-accent) 8%, transparent);
+  border-radius: 999px;
+  font-size: 12px;
+}
+.proto-cloud-sync-kind-label { color: var(--color-text-primary); font-weight: 500; }
+.proto-cloud-sync-kind-count {
+  color: var(--color-accent);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  padding-left: 3px;
+}
+
+/* Active state — per-kind row list */
+.proto-cloud-sync-active {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--color-accent) 3%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.proto-cloud-sync-kind-rows { display: flex; flex-direction: column; gap: 4px; }
+.proto-cloud-sync-kind-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+.proto-cloud-sync-kind-row > .proto-cloud-sync-kind-label { min-width: 110px; }
+.proto-cloud-sync-kind-row > .proto-cloud-sync-kind-count { min-width: 36px; text-align: right; }
+.proto-cloud-sync-kind-time { color: var(--color-text-muted); font-size: 11px; }
+
+.proto-cloud-sync-pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--color-warning, #d48b00);
+}
+.proto-cloud-sync-pending-link {
+  background: none;
+  border: none;
+  color: var(--color-accent);
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+  text-decoration: underline;
+  margin-left: 4px;
+}
+
+/* Review modal — what exactly will be uploaded? */
+.proto-cloud-sync-review {
+  width: min(640px, calc(100vw - 48px));
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+.proto-cloud-sync-review-summary {
+  font-size: 13px;
+  color: var(--color-text-primary);
+  padding: 10px 0;
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 10px;
+}
+.proto-cloud-sync-review-breakdown { color: var(--color-text-muted); font-size: 11px; }
+.proto-cloud-sync-review-kind { margin-bottom: 14px; }
+.proto-cloud-sync-review-kind-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text-primary);
+  padding-bottom: 6px;
+  border-bottom: 1px dashed var(--color-border);
+  margin-bottom: 6px;
+}
+.proto-cloud-sync-review-kind-head > span:last-child { color: var(--color-text-muted); margin-left: auto; font-size: 11px; }
+.proto-cloud-sync-review-items { display: flex; flex-direction: column; gap: 2px; max-height: 220px; overflow-y: auto; }
+.proto-cloud-sync-review-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px;
+  font-size: 11px;
+  border-radius: 4px;
+}
+.proto-cloud-sync-review-item-new { background: color-mix(in oklab, var(--color-accent) 6%, transparent); }
+.proto-cloud-sync-review-item-changed { background: color-mix(in oklab, var(--color-warning, #d48b00) 8%, transparent); }
+.proto-cloud-sync-review-item-unchanged { color: var(--color-text-muted); }
+.proto-cloud-sync-review-item-status {
+  text-transform: uppercase;
+  font-size: 9px;
+  font-weight: 700;
+  min-width: 62px;
+  letter-spacing: 0.05em;
+}
+.proto-cloud-sync-review-item-new .proto-cloud-sync-review-item-status { color: var(--color-accent); }
+.proto-cloud-sync-review-item-changed .proto-cloud-sync-review-item-status { color: var(--color-warning, #d48b00); }
+.proto-cloud-sync-review-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+.proto-cloud-sync-review-item-size { color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+.proto-cloud-sync-review-item-more { padding: 4px 8px; font-size: 11px; color: var(--color-text-muted); font-style: italic; }
+.proto-cloud-sync-review-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--color-border);
+}
+
 /* Cloud sync status panel under Settings → Cloud Sync */
 .proto-cloud-sync-status {
   margin-top: 14px;

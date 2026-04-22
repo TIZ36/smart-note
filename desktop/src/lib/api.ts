@@ -1209,8 +1209,34 @@ export async function fetchCloudSyncStatus(): Promise<CloudSyncStatus> {
   return res.json();
 }
 
-export async function testCloudSync(): Promise<{ ok: boolean; workspace?: unknown; error?: string }> {
-  const res = await fetch(`${BASE}/sync/test`, { method: "POST" });
+export async function testCloudSync(
+  override?: { url?: string; api_key?: string },
+): Promise<{ ok: boolean; workspace?: unknown; error?: string }> {
+  // When the Settings UI calls this, pass the form values so a user
+  // can verify credentials BEFORE hitting the main Save button.
+  // Omitting the body falls back to the backend's persisted settings.
+  const res = await fetch(`${BASE}/sync/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(override || {}),
+  });
+  return res.json();
+}
+
+/** Persist just the three cloud-sync keys without touching other
+ *  Settings fields. Used by the Cloud Sync section's inline Save
+ *  button so the other panels don't flush half-edited state. */
+export async function saveCloudSyncSettings(patch: {
+  cloud_sync_enabled?: boolean;
+  cloud_sync_url?: string;
+  cloud_sync_api_key?: string;
+}): Promise<{ ok: boolean }> {
+  const res = await fetch(`${BASE}/settings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) throw new Error(`save cloud sync: ${res.status}`);
   return res.json();
 }
 
@@ -1232,5 +1258,27 @@ export async function triggerSyncPush(): Promise<unknown> {
 export async function triggerSyncPull(): Promise<unknown> {
   const res = await fetch(`${BASE}/sync/pull`, { method: "POST" });
   if (!res.ok) throw new Error(`sync pull: ${res.status}`);
+  return res.json();
+}
+
+export type CloudSyncPreview = {
+  total_items: number;
+  total_new: number;
+  total_changed: number;
+  total_bytes: number;
+  kinds: Record<string, {
+    count: number;
+    new: number;
+    changed: number;
+    unchanged: number;
+    total_bytes: number;
+    items: { local_id: string; name: string; size: number; status: "new" | "changed" | "unchanged" }[];
+    truncated: boolean;
+  }>;
+};
+
+export async function fetchCloudSyncPreview(): Promise<CloudSyncPreview> {
+  const res = await fetch(`${BASE}/sync/preview`);
+  if (!res.ok) throw new Error(`preview: ${res.status}`);
   return res.json();
 }
