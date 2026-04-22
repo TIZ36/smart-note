@@ -2232,12 +2232,17 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 
 /* ── Dashboard panel ─────────────────────────────────────────── */
 .proto-dashboard {
-  flex: 1;
+  height: 100%;
+  width: 100%;
   min-width: 0;
   overflow-y: auto;
+  box-sizing: border-box;
   padding: 48px clamp(32px, 5vw, 64px) 80px;
+}
+.proto-dashboard > * {
   max-width: clamp(720px, 88vw, 1240px);
-  margin: 0 auto;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .proto-dashboard-header {
