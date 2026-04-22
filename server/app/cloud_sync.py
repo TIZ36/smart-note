@@ -897,6 +897,50 @@ def preview() -> dict:
     return {"kinds": per_kind, **totals}
 
 
+# ── Cloud proposal queue proxy (for desktop Draft Inbox UI) ─────
+# The desktop app stores cloud credentials once in app_settings; these
+# helpers let the UI read/write the cloud-side proposal queue without
+# having to also know the URL + key directly.
+
+def list_cloud_proposals(kind: str | None = None, limit: int = 100) -> dict:
+    params: dict[str, Any] = {"limit": limit}
+    if kind:
+        params["kind"] = kind
+    r = _cloud_request("GET", "/v1/memories/proposals", params=params)
+    r.raise_for_status()
+    return r.json()
+
+
+def accept_cloud_proposal(proposal_id: str, patch: dict | None = None) -> dict:
+    """Promote a draft to active. `patch` can override content / tags /
+    pinned / confidence / supersedes — keys the cloud accept endpoint
+    understands."""
+    r = _cloud_request(
+        "POST", f"/v1/memories/proposals/{proposal_id}/accept",
+        json_body=patch or {},
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def reject_cloud_proposal(proposal_id: str, reason: str | None = None) -> dict:
+    r = _cloud_request(
+        "POST", f"/v1/memories/proposals/{proposal_id}/reject",
+        json_body={"reason": reason} if reason else {},
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def batch_accept_cloud_proposals(ids: list[str]) -> dict:
+    r = _cloud_request(
+        "POST", "/v1/memories/proposals/batch-accept",
+        json_body={"ids": ids},
+    )
+    r.raise_for_status()
+    return r.json()
+
+
 def sync_status() -> dict:
     """Snapshot of sync_state for the Settings UI."""
     with connect() as conn:

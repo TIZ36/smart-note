@@ -249,11 +249,24 @@ def set_members(
 
 # ── Populate ─────────────────────────────────────────────────────
 
-def populate(view_id: int, rule: dict | None = None, replace: bool = False) -> dict:
-    """Run rule + AI population for a view. If `rule` is passed, it overwrites
-    the stored rule before populating. If `replace=True`, all existing rule/ai
-    rows are wiped first (manual stays untouched); otherwise we additively
-    merge hits with existing members."""
+def populate(
+    view_id: int,
+    rule: dict | None = None,
+    replace: bool = False,
+    dry_run: bool = False,
+) -> dict:
+    """Run rule + AI population for a view.
+
+    Args:
+        view_id: target view.
+        rule: if set, overwrites the stored rule before populating.
+        replace: when True, wipes existing rule/ai members before adding;
+            manual rows stay untouched. Additive merge when False.
+        dry_run: when True, runs the classifier end-to-end but does NOT
+            write anything — returns the full diff (new/changed/missing
+            line_hashes with previews) so the UI can show a before/after
+            review and let the user accept or back out.
+    """
     view = get_view(view_id)
     if not view:
         return {"ok": False, "error": "view not found"}
@@ -301,23 +314,67 @@ def populate(view_id: int, rule: dict | None = None, replace: bool = False) -> d
                 hits[h] = ("ai", preview)
                 ai_hit_count += 1
 
-    with connect() as conn:
-        if replace:
-            conn.execute(
-                "DELETE FROM note_view_member WHERE view_id = ? "
-                "AND source IN ('rule', 'ai') AND excluded = 0",
-                (view_id,),
-            )
-        for h, (src, preview) in hits.items():
-            _upsert_member(conn, view_id, h, src, preview)
-        conn.commit()
+    # Before any writes: compute the diff vs current membership so the
+    # dry-run path can return it, and so even the commit path can tell
+    # the caller what actually changed.
+    existing = {
+        m["line_hash"]: m for m in list_members(view_id, include_excluded=True)
+    }
+    diff_added: list[dict] = []          # new to the view
+    diff_unchanged: list[dict] = []      # already active
+    diff_source_changed: list[dict] = [] # previously rule, now ai (or vice versa)
+    for h, (src, preview) in hits.items():
+        prev = existing.get(h)
+        if prev is None:
+            diff_added.append({"line_hash": h, "source": src, "preview": preview})
+        elif prev.get("excluded"):
+            diff_added.append({
+                "line_hash": h, "source": src, "preview": preview,
+                "was": "excluded",
+            })
+        elif prev.get("source") != src:
+            diff_source_changed.append({
+                "line_hash": h, "from": prev.get("source"), "to": src,
+                "preview": preview,
+            })
+        else:
+            diff_unchanged.append({"line_hash": h, "source": src, "preview": preview})
+    # Would-be-removed only matters in `replace` mode — rule/ai rows no
+    # longer matching get dropped. In additive mode nothing is removed.
+    diff_removed: list[dict] = []
+    if replace:
+        for h, prev in existing.items():
+            if h not in hits and prev.get("source") in ("rule", "ai") and not prev.get("excluded"):
+                diff_removed.append({
+                    "line_hash": h, "source": prev.get("source"),
+                    "preview": prev.get("line_preview") or "",
+                })
+
+    if not dry_run:
+        with connect() as conn:
+            if replace:
+                conn.execute(
+                    "DELETE FROM note_view_member WHERE view_id = ? "
+                    "AND source IN ('rule', 'ai') AND excluded = 0",
+                    (view_id,),
+                )
+            for h, (src, preview) in hits.items():
+                _upsert_member(conn, view_id, h, src, preview)
+            conn.commit()
 
     return {
         "ok": True,
         "view_id": view_id,
+        "dry_run": dry_run,
         "rule_hits": sum(1 for v in hits.values() if v[0] == "rule"),
         "ai_hits": ai_hit_count,
         "total_hits": len(hits),
+        "diff": {
+            "added": diff_added,
+            "removed": diff_removed,
+            "source_changed": diff_source_changed,
+            "unchanged_count": len(diff_unchanged),
+        },
     }
 
 

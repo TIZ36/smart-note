@@ -15,6 +15,7 @@ import {
 } from "@/lib/electron";
 import { CloudIconAnimated } from "./CloudIconAnimated";
 import { AgentInstallerCard } from "./AgentInstallerCard";
+import { DraftInbox } from "./DraftInbox";
 import {
   useCloudSyncUpload, startUpload, cancelUpload, progressOf,
   type UploadPhase,
@@ -464,6 +465,9 @@ export function CloudSyncPage() {
               JSON file" step. Placing this right after Connection so
               the aha happens within seconds of saving credentials. */}
           {hasConfig && <AgentInstallerCard url={url} apiKey={apiKey} />}
+
+          {/* Draft inbox — pending proposals from agents. */}
+          {hasConfig && <DraftInbox hasConfig={hasConfig} />}
 
           {/* Knowledge model — what syncs vs what doesn't */}
           {hasConfig && (

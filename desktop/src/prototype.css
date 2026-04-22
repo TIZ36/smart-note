@@ -7361,6 +7361,354 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   50% { opacity: 0.72; }
 }
 
+/* View-populate dry-run diff panel — before/after preview inside the
+   NoteViewDialog. Sits between the form body and the footer buttons;
+   color-codes added / removed / source-changed segments. */
+.proto-view-diff {
+  border-top: 1px solid var(--color-border);
+  padding: 14px 20px;
+  background: color-mix(in oklab, var(--color-accent) 2%, var(--color-bg-primary));
+  max-height: 280px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.proto-view-diff-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.proto-view-diff-summary {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+.proto-view-diff-section {
+  border-radius: 6px;
+  padding: 6px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.proto-view-diff-section-added    { background: color-mix(in oklab, #30a46c 10%, transparent); }
+.proto-view-diff-section-removed  { background: color-mix(in oklab, #e5484d 10%, transparent); }
+.proto-view-diff-section-changed  { background: color-mix(in oklab, #f76b15 10%, transparent); }
+.proto-view-diff-section-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.proto-view-diff-section-added   .proto-view-diff-section-label { color: #30a46c; }
+.proto-view-diff-section-removed .proto-view-diff-section-label { color: #e5484d; }
+.proto-view-diff-section-changed .proto-view-diff-section-label { color: #f76b15; }
+.proto-view-diff-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+  padding: 2px 0;
+}
+.proto-view-diff-src {
+  min-width: 70px;
+  font-size: 10px;
+  color: var(--color-text-muted);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+.proto-view-diff-text {
+  flex: 1;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.proto-view-diff-more {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  font-style: italic;
+  padding: 2px 0;
+}
+
+/* 6-path fusion breakdown on each search result — shows which paths
+   actually contributed a score. Different color per path so the user
+   can scan "what FTS alone would miss" / "what only vector caught".
+   Only non-zero paths render to keep the row compact. */
+.proto-source-paths {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  margin-top: 6px;
+  font-size: 10px;
+}
+.proto-source-paths-label {
+  color: var(--color-text-muted);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-right: 2px;
+}
+.proto-source-path-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: color-mix(in oklab, var(--color-text-primary) 6%, transparent);
+  color: var(--color-text-secondary);
+  cursor: help;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+.proto-source-path-val {
+  color: var(--color-text-muted);
+  font-size: 9px;
+}
+.proto-source-path-fts      { background: color-mix(in oklab, #3e63dd 14%, transparent); color: #3e63dd; }
+.proto-source-path-sub      { background: color-mix(in oklab, #30a46c 14%, transparent); color: #30a46c; }
+.proto-source-path-ngram    { background: color-mix(in oklab, #f76b15 14%, transparent); color: #f76b15; }
+.proto-source-path-vec      { background: color-mix(in oklab, #8e4ec6 14%, transparent); color: #8e4ec6; }
+.proto-source-path-kw       { background: color-mix(in oklab, #ffc53d 22%, transparent); color: #b58400; }
+.proto-source-path-tag_meta { background: color-mix(in oklab, #e5484d 14%, transparent); color: #e5484d; }
+.proto-source-path-chip .proto-source-path-val {
+  color: inherit;
+  opacity: 0.65;
+}
+
+/* Draft Inbox — per-proposal review cards */
+.proto-draft-inbox-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.proto-draft-inbox-count {
+  display: inline-block;
+  padding: 1px 7px;
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--color-accent) 20%, transparent);
+  color: var(--color-accent);
+  vertical-align: 1px;
+}
+.proto-draft-inbox-empty {
+  padding: 18px 14px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  text-align: center;
+  border: 1px dashed var(--color-border);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--color-text-primary) 3%, transparent);
+}
+.proto-draft-inbox-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.proto-draft-inbox-item {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--color-bg-primary);
+  overflow: hidden;
+  transition: border-color 0.1s, background 0.1s;
+}
+.proto-draft-inbox-item-selected {
+  border-color: var(--color-accent);
+  background: color-mix(in oklab, var(--color-accent) 4%, var(--color-bg-primary));
+}
+.proto-draft-inbox-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+.proto-draft-inbox-checkbox {
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--color-accent);
+}
+.proto-draft-inbox-expand {
+  background: none;
+  border: none;
+  padding: 2px;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  border-radius: 3px;
+}
+.proto-draft-inbox-expand:hover { color: var(--color-text-primary); }
+
+.proto-draft-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.proto-draft-pill-fact       { background: color-mix(in oklab, #3e63dd 18%, transparent); color: #3e63dd; }
+.proto-draft-pill-preference { background: color-mix(in oklab, #30a46c 18%, transparent); color: #30a46c; }
+.proto-draft-pill-procedure  { background: color-mix(in oklab, #f76b15 18%, transparent); color: #f76b15; }
+.proto-draft-pill-episode    { background: color-mix(in oklab, #8e4ec6 18%, transparent); color: #8e4ec6; }
+.proto-draft-pill-doc        { background: color-mix(in oklab, #7b7d82 18%, transparent); color: #7b7d82; }
+
+.proto-draft-inbox-agent,
+.proto-draft-inbox-conf,
+.proto-draft-inbox-time,
+.proto-draft-inbox-similar {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: var(--color-text-muted);
+}
+.proto-draft-inbox-conf strong { color: var(--color-text-primary); font-weight: 600; }
+.proto-draft-inbox-similar {
+  color: var(--color-warning, #d48b00);
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--color-warning, #d48b00) 10%, transparent);
+}
+
+.proto-draft-inbox-content {
+  margin: 4px 0 8px;
+}
+.proto-draft-inbox-preview {
+  font-size: 13px;
+  color: var(--color-text-primary);
+  white-space: pre-wrap;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.proto-draft-inbox-textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+  color: var(--color-text-primary);
+  background: var(--color-bg-primary);
+  resize: vertical;
+  outline: none;
+}
+.proto-draft-inbox-textarea:focus { border-color: var(--color-accent); }
+
+.proto-draft-inbox-reason {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.proto-draft-inbox-tags {
+  margin-top: 6px;
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.proto-draft-inbox-tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: color-mix(in oklab, var(--color-accent) 10%, transparent);
+  color: var(--color-accent);
+}
+
+.proto-draft-inbox-similar-list {
+  margin: 6px 0;
+  padding: 8px 10px;
+  background: color-mix(in oklab, var(--color-warning, #d48b00) 6%, transparent);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.proto-draft-inbox-similar-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--color-warning, #d48b00);
+  font-weight: 600;
+}
+.proto-draft-inbox-similar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.proto-draft-inbox-similar-sim {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  color: var(--color-warning, #d48b00);
+  min-width: 36px;
+}
+.proto-draft-inbox-similar-content {
+  flex: 1;
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.proto-draft-inbox-merge-btn {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
+.proto-draft-inbox-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-end;
+  padding-top: 4px;
+}
+.proto-draft-inbox-edit-hint {
+  margin-right: auto;
+  font-size: 10px;
+  color: var(--color-text-muted);
+  font-style: italic;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.proto-draft-inbox-accept {
+  background: color-mix(in oklab, var(--color-accent) 85%, transparent);
+  color: white;
+  border-color: var(--color-accent);
+}
+.proto-draft-inbox-accept:hover:not(:disabled) {
+  background: var(--color-accent);
+}
+.proto-draft-inbox-reject {
+  color: var(--color-text-muted);
+}
+.proto-draft-inbox-reject:hover:not(:disabled) {
+  color: var(--color-error, #e5484d);
+  border-color: color-mix(in oklab, var(--color-error, #e5484d) 40%, transparent);
+}
+
 /* Agent installer — one-click MCP registration for Claude Code /
    Cursor / OpenCode. Three-tile grid; each tile shows agent name,
    config path hint, install state, and the CTA. */

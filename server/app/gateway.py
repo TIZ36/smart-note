@@ -3780,6 +3780,61 @@ def api_sync_full() -> dict:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── Proposal inbox (proxies to cloud workspace via app_settings) ──
+
+@app.get("/sync/proposals")
+def api_sync_proposals_list(kind: str | None = None, limit: int = 100) -> dict:
+    from app import cloud_sync
+    try:
+        return cloud_sync.list_cloud_proposals(kind=kind, limit=limit)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+class SyncProposalAcceptRequest(BaseModel):
+    content: str | None = None
+    tags: list[str] | None = None
+    pinned: bool | None = None
+    confidence: float | None = None
+    supersedes: str | None = None
+
+
+@app.post("/sync/proposals/{proposal_id}/accept")
+def api_sync_proposal_accept(proposal_id: str, req: SyncProposalAcceptRequest) -> dict:
+    from app import cloud_sync
+    patch = {k: v for k, v in req.model_dump().items() if v is not None}
+    try:
+        return cloud_sync.accept_cloud_proposal(proposal_id, patch=patch or None)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+class SyncProposalRejectRequest(BaseModel):
+    reason: str | None = None
+
+
+@app.post("/sync/proposals/{proposal_id}/reject")
+def api_sync_proposal_reject(proposal_id: str, req: SyncProposalRejectRequest) -> dict:
+    from app import cloud_sync
+    try:
+        return cloud_sync.reject_cloud_proposal(proposal_id, reason=req.reason)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+class SyncProposalBatchAcceptRequest(BaseModel):
+    ids: list[str]
+
+
+@app.post("/sync/proposals/batch-accept")
+def api_sync_proposal_batch_accept(req: SyncProposalBatchAcceptRequest) -> dict:
+    from app import cloud_sync
+    try:
+        return cloud_sync.batch_accept_cloud_proposals(req.ids)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
 @app.get("/sync/conflicts")
 def api_sync_conflicts(limit: int = 50) -> dict:
     """Recent conflict snapshots for recovery UI."""
@@ -4669,6 +4724,7 @@ class NoteViewMembersRequest(BaseModel):
 class NoteViewPopulateRequest(BaseModel):
     rule: dict | None = None
     replace: bool = False
+    dry_run: bool = False
 
 
 @app.get("/note/views")
@@ -4709,7 +4765,9 @@ def api_note_views_delete(view_id: int) -> dict:
 
 @app.post("/note/views/{view_id}/populate")
 def api_note_views_populate(view_id: int, req: NoteViewPopulateRequest) -> dict:
-    return note_views.populate(view_id, rule=req.rule, replace=req.replace)
+    return note_views.populate(
+        view_id, rule=req.rule, replace=req.replace, dry_run=req.dry_run,
+    )
 
 
 @app.post("/note/views/{view_id}/members")

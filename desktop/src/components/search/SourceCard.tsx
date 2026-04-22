@@ -1,6 +1,6 @@
 import { BookOpen } from "lucide-react";
 import { cn } from "../../lib/cn";
-import type { SearchResult } from "../../lib/types";
+import type { SearchResult, SearchResultPathScores } from "../../lib/types";
 
 type Props = {
   index: number;
@@ -42,6 +42,45 @@ export function SourceCard({ index, result, highlighted, starred, onClick }: Pro
       </div>
       <p className="proto-source-text">{result.text}</p>
       {result.source_ref && <SourceRef value={result.source_ref} />}
+      {result.path_scores && <PathBreakdown scores={result.path_scores} />}
+    </div>
+  );
+}
+
+/* 6-path fusion breakdown — renders only the paths that contributed
+   (score > 0) so the chip row stays compact. On hover each chip shows
+   the raw value; absence of a chip is itself the message ("vector
+   alone didn't find this, substring did").
+
+   This is the ONLY place in the UI where the "we're a hybrid retriever,
+   not another single-path RAG" claim becomes visible to the user. */
+const PATH_META: { key: keyof SearchResultPathScores; label: string; title: string }[] = [
+  { key: "fts",      label: "FTS",   title: "Full-text (FTS5) — token match" },
+  { key: "sub",      label: "sub",   title: "Substring — raw LIKE scan" },
+  { key: "ngram",    label: "ngram", title: "Character n-gram overlap" },
+  { key: "vec",      label: "vec",   title: "Cosine similarity on embeddings" },
+  { key: "kw",       label: "kw",    title: "AI-extracted keyword overlap" },
+  { key: "tag_meta", label: "tag",   title: "Tag-segment topic / summary / keyword" },
+];
+
+function PathBreakdown({ scores }: { scores: SearchResultPathScores }) {
+  const hits = PATH_META
+    .map((m) => ({ ...m, score: scores[m.key] }))
+    .filter((m) => m.score > 0.01);
+  if (hits.length === 0) return null;
+  return (
+    <div className="proto-source-paths" aria-label="Retrieval paths that matched">
+      <span className="proto-source-paths-label">paths</span>
+      {hits.map((h) => (
+        <span
+          key={h.key}
+          className={`proto-source-path-chip proto-source-path-${h.key}`}
+          title={`${h.title} · ${h.score.toFixed(2)}`}
+        >
+          {h.label}
+          <span className="proto-source-path-val">{h.score.toFixed(2)}</span>
+        </span>
+      ))}
     </div>
   );
 }

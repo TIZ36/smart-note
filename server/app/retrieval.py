@@ -571,9 +571,22 @@ def search(query: str, topk: int = 5, tag_filter: str | None = None, include_wik
             else:
                 item["is_wiki"] = False
 
-        # Clean up internal scoring fields (keep path_breakdown for caller)
+        # Consolidate every per-path score into a `path_scores` dict the
+        # UI can render as a breakdown tooltip ("FTS 0.8 · vec 0.3 · kw
+        # 0.1"). Used to demo 6-path fusion to users who'd otherwise
+        # assume this is yet another single-path RAG.
         for item in results:
-            for k in ("sub", "ngram", "tag_meta"):
+            item["path_scores"] = {
+                "fts":      float(item.get("fts", 0) or 0),
+                "sub":      float(item.get("sub", 0) or 0),
+                "ngram":    float(item.get("ngram", 0) or 0),
+                "vec":      float(item.get("vec", 0) or 0),
+                "kw":       float(item.get("kw", 0) or 0),
+                "tag_meta": float(item.get("tag_meta", 0) or 0),
+            }
+            # Pop the raw fields so the top-level object stays tidy —
+            # path_scores is the canonical way to read per-path values.
+            for k in ("fts", "sub", "ngram", "vec", "kw", "tag_meta"):
                 item.pop(k, None)
 
         # Merge Q&A memory answer hits

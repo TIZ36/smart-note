@@ -18,13 +18,25 @@ export type ViewItem = {
   path: string;
 };
 
+/** Per-path breakdown powering the "6-path fusion" chip row. Only
+ *  non-zero paths are rendered in the UI; this is how we make the
+ *  hybrid retrieval visible vs naive single-path RAG. */
+export type SearchResultPathScores = {
+  fts: number;        // Path 1: FTS5 full-text
+  sub: number;        // Path 2: LIKE substring
+  ngram: number;      // Path 3: char n-gram
+  vec: number;        // Path 4: cosine similarity on embeddings
+  kw: number;         // Path 5: keyword overlap
+  tag_meta: number;   // Path 6: tag segment topic/summary/kw match
+};
+
 export type SearchResult = {
   id: number | string;
   text: string;
   source_ref: string;
   dimension: string;
   project_slug?: string | null;
-  fts?: number;
+  fts?: number;       // legacy — may be absent; path_scores is canonical
   vec?: number;
   kw?: number;
   mem?: number;
@@ -35,6 +47,7 @@ export type SearchResult = {
   segment_range?: string;
   segment_topic?: string;
   is_wiki?: boolean;
+  path_scores?: SearchResultPathScores;
 };
 
 export type SearchResponse = {

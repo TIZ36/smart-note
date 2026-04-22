@@ -1018,10 +1018,28 @@ export async function deleteView(viewId: number): Promise<{ ok: boolean }> {
   return res.json();
 }
 
+/** Populate response includes a `diff` block when dry_run=true so the
+ *  caller can show a before/after review modal before committing. */
+export type PopulateDiff = {
+  added: { line_hash: string; source: string; preview: string; was?: string }[];
+  removed: { line_hash: string; source: string; preview: string }[];
+  source_changed: { line_hash: string; from: string; to: string; preview: string }[];
+  unchanged_count: number;
+};
+
+export type PopulateResult = {
+  ok: boolean;
+  dry_run: boolean;
+  rule_hits?: number;
+  ai_hits?: number;
+  total_hits?: number;
+  diff?: PopulateDiff;
+};
+
 export async function populateView(
   viewId: number,
-  opts: { rule?: ViewRule; replace?: boolean } = {},
-): Promise<{ ok: boolean; rule_hits?: number; ai_hits?: number; total_hits?: number }> {
+  opts: { rule?: ViewRule; replace?: boolean; dry_run?: boolean } = {},
+): Promise<PopulateResult> {
   const res = await fetch(`${BASE}/note/views/${viewId}/populate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1298,5 +1316,67 @@ export async function pushSyncOne(
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `push-one: ${res.status}`);
   }
+  return res.json();
+}
+
+// ── Cloud proposal queue (proxied via local gateway) ─────────────
+
+export type CloudProposal = {
+  id: string;
+  workspace_id: string;
+  author_agent: string;
+  kind: string;
+  scope: string;
+  content: string;
+  structured?: Record<string, unknown> | null;
+  tags: string[];
+  source_refs: Record<string, unknown>[];
+  confidence: number;
+  proposal_reason?: string | null;
+  created_at: string;
+  similar_existing?: { id: string; kind: string; content: string; similarity: number }[];
+};
+
+export async function fetchCloudProposals(
+  opts: { kind?: string; limit?: number } = {},
+): Promise<{ proposals: CloudProposal[]; total: number }> {
+  const q = new URLSearchParams();
+  if (opts.kind) q.set("kind", opts.kind);
+  if (opts.limit) q.set("limit", String(opts.limit));
+  const res = await fetch(`${BASE}/sync/proposals?${q.toString()}`);
+  if (!res.ok) throw new Error(`proposals list: ${res.status}`);
+  return res.json();
+}
+
+export async function acceptCloudProposal(
+  id: string,
+  patch: { content?: string; tags?: string[]; pinned?: boolean; confidence?: number; supersedes?: string } = {},
+): Promise<unknown> {
+  const res = await fetch(`${BASE}/sync/proposals/${id}/accept`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) throw new Error(`accept proposal: ${res.status}`);
+  return res.json();
+}
+
+export async function rejectCloudProposal(id: string, reason?: string): Promise<unknown> {
+  const res = await fetch(`${BASE}/sync/proposals/${id}/reject`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason }),
+  });
+  if (!res.ok) throw new Error(`reject proposal: ${res.status}`);
+  return res.json();
+}
+
+export async function batchAcceptCloudProposals(ids: string[]): Promise<{ accepted: number }> {
+  const res = await fetch(`${BASE}/sync/proposals/batch-accept`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids }),
+  });
+  if (!res.ok) throw new Error(`batch accept: ${res.status}`);
   return res.json();
 }

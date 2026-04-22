@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { X, Sparkles, Filter } from "lucide-react";
-import type { NoteView, ViewDisplay, ViewRule } from "@/lib/api";
+import { X, Sparkles, Filter, Eye, Loader2, CheckCircle2, Plus, Minus, ArrowRight } from "lucide-react";
+import * as api from "@/lib/api";
+import type { NoteView, ViewDisplay, ViewRule, PopulateDiff } from "@/lib/api";
 
 type Props = {
   open: boolean;
@@ -35,6 +36,9 @@ export function NoteViewDialog({ open, initial, onClose, onSubmit }: Props) {
   const [aiQuery, setAiQuery] = useState("");
   const [display, setDisplay] = useState<ViewDisplay>(DEFAULT_DISPLAY);
   const [submitting, setSubmitting] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+  const [previewDiff, setPreviewDiff] = useState<PopulateDiff | null>(null);
+  const [previewError, setPreviewError] = useState("");
 
   useEffect(() => {
     if (!open) return;
@@ -44,7 +48,34 @@ export function NoteViewDialog({ open, initial, onClose, onSubmit }: Props) {
     setAiQuery(initial?.rule.ai_query || "");
     setDisplay({ ...DEFAULT_DISPLAY, ...(initial?.display || {}) });
     setSubmitting(false);
+    setPreviewDiff(null);
+    setPreviewError("");
   }, [open, initial]);
+
+  // Dry-run against the currently edited rules. Only available when
+  // editing an existing view — on create we don't have a view_id yet
+  // to pass to populate. Rationale: showing the diff vs the previous
+  // rule state is the whole value prop; on a fresh view everything
+  // would be "added", which is less informative.
+  const canPreview = Boolean(initial?.id);
+  async function handlePreview() {
+    if (!initial?.id || previewing) return;
+    const rule: ViewRule = {
+      keywords: keywords.split(/[,，\n]/).map((s) => s.trim()).filter(Boolean),
+      regex: regex.trim() || undefined,
+      ai_query: aiQuery.trim() || undefined,
+    };
+    setPreviewing(true);
+    setPreviewError("");
+    try {
+      const r = await api.populateView(initial.id, { rule, replace: true, dry_run: true });
+      if (r.diff) setPreviewDiff(r.diff);
+    } catch (e) {
+      setPreviewError(String(e));
+    } finally {
+      setPreviewing(false);
+    }
+  }
 
   if (!open) return null;
 
@@ -184,10 +215,84 @@ export function NoteViewDialog({ open, initial, onClose, onSubmit }: Props) {
           </div>
         </div>
 
+        {/* Dry-run diff panel — before/after preview without committing. */}
+        {(previewDiff || previewError) && (
+          <div className="proto-view-diff">
+            {previewError && (
+              <div className="proto-settings-status proto-settings-status-error">
+                {previewError}
+              </div>
+            )}
+            {previewDiff && (
+              <>
+                <div className="proto-view-diff-head">
+                  <span>Preview (nothing saved yet)</span>
+                  <span className="proto-view-diff-summary">
+                    +{previewDiff.added.length} new · -{previewDiff.removed.length} removed
+                    {previewDiff.source_changed.length > 0 && ` · ${previewDiff.source_changed.length} source changes`}
+                    · {previewDiff.unchanged_count} unchanged
+                  </span>
+                </div>
+                {previewDiff.added.length > 0 && (
+                  <div className="proto-view-diff-section proto-view-diff-section-added">
+                    <div className="proto-view-diff-section-label"><Plus size={11} /> added</div>
+                    {previewDiff.added.slice(0, 15).map((d) => (
+                      <div key={d.line_hash} className="proto-view-diff-row">
+                        <span className="proto-view-diff-src">{d.source}</span>
+                        <span className="proto-view-diff-text">{d.preview}</span>
+                      </div>
+                    ))}
+                    {previewDiff.added.length > 15 && (
+                      <div className="proto-view-diff-more">… and {previewDiff.added.length - 15} more</div>
+                    )}
+                  </div>
+                )}
+                {previewDiff.removed.length > 0 && (
+                  <div className="proto-view-diff-section proto-view-diff-section-removed">
+                    <div className="proto-view-diff-section-label"><Minus size={11} /> removed</div>
+                    {previewDiff.removed.slice(0, 15).map((d) => (
+                      <div key={d.line_hash} className="proto-view-diff-row">
+                        <span className="proto-view-diff-src">{d.source}</span>
+                        <span className="proto-view-diff-text">{d.preview}</span>
+                      </div>
+                    ))}
+                    {previewDiff.removed.length > 15 && (
+                      <div className="proto-view-diff-more">… and {previewDiff.removed.length - 15} more</div>
+                    )}
+                  </div>
+                )}
+                {previewDiff.source_changed.length > 0 && (
+                  <div className="proto-view-diff-section proto-view-diff-section-changed">
+                    <div className="proto-view-diff-section-label"><ArrowRight size={11} /> source changed</div>
+                    {previewDiff.source_changed.slice(0, 10).map((d) => (
+                      <div key={d.line_hash} className="proto-view-diff-row">
+                        <span className="proto-view-diff-src">{d.from} → {d.to}</span>
+                        <span className="proto-view-diff-text">{d.preview}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
         <div className="proto-view-dialog-footer">
           <button type="button" className="proto-btn" onClick={onClose} disabled={submitting}>
             Cancel
           </button>
+          {canPreview && hasRule && (
+            <button
+              type="button"
+              className="proto-btn"
+              onClick={handlePreview}
+              disabled={previewing || submitting}
+              title="Run rules in dry-run mode — see what would change without saving"
+            >
+              {previewing ? <Loader2 size={13} className="animate-spin" /> : <Eye size={13} />}
+              {previewing ? "Previewing…" : "Preview"}
+            </button>
+          )}
           <button
             type="button"
             className="proto-btn"
@@ -198,12 +303,13 @@ export function NoteViewDialog({ open, initial, onClose, onSubmit }: Props) {
           </button>
           <button
             type="button"
-            className="proto-btn proto-btn-primary"
+            className={previewDiff ? "proto-btn proto-btn-primary" : "proto-btn proto-btn-primary"}
             onClick={() => handleSubmit(true)}
             disabled={submitting || !name.trim() || !hasRule}
             title={hasRule ? "Save and run rules against the file" : "Add at least one rule to populate"}
           >
-            Save & populate
+            {previewDiff ? <CheckCircle2 size={13} /> : <Sparkles size={13} />}
+            {previewDiff ? "Apply changes" : "Save & populate"}
           </button>
         </div>
       </div>
