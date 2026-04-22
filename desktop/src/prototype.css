@@ -6785,11 +6785,160 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 .proto-smart-table-cell-text,
 .proto-smart-table-cell-link {
   font-size: 12px;
-  line-height: 1.4;
+  line-height: 1.45;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.proto-smart-table-cell-empty {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+/* Multi-line text: render up to 4 lines then clamp with an ellipsis.
+   Preserves newlines the user entered — the old rule forced everything
+   to a single line which hid most of the content for long cells. */
+.proto-smart-table-cell-text-multiline {
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  line-clamp: 4;
+}
+.proto-smart-table-cell-clickable {
+  cursor: pointer;
+  user-select: none;
+}
+.proto-smart-table-cell-clickable:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+/* Cell editor dialog — replaces the inline single-line popover with a
+   full-fidelity modal. Sizes roomy for long text; collapses gracefully
+   on smaller windows. */
+.proto-smart-cell-dialog {
+  width: min(640px, calc(100vw - 48px));
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+.proto-smart-cell-dialog-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.proto-smart-cell-dialog-col {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.proto-smart-cell-dialog-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+.proto-smart-cell-dialog-body {
+  padding: 16px 20px;
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.proto-smart-cell-textarea {
+  width: 100%;
+  min-height: 220px;
+  max-height: 50vh;
+  resize: vertical;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+  color: var(--color-text-primary);
+  background: var(--color-bg-primary);
+  outline: none;
+  transition: border-color 0.1s;
+}
+.proto-smart-cell-textarea:focus {
+  border-color: var(--color-accent);
+}
+.proto-smart-cell-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.proto-smart-cell-field > span {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.proto-smart-cell-input {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-size: 13px;
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  outline: none;
+  font-family: inherit;
+  transition: border-color 0.1s;
+}
+.proto-smart-cell-input:focus { border-color: var(--color-accent); }
+.proto-smart-cell-link-preview {
+  font-size: 11px;
+  color: var(--color-accent);
+  text-decoration: none;
+  word-break: break-all;
+}
+.proto-smart-cell-link-preview:hover { text-decoration: underline; }
+
+.proto-smart-cell-image-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+}
+.proto-smart-cell-image-preview {
+  max-height: 40vh;
+  max-width: 100%;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  object-fit: contain;
+}
+.proto-smart-cell-image-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+}
+.proto-smart-cell-image-empty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+.proto-smart-cell-dialog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--color-border);
+}
+.proto-smart-cell-dialog-hint {
+  font-size: 11px;
+  color: var(--color-text-muted);
 }
 
 .proto-smart-table-grid-editable {

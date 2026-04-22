@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { Trash2 } from "lucide-react";
+import { Trash2, History as HistoryIcon, Pencil } from "lucide-react";
 import type { SmartCellHistoryItem, SmartColumn, SmartRow, SmartSheetPayload } from "@/lib/api";
 import { deleteSmartRow, fetchSmartCellHistory, fetchSmartSheet, updateSmartCell, uploadSmartTableImage } from "@/lib/api";
 import { TextCell } from "./cells/TextCell";
 import { LinkCell } from "./cells/LinkCell";
 import { ImageCell } from "./cells/ImageCell";
+import { SmartCellEditorDialog } from "./SmartCellEditorDialog";
 
 type Props = {
   tableName: string;
@@ -24,16 +25,15 @@ export function SheetGrid({ tableName, payload, onUpdated }: Props) {
   const [historyKey, setHistoryKey] = useState<string | null>(null);
   const [history, setHistory] = useState<SmartCellHistoryItem[]>([]);
   const [confirmDeleteRowId, setConfirmDeleteRowId] = useState<number | null>(null);
-  const [editorKey, setEditorKey] = useState<string | null>(null);
+  // Editor dialog target — identifies which cell is being edited. Keeping
+  // row/column references (not just ids) gives the dialog enough context
+  // to render type-specific UI without another lookup pass.
+  const [editorTarget, setEditorTarget] = useState<{ row: SmartRow; column: SmartColumn } | null>(null);
 
   const sheetName = payload.sheet.name;
   const gridTemplateColumns = ["48px", "64px", ...payload.columns.map(() => "240px")].join(" ");
 
-  async function handleSave(row: SmartRow, column: SmartColumn, nextValue: Record<string, unknown> | string) {
-    const cellKey = String(column.id);
-    const current = row.cells[cellKey];
-    const currentValue = typeof current?.value === "string" ? current.value : "";
-    if (column.type === "text" && typeof nextValue === "string" && nextValue === currentValue) return;
+  async function persistCell(row: SmartRow, column: SmartColumn, nextValue: Record<string, unknown>) {
     const key = `${row.id}:${column.id}`;
     setSavingKey(key);
     setError(null);
@@ -42,6 +42,7 @@ export function SheetGrid({ tableName, payload, onUpdated }: Props) {
       onUpdated(updated);
     } catch (e) {
       setError(String(e));
+      throw e;
     } finally {
       setSavingKey((cur) => (cur === key ? null : cur));
     }
@@ -64,8 +65,9 @@ export function SheetGrid({ tableName, payload, onUpdated }: Props) {
     }
   }
 
-  async function handleImageUpload(row: SmartRow, column: SmartColumn, file: File | null) {
-    if (!file) return;
+  async function handleImageUploadInDialog(file: File) {
+    if (!editorTarget) return;
+    const { row, column } = editorTarget;
     const key = `${row.id}:${column.id}`;
     setSavingKey(key);
     setError(null);
@@ -77,6 +79,7 @@ export function SheetGrid({ tableName, payload, onUpdated }: Props) {
         value: uploaded.image.filename,
       });
       onUpdated(updated);
+      setEditorTarget(null);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -107,9 +110,12 @@ export function SheetGrid({ tableName, payload, onUpdated }: Props) {
     return JSON.stringify(value);
   }
 
-  function isEditorOpen(row: SmartRow, column: SmartColumn) {
-    return editorKey === `${row.id}:${column.id}`;
-  }
+  const editorCell = editorTarget
+    ? editorTarget.row.cells[String(editorTarget.column.id)]
+    : undefined;
+  const editorSavingKey = editorTarget
+    ? `${editorTarget.row.id}:${editorTarget.column.id}`
+    : null;
 
   return (
     <div className="proto-smart-table-grid-wrap">
@@ -147,78 +153,60 @@ export function SheetGrid({ tableName, payload, onUpdated }: Props) {
             {payload.columns.map((column) => {
               const cellKey = String(column.id);
               const value = row.cells[cellKey];
-              const text = typeof value?.value === "string" ? value.value : "";
-              const linkUrl = typeof value?.url === "string" ? value.url : typeof value?.value === "string" ? value.value : "";
-              const linkLabel = typeof value?.label === "string" ? value.label : "";
               const saving = savingKey === `${row.id}:${column.id}`;
               const expandedHistory = historyKey === `${row.id}:${column.id}`;
-              const editorOpen = isEditorOpen(row, column);
               return (
-                <label key={column.id} className="proto-smart-table-grid-cell proto-smart-table-grid-editable">
+                <div
+                  key={column.id}
+                  className="proto-smart-table-grid-cell proto-smart-table-grid-editable proto-smart-table-cell-clickable"
+                  role="button"
+                  tabIndex={0}
+                  // Clicking the cell body opens the editor. Row Delete + the
+                  // History action button stop propagation below so they
+                  // don't accidentally trigger an edit.
+                  onClick={() => setEditorTarget({ row, column })}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setEditorTarget({ row, column });
+                    }
+                  }}
+                  title="Click to edit"
+                >
                   <div className="proto-smart-table-cell-shell">
                     <CellView column={column} value={value} />
                     <div className="proto-smart-table-cell-actions">
                       <button
                         type="button"
                         className="proto-smart-table-history-toggle"
-                        onClick={() => setEditorKey(editorOpen ? null : `${row.id}:${column.id}`)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditorTarget({ row, column });
+                        }}
+                        aria-label="Edit cell"
+                        title="Edit cell"
                       >
-                        {editorOpen ? "Close" : "Edit"}
+                        <Pencil size={11} />
                       </button>
                       <button
                         type="button"
                         className="proto-smart-table-history-toggle"
-                        onClick={() => void handleHistory(row, column)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleHistory(row, column);
+                        }}
+                        aria-label={expandedHistory ? "Hide history" : "Show history"}
+                        title={expandedHistory ? "Hide history" : "Show history"}
                       >
-                        {expandedHistory ? "Hide history" : "History"}
+                        <HistoryIcon size={11} />
                       </button>
                     </div>
                   </div>
-                  {editorOpen && column.type === "text" && (
-                    <div className="proto-smart-table-editor-popover">
-                      <input
-                        className="proto-smart-table-inline-input"
-                        defaultValue={text}
-                        placeholder="Type text"
-                        autoFocus
-                        onBlur={(e) => {
-                          void handleSave(row, column, { value: e.target.value });
-                          setEditorKey(null);
-                        }}
-                      />
-                    </div>
-                  )}
-                  {editorOpen && column.type === "link" && (
-                    <div className="proto-smart-table-editor-popover proto-smart-table-link-editor">
-                      <input
-                        data-link-label
-                        className="proto-smart-table-inline-input"
-                        defaultValue={linkLabel}
-                        placeholder="Label"
-                        autoFocus
-                        onBlur={(e) => handleSave(row, column, { label: e.target.value, url: (e.currentTarget.parentElement?.querySelector('[data-link-url]') as HTMLInputElement | null)?.value || "" })}
-                      />
-                      <input
-                        data-link-url
-                        className="proto-smart-table-inline-input"
-                        defaultValue={linkUrl}
-                        placeholder="https://..."
-                        onBlur={(e) => handleSave(row, column, { label: (e.currentTarget.parentElement?.querySelector('[data-link-label]') as HTMLInputElement | null)?.value || "", url: e.target.value })}
-                      />
-                    </div>
-                  )}
-                  {editorOpen && column.type === "image" && (
-                    <div className="proto-smart-table-editor-popover">
-                      <input
-                        type="file"
-                        accept="image/*"
-                        className="proto-smart-table-file-input"
-                        onChange={(e) => handleImageUpload(row, column, e.target.files?.[0] ?? null)}
-                      />
-                    </div>
-                  )}
                   {expandedHistory && (
-                    <div className="proto-smart-table-history-list">
+                    <div
+                      className="proto-smart-table-history-list"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       {history.length === 0 && <span className="proto-smart-table-history-empty">No changes yet</span>}
                       {history.map((item) => (
                         <div key={item.id} className="proto-smart-table-history-item">
@@ -229,12 +217,26 @@ export function SheetGrid({ tableName, payload, onUpdated }: Props) {
                     </div>
                   )}
                   {saving && <span className="proto-smart-table-saving">saving</span>}
-                </label>
+                </div>
               );
             })}
           </div>
         ))}
       </div>
+
+      <SmartCellEditorDialog
+        open={editorTarget !== null}
+        row={editorTarget?.row ?? null}
+        column={editorTarget?.column ?? null}
+        initialValue={editorCell}
+        saving={savingKey !== null && savingKey === editorSavingKey}
+        onClose={() => setEditorTarget(null)}
+        onSave={async (next) => {
+          if (!editorTarget) return;
+          await persistCell(editorTarget.row, editorTarget.column, next);
+        }}
+        onImageUpload={handleImageUploadInDialog}
+      />
     </div>
   );
 }
