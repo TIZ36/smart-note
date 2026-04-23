@@ -22,6 +22,7 @@ from app import usage
 from app.db import pool
 from app.deps import Identity, require_scope
 from app.embeddings import embed_one, format_vector_literal
+from app.services.kb.hybrid import hybrid_search
 
 router = APIRouter(prefix="/v1/retrieve", tags=["retrieve"])
 
@@ -36,6 +37,11 @@ class RetrieveRequest(BaseModel):
     # read time. Setting lexical_weight=0 is a valid "vector only" call.
     vector_weight: float = 0.7
     lexical_weight: float = 0.3
+    # Phase 1d: opt-in 6-path hybrid. When true, `vector_weight` and
+    # `lexical_weight` are ignored — the 6-path ranker uses its own
+    # weight dict. When false, we use the legacy 2-path SQL blend
+    # below (default until the desktop updates its api.ts).
+    hybrid: bool = False
 
 
 class RetrievedMemory(BaseModel):
@@ -50,6 +56,8 @@ class RetrievedMemory(BaseModel):
     pinned: bool
     author_agent: str
     created_at: str
+    # Populated only on hybrid=true paths; empty dict on legacy 2-path.
+    path_scores: dict[str, float] = Field(default_factory=dict)
 
 
 class RetrieveResponse(BaseModel):
@@ -66,6 +74,42 @@ async def retrieve(
     req: RetrieveRequest,
     identity: Identity = Depends(require_scope("retrieve")),
 ) -> RetrieveResponse:
+    # 6-path hybrid path — opt-in via req.hybrid=true. Skips the old
+    # SQL blend entirely and delegates to services/kb/hybrid.py.
+    if req.hybrid:
+        hits = await hybrid_search(
+            query=req.query,
+            workspace_id=identity.workspace_id,
+            topk=req.topk,
+        )
+        await usage.bump(identity.workspace_id, retrieve_delta=1)
+        if hits:
+            hit_ids = [UUID(h.id) for h in hits]
+            try:
+                async with pool().acquire() as conn:
+                    await conn.execute(
+                        "UPDATE memories SET access_count = access_count + 1, "
+                        "last_accessed_at = now() WHERE id = ANY($1::uuid[])",
+                        hit_ids,
+                    )
+            except Exception:
+                pass
+        return RetrieveResponse(
+            query_embedded=any(h.path_scores.get("vec", 0) > 0 for h in hits),
+            results=[
+                RetrievedMemory(
+                    id=h.id, kind=h.kind, scope=h.scope, content=h.content,
+                    tags=h.tags, score=h.score,
+                    vector_score=h.path_scores.get("vec", 0.0),
+                    lexical_score=h.path_scores.get("sub", 0.0),
+                    pinned=h.pinned, author_agent=h.author_agent,
+                    created_at=h.created_at,
+                    path_scores=h.path_scores,
+                )
+                for h in hits
+            ],
+        )
+
     qvec = await embed_one(req.query)
     qvec_literal = format_vector_literal(qvec) if qvec is not None else None
 
