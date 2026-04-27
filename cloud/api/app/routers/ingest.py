@@ -88,12 +88,27 @@ async def ingest_bulk(
 ) -> BulkIngestResponse:
     """Ingest many documents serially. The pipeline is single-threaded
     on a doc — we don't parallelize because the embed pod is small and
-    parallel calls fight the same GPU. Caller passes either an
-    explicit document_ids list, or a smartnote_type filter, or both."""
+    parallel calls fight the same GPU.
+
+    Selection precedence:
+      1. Explicit `document_ids` always run.
+      2. `smartnote_type` filter — picks docs of that type.
+      3. Neither given — defaults to {note, wiki_topic} (every type
+         that's actually chunkable; smart_table / skill skipped).
+    """
     ws = UUID(identity.workspace_id)
     target_ids: list[str] = list(req.document_ids)
 
+    # Build the type filter list. Explicit `smartnote_type` wins;
+    # otherwise default to the chunkable kinds.
     if req.smartnote_type:
+        types_to_query = [req.smartnote_type]
+    elif not req.document_ids:
+        types_to_query = ["note", "wiki_topic"]
+    else:
+        types_to_query = []
+
+    for t in types_to_query:
         async with pool().acquire() as conn:
             rows = await conn.fetch(
                 """
@@ -101,7 +116,7 @@ async def ingest_bulk(
                 WHERE workspace_id = $1
                   AND (metadata->>'smartnote_type') = $2
                 """,
-                ws, req.smartnote_type,
+                ws, t,
             )
         for r in rows:
             md = r["metadata"] or {}

@@ -395,6 +395,55 @@ async def list_documents() -> str:
 
 
 @mcp.tool()
+async def full_ingest(
+    smartnote_type: Optional[str] = None,
+    topic_prefix: Optional[str] = None,
+) -> str:
+    """Re-ingest cloud documents into the chunks index in one shot.
+
+    "Ingest" here means: parse each document → split into 200-1500-char
+    paragraph chunks → embed via the workspace's embed pod → land in
+    the `chunks` table (pgvector + FTS5). Idempotent — re-running
+    deletes the prior chunks for each doc and rebuilds.
+
+    Filters (combine as you like):
+      smartnote_type — restrict to one source type:
+                       'note', 'wiki_topic', 'smart_table', 'skill'.
+                       Omit to process BOTH `note` AND `wiki_topic`
+                       (smart_table / skill are JSON-shaped and skip
+                       chunking).
+      topic_prefix   — when smartnote_type='wiki_topic', only ingest
+                       wikis whose metadata.relative_path starts with
+                       this string (e.g. '回传/' or '技术阅读/').
+
+    Cost: chunking + embed only. NO LLM tag classification — for that
+    use enrich tools (list_pending_enrichments → submit_enrichments).
+
+    Returns a one-line summary plus per-failure detail.
+    """
+    body: dict[str, Any] = {}
+    if smartnote_type:
+        body["smartnote_type"] = smartnote_type
+    if topic_prefix:
+        body["topic_prefix"] = topic_prefix
+    r = await _call("POST", "/v1/ingest/bulk", json=body)
+    if r.status_code != 200:
+        return _fail(r, "full_ingest")
+    d = r.json()
+    out = [
+        f"Bulk ingest done: {d['ingested']}/{d['total']} docs · "
+        f"{d['chunks']} chunks"
+    ]
+    if d.get("failures"):
+        out.append(f"{len(d['failures'])} failure(s):")
+        for f in d["failures"][:5]:
+            out.append(f"  - {f['document_id'][:8]}: {f['error'][:80]}")
+        if len(d["failures"]) > 5:
+            out.append(f"  + {len(d['failures']) - 5} more")
+    return "\n".join(out)
+
+
+@mcp.tool()
 async def propose_memory(
     content: str,
     kind: str = "fact",
