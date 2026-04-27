@@ -395,6 +395,59 @@ async def list_documents() -> str:
 
 
 @mcp.tool()
+async def queue_enrich_jobs(
+    smartnote_type: Optional[str] = None,
+) -> str:
+    """Queue an LLM-classification job per cloud document.
+
+    After running this, `list_pending_enrichments` returns the queue
+    so the connected agent (CC / Cursor) can classify each doc in
+    its own LLM context — zero external token cost — and write the
+    results back via `submit_enrichments`.
+
+    Args:
+      smartnote_type — restrict to one source type ('note' /
+        'wiki_topic'). Omit for both.
+
+    Returns count of jobs queued (skipping docs that already have
+    a non-failed job in flight).
+    """
+    body: dict[str, Any] = {}
+    if smartnote_type:
+        body["smartnote_type"] = smartnote_type
+    # /v1/enrich/run takes a single document_id, so we list-then-
+    # iterate. Cheap because /v1/documents returns just metadata.
+    types = [smartnote_type] if smartnote_type else ["note", "wiki_topic"]
+    queued = skipped = errored = 0
+    seen_ids: set[str] = set()
+    for t in types:
+        list_r = await _call("GET", "/v1/documents", params={"smartnote_type": t, "limit": 500})
+        if list_r.status_code != 200:
+            return _fail(list_r, "queue_enrich_jobs")
+        for d in list_r.json().get("documents") or []:
+            doc_id = d["id"]
+            if doc_id in seen_ids:
+                continue
+            seen_ids.add(doc_id)
+            r = await _call("POST", "/v1/enrich/run", json={"document_id": doc_id})
+            if r.status_code != 200:
+                errored += 1
+                continue
+            status = (r.json() or {}).get("status")
+            if status == "queued":
+                queued += 1
+            else:
+                # Already done / running — counted as skipped.
+                skipped += 1
+    return (
+        f"Queued {queued} enrich job(s). "
+        f"Skipped {skipped} (already done/running). "
+        f"{errored} error(s).\n"
+        "→ Now call list_pending_enrichments to start classifying."
+    )
+
+
+@mcp.tool()
 async def full_ingest(
     smartnote_type: Optional[str] = None,
     topic_prefix: Optional[str] = None,
