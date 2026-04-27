@@ -8877,3 +8877,210 @@ button.proto-toggle-switch-on .proto-toggle-knob {
   font-size: 10px;
   margin-right: 4px;
 }
+
+/* ── Cloud Console (Phase 2.5) ───────────────────────────────────
+   Tabbed management surface for cloud state. Visual language stays
+   in the proto-* family: pill tabs riff on nav-item-active, content
+   uses a wider container than form pages so tables breathe. */
+
+.proto-cc-tab {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 12px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-proto);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+.proto-cc-tab:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+.proto-cc-tab-active {
+  background: color-mix(in oklab, var(--color-accent) 10%, var(--color-bg-active));
+  color: var(--color-text-primary);
+}
+
+.proto-cc-content {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 28px 32px;
+}
+
+.proto-cc-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.proto-cc-card {
+  padding: 12px 14px;
+  border-radius: var(--radius-proto);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+}
+.proto-cc-card-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  margin-bottom: 4px;
+}
+.proto-cc-card-value {
+  font-size: 20px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  letter-spacing: -0.01em;
+  line-height: 1.1;
+}
+
+.proto-cc-statusdot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  margin-right: 6px;
+  flex-shrink: 0;
+  background: var(--color-text-muted);
+  vertical-align: 1px;
+}
+.proto-cc-statusdot-on { background: var(--color-success); }
+.proto-cc-statusdot-warn { background: var(--color-warning); }
+.proto-cc-statusdot-err { background: var(--color-danger); }
+
+.proto-cc-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.proto-cc-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.proto-cc-section-head .proto-form-section-title { margin-bottom: 0; }
+
+.proto-cc-table {
+  width: 100%;
+  font-size: 13px;
+  border-collapse: collapse;
+}
+.proto-cc-table thead th {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  text-align: left;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  padding: 8px 8px 8px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+.proto-cc-table tbody td {
+  padding: 10px 8px 10px 0;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  vertical-align: middle;
+}
+.proto-cc-table tbody tr:last-child td { border-bottom: none; }
+.proto-cc-table .proto-cc-cell-mono {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+.proto-cc-table .proto-cc-cell-muted { color: var(--color-text-muted); }
+.proto-cc-table .proto-cc-cell-actions { text-align: right; white-space: nowrap; }
+.proto-cc-table .proto-cc-cell-actions .proto-btn { margin-left: 6px; padding: 4px 10px; font-size: 12px; }
+
+.proto-cc-pair-banner {
+  margin-top: 12px;
+  padding: 14px 16px;
+  border-radius: var(--radius-proto);
+  background: color-mix(in oklab, var(--color-success) 8%, var(--color-bg-elevated));
+  border: 1px solid color-mix(in oklab, var(--color-success) 30%, var(--color-border));
+}
+.proto-cc-pair-banner-label {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+.proto-cc-pair-code {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 30px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  color: var(--color-success);
+  margin-top: 4px;
+  line-height: 1.1;
+}
+.proto-cc-pair-banner-meta {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-top: 6px;
+}
+
+.proto-cc-status-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  background: color-mix(in oklab, var(--color-text-secondary) 10%, transparent);
+  color: var(--color-text-secondary);
+  text-transform: lowercase;
+}
+.proto-cc-status-badge-done    { background: color-mix(in oklab, var(--color-success) 15%, transparent); color: var(--color-success); }
+.proto-cc-status-badge-failed  { background: color-mix(in oklab, var(--color-danger) 15%, transparent);  color: var(--color-danger);  }
+.proto-cc-status-badge-running { background: color-mix(in oklab, var(--color-warning) 18%, transparent); color: var(--color-warning); }
+
+.proto-cc-empty {
+  text-align: center;
+  padding: 32px 0;
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.proto-cc-error {
+  padding: 10px 12px;
+  border-radius: var(--radius-proto);
+  background: color-mix(in oklab, var(--color-danger) 10%, transparent);
+  border: 1px solid color-mix(in oklab, var(--color-danger) 30%, var(--color-border));
+  color: var(--color-danger);
+  font-size: 12px;
+  margin-bottom: 16px;
+}
+
+.proto-cc-activity {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.proto-cc-activity li {
+  display: flex;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  border-bottom: 1px solid var(--color-border);
+}
+.proto-cc-activity li:last-child { border-bottom: none; }
+.proto-cc-activity-kind {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  font-weight: 600;
+  padding-top: 2px;
+  flex-shrink: 0;
+  width: 56px;
+}
+.proto-cc-activity-summary { flex: 1; min-width: 0; }
+.proto-cc-activity-time { font-size: 11px; color: var(--color-text-muted); flex-shrink: 0; }

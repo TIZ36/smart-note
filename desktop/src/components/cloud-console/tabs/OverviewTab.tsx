@@ -7,28 +7,39 @@ export function OverviewTab() {
 
   useEffect(() => {
     let alive = true;
-    const load = () => fetchOverview()
-      .then(d => { if (alive) { setData(d); setErr(""); } })
-      .catch(e => { if (alive) setErr(String(e)); });
+    const load = () =>
+      fetchOverview()
+        .then((d) => { if (alive) { setData(d); setErr(""); } })
+        .catch((e) => { if (alive) setErr(String(e)); });
     load();
     const id = setInterval(load, 10_000);
     return () => { alive = false; clearInterval(id); };
   }, []);
 
-  if (err) return <div className="p-4 text-rose-400">{err}</div>;
-  if (!data) return <div className="p-4 text-zinc-400">Loading…</div>;
+  if (err) {
+    return (
+      <div className="proto-cc-content">
+        <div className="proto-cc-error">{err}</div>
+      </div>
+    );
+  }
+  if (!data) {
+    return (
+      <div className="proto-cc-content">
+        <div className="proto-cc-empty">Loading…</div>
+      </div>
+    );
+  }
 
   const { counts, executors, primary_device_online, activity } = data;
-  const dot = (on: boolean) => (
-    <span className={"inline-block w-2 h-2 rounded-full mr-2 " +
-      (on ? "bg-emerald-400" : "bg-zinc-600")} />
-  );
 
   return (
-    <div className="p-4 space-y-4">
-      <section>
-        <h3 className="text-sm uppercase tracking-wide text-zinc-400 mb-2">Counts</h3>
-        <div className="grid grid-cols-3 md:grid-cols-4 gap-2">
+    <div className="proto-cc-content">
+      <section className="proto-form-section">
+        <div className="proto-cc-section-head">
+          <h2 className="proto-form-section-title">Counts</h2>
+        </div>
+        <div className="proto-cc-grid">
           {([
             ["Memories", counts.memories],
             ["Documents", counts.documents],
@@ -38,41 +49,77 @@ export function OverviewTab() {
             ["Enrich done", counts.enrich_done],
             ["Drafts", counts.proposals_pending],
           ] as const).map(([label, v]) => (
-            <div key={label} className="bg-zinc-900/60 border border-zinc-800 rounded px-3 py-2">
-              <div className="text-xs text-zinc-500">{label}</div>
-              <div className="text-lg text-zinc-100">{v}</div>
+            <div key={label} className="proto-cc-card">
+              <div className="proto-cc-card-label">{label}</div>
+              <div className="proto-cc-card-value">{v}</div>
             </div>
           ))}
         </div>
       </section>
 
-      <section>
-        <h3 className="text-sm uppercase tracking-wide text-zinc-400 mb-2">Executors</h3>
-        <div className="flex gap-4 text-sm">
-          <span>{dot(executors.mcp_pull)}MCP pull (CC plan)</span>
-          <span>{dot(executors.ws_relay)}WS relay (primary device)</span>
-          <span>{dot(executors.cloud_pool)}Cloud pool (subscription)</span>
+      <div className="proto-form-divider" />
+
+      <section className="proto-form-section">
+        <div className="proto-cc-section-head">
+          <h2 className="proto-form-section-title">Executors</h2>
+        </div>
+        <div className="proto-cc-row" style={{ flexWrap: "wrap", rowGap: 8 }}>
+          <Status on={executors.mcp_pull} label="MCP pull · CC plan" />
+          <Status on={executors.ws_relay} label="WS relay · primary device" />
+          <Status on={executors.cloud_pool} label="Cloud pool · subscription" />
         </div>
       </section>
 
-      <section>
-        <h3 className="text-sm uppercase tracking-wide text-zinc-400 mb-2">Primary device</h3>
-        <div className="text-sm">{dot(primary_device_online)}{primary_device_online ? "Online" : "Offline"}</div>
+      <div className="proto-form-divider" />
+
+      <section className="proto-form-section">
+        <div className="proto-cc-section-head">
+          <h2 className="proto-form-section-title">Primary device</h2>
+        </div>
+        <Status on={primary_device_online} label={primary_device_online ? "Online" : "Offline"} />
       </section>
 
-      <section>
-        <h3 className="text-sm uppercase tracking-wide text-zinc-400 mb-2">Recent activity</h3>
-        {activity.length === 0
-          ? <div className="text-zinc-500 text-sm">No recent activity.</div>
-          : <ul className="space-y-1">
-              {activity.map(a => (
-                <li key={a.id} className="text-sm text-zinc-300">
-                  <span className="text-zinc-500">[{a.kind}]</span> {a.summary}
-                  <span className="text-zinc-600 ml-2">{new Date(a.at).toLocaleString()}</span>
-                </li>
-              ))}
-            </ul>}
+      <div className="proto-form-divider" />
+
+      <section className="proto-form-section">
+        <div className="proto-cc-section-head">
+          <h2 className="proto-form-section-title">Recent activity</h2>
+        </div>
+        {activity.length === 0 ? (
+          <div className="proto-cc-empty">No recent activity.</div>
+        ) : (
+          <ul className="proto-cc-activity">
+            {activity.map((a) => (
+              <li key={a.id}>
+                <span className="proto-cc-activity-kind">{a.kind}</span>
+                <span className="proto-cc-activity-summary">{a.summary}</span>
+                <span className="proto-cc-activity-time">{relativeTime(a.at)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
     </div>
   );
+}
+
+function Status({ on, label }: { on: boolean; label: string }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center" }}>
+      <span className={"proto-cc-statusdot " + (on ? "proto-cc-statusdot-on" : "")} />
+      {label}
+    </span>
+  );
+}
+
+function relativeTime(iso: string): string {
+  const d = new Date(iso);
+  const diffMs = Date.now() - d.getTime();
+  const sec = Math.round(diffMs / 1000);
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.round(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.round(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  return d.toLocaleDateString();
 }
