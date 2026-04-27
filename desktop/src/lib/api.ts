@@ -219,6 +219,15 @@ export async function feedback(
 
 // Source preview
 export async function fetchSource(ref: string): Promise<SourcePreviewData> {
+  // Cloud chunk refs come back from the cloud-search adapter shaped
+  // like "cloud:<doc-uuid>#1-12" — but the chunk row carries its own
+  // uuid that's unrelated to the doc uuid. The chunk uuid is in
+  // the SearchResult.id field; SourceCard / SourcePreview don't have
+  // that yet. For now we degrade gracefully: refuse the click for
+  // cloud: refs and tell the user to read the snippet inline.
+  if (ref.startsWith("cloud:")) {
+    throw new Error("cloud chunk preview is opt-in — click rendering inline only at MVP");
+  }
   const res = await fetch(
     `${BASE}/source?ref=${encodeURIComponent(ref)}`
   );

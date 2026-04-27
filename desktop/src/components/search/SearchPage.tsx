@@ -439,7 +439,7 @@ export function SearchPage({ searchState: s, tags }: Props) {
                           result={r}
                           starred={i < 3}
                           highlighted={s.previewRef === r.source_ref || highlightIdx === i + 1}
-                          onClick={r.source_ref?.startsWith("memory:") ? undefined : () => s.setPreviewRef(r.source_ref)}
+                          onClick={r.source_ref?.startsWith("memory:") || r.source_ref?.startsWith("cloud:") ? undefined : () => s.setPreviewRef(r.source_ref)}
                         />
                       </motion.div>
                     ))}
@@ -477,7 +477,7 @@ export function SearchPage({ searchState: s, tags }: Props) {
                             index={globalIdx}
                             result={r}
                             highlighted={s.previewRef === r.source_ref || highlightIdx === globalIdx}
-                            onClick={r.source_ref?.startsWith("memory:") ? undefined : () => s.setPreviewRef(r.source_ref)}
+                            onClick={r.source_ref?.startsWith("memory:") || r.source_ref?.startsWith("cloud:") ? undefined : () => s.setPreviewRef(r.source_ref)}
                           />
                         </div>
                       );

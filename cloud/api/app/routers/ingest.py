@@ -303,3 +303,69 @@ async def search_chunks(
             for h in hits
         ],
     )
+
+
+# ── /v1/chunks/{id}/source — preview context ────────────────────
+
+class ChunkSourceLine(BaseModel):
+    line: int
+    text: str
+    highlight: bool
+
+
+class ChunkSourceResponse(BaseModel):
+    document_id: str
+    document_name: str
+    dimension: str
+    line_start: int
+    line_end: int
+    target_line: int
+    lines: list[ChunkSourceLine]
+
+
+@router.get(
+    "/chunks/{chunk_id}/source",
+    response_model=ChunkSourceResponse,
+    dependencies=[Depends(require_scope("documents:read"))],
+)
+async def chunk_source(
+    chunk_id: str,
+    context: int = 5,
+    identity: Identity = Depends(require_scope("documents:read")),
+) -> ChunkSourceResponse:
+    """Return the chunk's lines with a few lines of surrounding
+    document context for the SourcePreview pane. Replaces local
+    /source for cloud-pulled chunks."""
+    async with pool().acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT c.id, c.document_id, c.dimension, c.line_start, c.line_end,
+                   d.name AS document_name, d.content AS document_content
+            FROM chunks c JOIN documents d ON d.id = c.document_id
+            WHERE c.id = $1 AND c.workspace_id = $2
+            """,
+            UUID(chunk_id), UUID(identity.workspace_id),
+        )
+    if not row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "chunk not found")
+
+    all_lines = (row["document_content"] or "").splitlines()
+    start = max(1, int(row["line_start"]) - context)
+    end = min(len(all_lines), int(row["line_end"]) + context)
+    out_lines = [
+        ChunkSourceLine(
+            line=i,
+            text=all_lines[i - 1] if i - 1 < len(all_lines) else "",
+            highlight=row["line_start"] <= i <= row["line_end"],
+        )
+        for i in range(start, end + 1)
+    ]
+    return ChunkSourceResponse(
+        document_id=str(row["document_id"]),
+        document_name=row["document_name"],
+        dimension=row["dimension"],
+        line_start=int(row["line_start"]),
+        line_end=int(row["line_end"]),
+        target_line=int(row["line_start"]),
+        lines=out_lines,
+    )
