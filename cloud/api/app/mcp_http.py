@@ -653,12 +653,35 @@ async def ingest_notes(
 
 
 @mcp.tool()
-async def list_pending_enrichments(limit: int = 5) -> str:
-    """List enrich jobs the agent can pull and classify with its own LLM.
+async def list_pending_enrichments(
+    limit: int = 5,
+    include_content: bool = True,
+    max_chars_per_doc: int = 60000,
+) -> str:
+    """List enrich jobs an agent can pull and classify with its own LLM.
 
-    For each job you'll get the document content + the workspace's
-    allowed tag list. Run classification in your own context, then
-    submit results via `submit_enrichments(job_id, segments)`.
+    Returns each job's id, document name, allowed tag list, AND the
+    document body — the content is the whole point: the agent reads
+    it, classifies into segments, and writes back via submit_enrichments.
+
+    Args:
+      limit: how many jobs to fetch in one call (server caps at 50)
+      include_content: when False, returns just the index (for
+        previewing / paging). Default True.
+      max_chars_per_doc: trim each doc to this many chars to keep
+        the tool response under context limits. The trimmed view is
+        labeled with [TRUNCATED] and the agent can call
+        get_enrichment_job(job_id) for the full body. Default 60_000.
+
+    Output is plain text — each job is a delimited block. The
+    classifier should:
+      1. Group consecutive lines into segments by topic.
+      2. Pick ONE primary tag per segment from the listed tags.
+      3. Optionally pick secondary_tags + topic_name + summary +
+         keywords + entities + is_credential.
+      4. Line numbers are 1-based and EXACT (use the L<N>: prefix
+         on each line in the body).
+      5. submit_enrichments(job_id, segments=[...]) for EACH job.
     """
     r = await _call("GET", "/v1/enrich/pending", params={"limit": limit})
     if r.status_code != 200:
@@ -666,15 +689,61 @@ async def list_pending_enrichments(limit: int = 5) -> str:
     jobs = r.json()
     if not jobs:
         return "No pending enrichments."
-    out = [f"{len(jobs)} pending enrichment(s):"]
+
+    out: list[str] = [f"{len(jobs)} pending enrichment(s):", ""]
     for j in jobs:
-        out.append(
-            f"- job={j['id']}  doc={j['document_name']}  "
-            f"({len((j.get('content') or '').splitlines())} lines)\n"
-            f"  tags: {j['tags']}\n"
-            f"  → call submit_enrichments(job_id='{j['id']}', segments=[...]) when done"
-        )
+        body = j.get("content") or ""
+        n_lines = len(body.splitlines())
+        out.append("─" * 72)
+        out.append(f"JOB     {j['id']}")
+        out.append(f"DOC     {j['document_name']}  ({n_lines} lines)")
+        out.append(f"TAGS    {j['tags']}")
+        if include_content:
+            shown = body
+            if len(shown) > max_chars_per_doc:
+                shown = shown[:max_chars_per_doc] + "\n[TRUNCATED — call get_enrichment_job for full body]"
+            # Number every line so segment line_start/line_end are
+            # unambiguous in the agent's reply.
+            numbered = "\n".join(
+                f"L{i + 1}: {ln}" for i, ln in enumerate(shown.splitlines())
+            )
+            out.append("BODY:")
+            out.append(numbered)
+        out.append("")
+    out.append(
+        "→ For each job above: classify into segments, then call "
+        "submit_enrichments(job_id=..., segments=[...]). Line numbers "
+        "in segments must match the L<N> prefixes."
+    )
     return "\n".join(out)
+
+
+@mcp.tool()
+async def get_enrichment_job(job_id: str) -> str:
+    """Fetch the full body of one pending enrich job. Use this when
+    list_pending_enrichments truncated the doc and you need everything.
+
+    The reply is the raw document text with L<N>: prefixes per line —
+    same shape as the body block in list_pending_enrichments, just
+    not truncated.
+    """
+    r = await _call("GET", "/v1/enrich/pending", params={"limit": 50})
+    if r.status_code != 200:
+        return _fail(r, "get_enrichment_job")
+    for j in r.json() or []:
+        if j.get("id") == job_id:
+            body = j.get("content") or ""
+            numbered = "\n".join(
+                f"L{i + 1}: {ln}" for i, ln in enumerate(body.splitlines())
+            )
+            return (
+                f"JOB   {j['id']}\n"
+                f"DOC   {j['document_name']}\n"
+                f"TAGS  {j['tags']}\n"
+                f"BODY:\n{numbered}"
+            )
+    return f"No queued job with id={job_id}. Maybe it's already done — "\
+           "try get_memory(job_id) or run list_pending_enrichments again."
 
 
 @mcp.tool()
