@@ -1303,6 +1303,14 @@ export async function fetchSyncPullPreview(): Promise<SyncPullPreview> {
   return res.json();
 }
 
+export type DedupeSummary = Record<string, { kept: number; deleted: number; errors: number; error?: string }>;
+
+export async function dedupeCloudDocs(): Promise<DedupeSummary> {
+  const res = await fetch(`${BASE}/sync/dedupe-cloud`, { method: "POST" });
+  if (!res.ok) throw new Error(`dedupe: ${res.status}`);
+  return res.json();
+}
+
 export type CloudSyncPreview = {
   total_items: number;
   total_new: number;

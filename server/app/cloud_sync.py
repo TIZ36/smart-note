@@ -740,11 +740,55 @@ def _record_conflict(
 
 # ── Push / Pull / Full sync ─────────────────────────────────────
 
+def _identifying_field(kind: str) -> str:
+    """Which metadata field identifies the local entity for this kind.
+    Used to find an existing cloud doc when sync_state is missing
+    (e.g. after a clean reinstall) — without this, push would create
+    duplicate cloud docs."""
+    return {
+        "note": "local_path",
+        "wiki_topic": "local_path",
+        "smart_table": "table_name",
+        "skill": "skill_name",
+    }.get(kind, "local_path")
+
+
+def _find_remote_doc_id(kind: str, local_id: str) -> str | None:
+    """Look up an existing cloud doc that matches this local entity by
+    its identifying metadata field. Returns the cloud doc id or None.
+    Falls back to scanning the kind's list when the cloud has no
+    metadata-filter endpoint."""
+    field = _identifying_field(kind)
+    try:
+        r = _cloud_request(
+            "GET", "/v1/documents",
+            params={"smartnote_type": kind, "limit": 500},
+        )
+        if r.status_code != 200:
+            return None
+        for doc in r.json().get("documents") or []:
+            md = doc.get("metadata") or {}
+            if md.get(field) == local_id:
+                return doc.get("id")
+    except Exception as e:
+        log.debug("find_remote_doc_id failed for %s/%s: %s", kind, local_id, e)
+    return None
+
+
 def _push_entity(entity: LocalEntity) -> dict:
     state = _get_state(entity.kind, entity.local_id)
     local_hash = _content_hash(entity.content, entity.metadata)
     if state and state.local_hash == local_hash and state.cloud_doc_id:
         return {"action": "skip", "reason": "unchanged"}
+
+    # Recover from missing sync_state: if the local row was wiped (clean
+    # install, manual delete) but the cloud still has a matching doc,
+    # adopt it instead of POSTing a duplicate.
+    if not state or not state.cloud_doc_id:
+        remote_id = _find_remote_doc_id(entity.kind, entity.local_id)
+        if remote_id:
+            _upsert_state(entity.kind, entity.local_id, cloud_doc_id=remote_id)
+            state = _get_state(entity.kind, entity.local_id)
 
     if state and state.cloud_doc_id:
         # Detect push-over-remote-change: remote changed since we last
@@ -1048,6 +1092,55 @@ def pull_all(force: bool = False) -> dict:
         result = _apply_remote(doc, force=force)
         summary[kind].append({"doc_id": doc.get("id"), **result})
     return {"pulled": summary, "force": force}
+
+
+def dedupe_cloud() -> dict:
+    """One-shot cleanup: find cloud documents whose identifying field
+    (local_path / table_name / skill_name) matches another doc of the
+    same kind, keep the newest, delete the rest. Heals duplicate-push
+    bugs from older sync code paths.
+
+    Returns counts per kind: { kept, deleted, errors }.
+    """
+    summary: dict[str, dict[str, int]] = {}
+    for kind in _PULL_KINDS:
+        field = _identifying_field(kind)
+        try:
+            r = _cloud_request(
+                "GET", "/v1/documents",
+                params={"smartnote_type": kind, "limit": 500},
+            )
+            r.raise_for_status()
+        except Exception as e:
+            summary[kind] = {"kept": 0, "deleted": 0, "errors": 1, "error": str(e)}
+            continue
+        docs = r.json().get("documents") or []
+        # Group by identifying field; bucket-less docs (no field set) go
+        # into a singleton group so they're never deleted by accident.
+        groups: dict[str, list[dict]] = {}
+        for doc in docs:
+            key = (doc.get("metadata") or {}).get(field) or f"__no_id_{doc.get('id')}"
+            groups.setdefault(key, []).append(doc)
+
+        kept = deleted = errors = 0
+        for key, group in groups.items():
+            if len(group) == 1:
+                kept += 1
+                continue
+            # Keep the newest (largest updated_at); delete the rest.
+            group.sort(key=lambda d: d.get("updated_at") or d.get("created_at") or "", reverse=True)
+            kept += 1
+            for d in group[1:]:
+                try:
+                    rd = _cloud_request("DELETE", f"/v1/documents/{d['id']}")
+                    if rd.status_code in (200, 204):
+                        deleted += 1
+                    else:
+                        errors += 1
+                except Exception:
+                    errors += 1
+        summary[kind] = {"kept": kept, "deleted": deleted, "errors": errors}
+    return summary
 
 
 def pull_diff() -> dict:

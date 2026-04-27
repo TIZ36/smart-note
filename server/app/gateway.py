@@ -3790,6 +3790,20 @@ def api_sync_pull_preview() -> dict:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/sync/dedupe-cloud")
+def api_sync_dedupe_cloud() -> dict:
+    """One-shot cleanup of duplicate cloud documents. Older sync code
+    POSTed a new doc whenever sync_state was missing the cloud_doc_id,
+    which created duplicates after a clean reinstall. This endpoint
+    keeps the newest doc per (kind, identifying_field) tuple and
+    deletes the rest."""
+    from app import cloud_sync
+    try:
+        return cloud_sync.dedupe_cloud()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/sync/full")
 def api_sync_full() -> dict:
     """Serial push-then-pull. One call, both directions."""

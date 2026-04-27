@@ -20,6 +20,7 @@ import {
   useCloudSyncUpload, startUpload, cancelUpload, progressOf,
   type UploadPhase,
 } from "./upload-state";
+import { claimDevice } from "@/lib/cloud-api";
 
 /* Dedicated Cloud Sync page — promoted out of Settings.
 
@@ -270,6 +271,25 @@ export function CloudSyncPage() {
     }
   }
 
+  // Cloud dedupe: collapse duplicate cloud docs (same kind + same
+  // identifying field) into one. Recovery from older sync code that
+  // POSTed a fresh doc when sync_state was missing.
+  const [dedupeBusy, setDedupeBusy] = useState(false);
+  const [dedupeResult, setDedupeResult] = useState<api.DedupeSummary | null>(null);
+  async function runDedupe() {
+    if (dedupeBusy) return;
+    setDedupeBusy(true);
+    setPullError("");
+    try {
+      setDedupeResult(await api.dedupeCloudDocs());
+      await refresh();
+    } catch (e) {
+      setPullError(String(e));
+    } finally {
+      setDedupeBusy(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="proto-page-content">
@@ -477,6 +497,25 @@ export function CloudSyncPage() {
             )}
           </section>
 
+          {/* Pair-with-code card — for users joining an existing workspace.
+              The new device has no key yet; an existing device issues a
+              6-digit code (Cloud Console → Devices → Pair new device),
+              this form trades it for a fresh key bound to this device. */}
+          <PairWithCodeCard
+            currentUrl={url}
+            onPaired={async ({ baseUrl, apiKey }) => {
+              const merged: AppSettings = {
+                ...(settings as AppSettings),
+                cloud_sync_enabled: true,
+                cloud_sync_url: baseUrl,
+                cloud_sync_api_key: apiKey,
+              };
+              await writeSettings(merged);
+              setSettings(merged);
+              setPersisted({ url: baseUrl, key: apiKey, enabled: true });
+            }}
+          />
+
           {/* Empty-state guide if never configured */}
           {!hasConfig && (
             <section className="proto-cloud-sync-card proto-cloud-sync-guide-card">
@@ -575,6 +614,16 @@ export function CloudSyncPage() {
                   </button>
                   <button
                     type="button"
+                    className="proto-btn"
+                    onClick={runDedupe}
+                    disabled={pulling || forceLoading || dedupeBusy}
+                    title="Find duplicate cloud documents and keep only the newest of each."
+                  >
+                    {dedupeBusy ? <Loader2 size={14} className="animate-spin" /> : <Layers size={14} />}
+                    Dedupe cloud
+                  </button>
+                  <button
+                    type="button"
                     className="proto-btn proto-cloud-sync-refresh"
                     onClick={refresh}
                     title="Refresh status"
@@ -604,6 +653,14 @@ export function CloudSyncPage() {
               {pullError && (
                 <div className="proto-cloud-sync-note proto-cloud-sync-note-error">
                   <AlertTriangle size={12} /> {pullError}
+                </div>
+              )}
+              {dedupeResult && (
+                <div className="proto-cloud-sync-note">
+                  <CheckCircle2 size={12} />
+                  Dedupe: {Object.entries(dedupeResult)
+                    .map(([k, v]) => `${k} ${v.kept}↑${v.deleted}↓`)
+                    .join(" · ")}
                 </div>
               )}
               {status && status.conflicts > 0 && (

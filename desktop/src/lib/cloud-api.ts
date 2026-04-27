@@ -98,6 +98,40 @@ export const pairDevice = () =>
 export const promoteDevice = (id: string) => call<Device>("POST", `/v1/devices/${id}/promote`, {});
 export const unpairDevice = (id: string) => call<{ deleted: number }>("DELETE", `/v1/devices/${id}`);
 
+// claimDevice: NEW device, has no API key yet — sends the 6-digit code
+// from an existing device and gets back a freshly-minted key. Bypasses
+// the JWT-cached `call()` helper because there's no key to exchange.
+// The base URL must be supplied explicitly (we can't read it from
+// settings yet — settings only has a key/url pair the user is in the
+// process of *establishing*).
+export type ClaimResponse = {
+  api_key: string;        // sn_live_<prefix>_<secret>, save once
+  workspace_id: string;
+  device: Device;
+};
+
+export async function claimDevice(
+  baseUrl: string,
+  pairingCode: string,
+  name: string,
+  platform: string,
+): Promise<ClaimResponse> {
+  const url = `${baseUrl.replace(/\/+$/, "")}/v1/devices/claim`;
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pairing_code: pairingCode, name, platform }),
+  });
+  if (!r.ok) {
+    const text = await r.text().catch(() => "");
+    throw new Error(`claim failed (${r.status}): ${text.slice(0, 200) || "unknown"}`);
+  }
+  // Successful claim invalidates any prior JWT cache (we're swapping
+  // identities). Reset so the next call re-exchanges with the new key.
+  _jwtCache = null;
+  return r.json() as Promise<ClaimResponse>;
+}
+
 export const listEnrichJobs = (status?: string) =>
   call<EnrichJob[]>("GET", `/v1/enrich/jobs${status ? `?status_filter=${status}` : ""}`);
 export const runEnrich = (documentId: string) =>
