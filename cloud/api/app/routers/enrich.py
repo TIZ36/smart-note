@@ -202,6 +202,141 @@ async def run_enrich(
     return _row_to_out(row)
 
 
+class PendingJob(BaseModel):
+    """A queued job packaged for an external classifier (the cc_mcp
+    executor). Carries everything the agent needs to run the LLM call
+    without round-tripping back to fetch the document."""
+    id: str
+    document_id: str
+    document_name: str
+    content: str
+    tags: list[str]
+    created_at: str
+
+
+@router.get(
+    "/pending",
+    response_model=list[PendingJob],
+    dependencies=[Depends(require_scope("documents:write"))],
+)
+async def list_pending(
+    identity: Identity = Depends(require_scope("documents:write")),
+    limit: int = 5,
+) -> list[PendingJob]:
+    """Return queued jobs an agent can pull and classify with its own
+    LLM (the cc_mcp executor path). The agent then calls
+    `POST /v1/enrich/jobs/{job_id}/submit` with its segments."""
+    ws_uuid = UUID(identity.workspace_id)
+    async with pool().acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT j.id, j.document_id, j.created_at, d.name, d.content
+            FROM enrich_jobs j
+            JOIN documents d ON d.id = j.document_id
+            WHERE j.workspace_id = $1 AND j.status = 'queued'
+            ORDER BY j.created_at ASC
+            LIMIT $2
+            """,
+            ws_uuid, max(1, min(limit, 50)),
+        )
+    return [
+        PendingJob(
+            id=str(r["id"]), document_id=str(r["document_id"]),
+            document_name=r["name"], content=r["content"] or "",
+            tags=DEFAULT_TAGS,
+            created_at=r["created_at"].isoformat(),
+        )
+        for r in rows
+    ]
+
+
+class SubmitSegment(BaseModel):
+    line_start: int
+    line_end: int
+    tag: str
+    confidence: float = 0.0
+    summary: str = ""
+    secondary_tags: list[str] = Field(default_factory=list)
+    topic_name: str = ""
+    keywords: list[str] = Field(default_factory=list)
+    entities: list[dict[str, Any]] = Field(default_factory=list)
+    is_credential: bool = False
+
+
+class SubmitRequest(BaseModel):
+    segments: list[SubmitSegment]
+    executor: str = "mcp_pull"
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+
+
+@router.post(
+    "/jobs/{job_id}/submit",
+    response_model=EnrichJobOut,
+    dependencies=[Depends(require_scope("documents:write"))],
+)
+async def submit_job(
+    job_id: str,
+    req: SubmitRequest,
+    identity: Identity = Depends(require_scope("documents:write")),
+) -> EnrichJobOut:
+    """External-classifier callback. Lands segments into tag_segments
+    and marks the job done. Idempotent on document_id (replaces existing
+    segments for that doc)."""
+    ws_uuid = UUID(identity.workspace_id)
+    job_uuid = UUID(job_id)
+    async with pool().acquire() as conn:
+        async with conn.transaction():
+            job = await conn.fetchrow(
+                "SELECT id, document_id, status FROM enrich_jobs "
+                "WHERE id = $1 AND workspace_id = $2 FOR UPDATE",
+                job_uuid, ws_uuid,
+            )
+            if not job:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
+            if job["status"] in ("done", "cancelled"):
+                raise HTTPException(status.HTTP_409_CONFLICT, f"job already {job['status']}")
+            doc_uuid = job["document_id"]
+            await conn.execute(
+                "DELETE FROM tag_segments WHERE document_id=$1", doc_uuid
+            )
+            for seg in req.segments:
+                await conn.execute(
+                    """
+                    INSERT INTO tag_segments
+                        (workspace_id, document_id, start_line, end_line,
+                         tag, confidence, summary, meta)
+                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb)
+                    """,
+                    ws_uuid, doc_uuid, seg.line_start, seg.line_end,
+                    seg.tag, seg.confidence, seg.summary,
+                    json.dumps({
+                        "secondary_tags": seg.secondary_tags,
+                        "topic_name": seg.topic_name,
+                        "keywords": seg.keywords,
+                        "entities": seg.entities,
+                        "is_credential": seg.is_credential,
+                    }),
+                )
+            row = await conn.fetchrow(
+                """
+                UPDATE enrich_jobs
+                SET status='done', executor=$2, finished_at=now(),
+                    result=$3::jsonb
+                WHERE id=$1 RETURNING *
+                """,
+                job_uuid, req.executor,
+                json.dumps({
+                    "segments": [s.model_dump() for s in req.segments],
+                    "prompt_tokens": req.prompt_tokens,
+                    "completion_tokens": req.completion_tokens,
+                    "total_tokens": req.total_tokens,
+                }),
+            )
+    return _row_to_out(row)
+
+
 @router.get(
     "/jobs",
     response_model=list[EnrichJobOut],

@@ -512,6 +512,119 @@ async def reject_proposal(
 
 
 @mcp.tool()
+async def ingest_notes(
+    name: str,
+    content: str,
+) -> str:
+    """Upload a note to the cloud and queue it for AI tag classification.
+
+    The job lands in the workspace's enrich queue. If a connected agent
+    (CC / Cursor with `mcp-always-allow`) is around, it can pull the
+    job via `list_pending_enrichments` and classify with its own LLM
+    plan — at zero extra token cost to the user. Otherwise the job
+    waits for the workspace's primary device or cloud pool to handle it.
+    """
+    r = await _call("POST", "/v1/documents",
+                    json={"name": name, "content": content, "kind": "markdown"})
+    if r.status_code != 200:
+        return _fail(r, "ingest_notes")
+    doc = r.json()
+    rj = await _call("POST", "/v1/enrich/run", json={"document_id": doc["id"]})
+    if rj.status_code != 200:
+        return f"Document saved (id={doc['id']}) but enrich queue failed: {_fail(rj, 'enqueue')}"
+    job = rj.json()
+    return (
+        f"Ingested {name} (doc id={doc['id']}, {doc['byte_size']}B).\n"
+        f"Enrich job id={job['id']} status={job['status']} — "
+        "an MCP-connected agent can pick it up via list_pending_enrichments."
+    )
+
+
+@mcp.tool()
+async def list_pending_enrichments(limit: int = 5) -> str:
+    """List enrich jobs the agent can pull and classify with its own LLM.
+
+    For each job you'll get the document content + the workspace's
+    allowed tag list. Run classification in your own context, then
+    submit results via `submit_enrichments(job_id, segments)`.
+    """
+    r = await _call("GET", "/v1/enrich/pending", params={"limit": limit})
+    if r.status_code != 200:
+        return _fail(r, "list_pending_enrichments")
+    jobs = r.json()
+    if not jobs:
+        return "No pending enrichments."
+    out = [f"{len(jobs)} pending enrichment(s):"]
+    for j in jobs:
+        out.append(
+            f"- job={j['id']}  doc={j['document_name']}  "
+            f"({len((j.get('content') or '').splitlines())} lines)\n"
+            f"  tags: {j['tags']}\n"
+            f"  → call submit_enrichments(job_id='{j['id']}', segments=[...]) when done"
+        )
+    return "\n".join(out)
+
+
+@mcp.tool()
+async def submit_enrichments(
+    job_id: str,
+    segments: list[dict[str, Any]],
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+) -> str:
+    """Submit classified segments for a pending enrich job.
+
+    Each segment must be a dict with: line_start, line_end, tag,
+    confidence (0-1), summary, secondary_tags, topic_name, keywords,
+    entities, is_credential. Matches the shape returned by the
+    classifier prompt — see the system prompt fetched alongside the job.
+    """
+    body = {
+        "segments": segments,
+        "executor": "mcp_pull",
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+    }
+    r = await _call("POST", f"/v1/enrich/jobs/{job_id}/submit", json=body)
+    if r.status_code != 200:
+        return _fail(r, "submit_enrichments")
+    out = r.json()
+    return f"Submitted {len(segments)} segment(s) for job={job_id} → status={out['status']}"
+
+
+@mcp.tool()
+async def classify_segment(
+    text: str,
+    tags: Optional[list[str]] = None,
+) -> str:
+    """Return the classifier prompt for a one-off snippet.
+
+    The cloud doesn't run the LLM here — it returns the system prompt
+    + the numbered lines so you (the connected agent) can run
+    classification in your own context. Useful when you want to
+    classify ad-hoc text without going through the document/job flow.
+    Reply must be a JSON array of segments per the prompt's schema.
+    """
+    used_tags = tags or [
+        "learn", "work", "life", "todo", "idea",
+        "password", "reference", "others",
+    ]
+    tag_block = "\n".join(f"- {t}" for t in used_tags)
+    lines = (text or "").splitlines() or [""]
+    numbered = "\n".join(f"L{i + 1}: {ln}" for i, ln in enumerate(lines))
+    return (
+        "Classify the following lines into tag segments.\n\n"
+        f"Available tags:\n{tag_block}\n\n"
+        f"Lines:\n{numbered}\n\n"
+        "Respond ONLY with a JSON array of segments shaped like "
+        "{tag, secondary_tags, topic_name, line_start, line_end, "
+        "summary, keywords, entities, is_credential}. "
+        "Line numbers must be exact. Every line in exactly one segment."
+    )
+
+
+@mcp.tool()
 async def get_usage() -> str:
     """Show the workspace's current usage counters."""
     r = await _call("GET", "/v1/usage")
