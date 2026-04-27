@@ -676,31 +676,96 @@ def push_all() -> dict:
     return {"pushed": summary}
 
 
-def _apply_remote(doc: dict) -> dict:
-    """Handle a single remote document on the pull path: decide whether
-    the remote is actually newer than local, apply if so."""
+def _resolve_local_id(doc: dict) -> tuple[str | None, str | None]:
+    """Map a cloud document → (kind, local_id) used for sync_state +
+    apply. Returns (None, None) when the doc is unrecognized or missing
+    the metadata field we use to identify the local form."""
     meta = doc.get("metadata") or {}
     kind = meta.get("smartnote_type")
     if kind not in _REGISTRY:
-        return {"action": "skip", "reason": "unknown smartnote_type"}
-
-    # Reconstruct local_id from metadata — different per kind.
+        return None, None
     if kind == "note":
-        local_id = meta.get("local_path")
-    elif kind == "smart_table":
-        local_id = meta.get("table_name")
-    elif kind == "wiki_topic":
-        # Prefer exact local_path; if the doc came from a different
-        # machine with a different wiki_root, relocate under this
-        # machine's wiki_root using the relative_path field.
+        return kind, meta.get("local_path")
+    if kind == "smart_table":
+        return kind, meta.get("table_name")
+    if kind == "wiki_topic":
         local_id = meta.get("local_path")
         root = _wiki_root()
         if root and meta.get("relative_path"):
             local_id = str((root / meta["relative_path"]).resolve())
-    elif kind == "skill":
-        local_id = meta.get("skill_name")
-    else:
-        local_id = None
+        return kind, local_id
+    if kind == "skill":
+        return kind, meta.get("skill_name")
+    return kind, None
+
+
+def _classify_remote(doc: dict) -> dict:
+    """Read-only classification of a single cloud doc — what *would*
+    happen on apply. Mirrors `_apply_remote` decision logic without any
+    writes. Used by `pull_diff` to power the UI preview.
+
+    Returns one of:
+      * { action: "in-sync" }
+      * { action: "new", local_id, remote_size }
+      * { action: "would-overwrite-clean", local_id, … }
+      * { action: "would-overwrite-conflict", local_id, local_size, remote_size }
+      * { action: "skip", reason }
+    """
+    kind, local_id = _resolve_local_id(doc)
+    if kind is None:
+        return {"action": "skip", "reason": "unknown smartnote_type"}
+    if not local_id:
+        return {"action": "skip", "reason": "missing local_id in metadata"}
+
+    remote_content = doc.get("content") or ""
+    remote_hash = _sha256(remote_content)
+    state = _get_state(kind, local_id)
+
+    # Already in sync → nothing to show.
+    if state and state.remote_hash == remote_hash and state.local_hash == remote_hash:
+        return {"action": "in-sync", "kind": kind, "local_id": local_id}
+
+    _, serializer = _REGISTRY[kind]
+    current_local = serializer(local_id)
+    local_size = len(current_local.content) if current_local else 0
+
+    if not current_local:
+        return {
+            "action": "new",
+            "kind": kind, "local_id": local_id,
+            "remote_size": len(remote_content),
+            "cloud_doc_id": doc.get("id"),
+        }
+
+    local_hash = _sha256(current_local.content)
+    if local_hash == remote_hash:
+        return {"action": "in-sync", "kind": kind, "local_id": local_id}
+
+    # Pure cloud-newer (local hasn't changed since last sync) — clean
+    # overwrite, low risk. Local divergence (state.local_hash mismatch)
+    # is the dangerous case we want to surface to the user.
+    is_conflict = bool(state and state.local_hash and state.local_hash != local_hash)
+    return {
+        "action": "would-overwrite-conflict" if is_conflict else "would-overwrite-clean",
+        "kind": kind, "local_id": local_id,
+        "local_size": local_size,
+        "remote_size": len(remote_content),
+        "cloud_doc_id": doc.get("id"),
+    }
+
+
+def _apply_remote(doc: dict, *, force: bool = False) -> dict:
+    """Handle a single remote document on the pull path: decide whether
+    the remote is actually newer than local, apply if so.
+
+    `force=True` skips the in-sync optimization AND the conflict
+    recording — useful for "blow away local with cloud" recovery flows.
+    Conflict snapshots are still saved when local diverged so the user
+    can audit / unwind.
+    """
+    kind, local_id = _resolve_local_id(doc)
+    if kind is None:
+        return {"action": "skip", "reason": "unknown smartnote_type"}
     if not local_id:
         return {"action": "skip", "reason": "missing local_id in metadata"}
 
@@ -708,12 +773,12 @@ def _apply_remote(doc: dict) -> dict:
     remote_content = doc.get("content") or ""
     remote_hash = _sha256(remote_content)
 
-    # If we already have it in sync_state and the remote hash matches our
-    # recorded remote_hash AND it also matches local_hash, nothing to do.
-    if state and state.remote_hash == remote_hash and state.local_hash == remote_hash:
+    # In-sync short-circuit. force=True bypasses so a "force pull" still
+    # rewrites the local file even when hashes match — useful when the
+    # local file is corrupted but the hash table thinks it's fine.
+    if not force and state and state.remote_hash == remote_hash and state.local_hash == remote_hash:
         return {"action": "skip", "reason": "in-sync"}
 
-    # Serialize the current local form to compare.
     _, serializer = _REGISTRY[kind]
     current_local = serializer(local_id)
     local_hash = _sha256(current_local.content) if current_local else ""
@@ -727,7 +792,8 @@ def _apply_remote(doc: dict) -> dict:
         if local_hash != remote_hash:
             _record_conflict(
                 kind, local_id, doc.get("id"),
-                "pull_overwrote_local", current_local.content if current_local else "",
+                "force_pull_overwrote_local" if force else "pull_overwrote_local",
+                current_local.content if current_local else "",
             )
     apply_fn = _APPLIERS.get(kind)
     if not apply_fn:
@@ -748,22 +814,20 @@ def _apply_remote(doc: dict) -> dict:
     return {"action": "apply", "cloud_doc_id": doc.get("id")}
 
 
-def pull_all() -> dict:
-    """Fetch every remote document the workspace has that we care about
-    and apply it. Uses `since=` when we have a last-pull watermark to
-    cut bandwidth."""
-    # Watermark: max remote_updated_at we've ever recorded.
+_PULL_KINDS = ("smart_table", "note", "wiki_topic", "skill")
+
+
+def _iter_remote_docs(force: bool):
+    """Generator: yields full cloud documents one at a time for every
+    syncable kind. When force=True the watermark is ignored so we see
+    EVERY remote doc, not just ones newer than last pull."""
     with connect() as conn:
         row = conn.execute(
             "SELECT MAX(remote_updated_at) FROM sync_state WHERE remote_updated_at IS NOT NULL"
         ).fetchone()
-    since = row[0] if row and row[0] else None
+    since = None if force else (row[0] if row and row[0] else None)
 
-    # Pull each type separately so we can filter on the server and keep
-    # responses small. Order: smart_tables first (fast, small), then
-    # notes (potentially large).
-    summary: dict[str, list[dict]] = {}
-    for kind_filter in ("smart_table", "note", "wiki_topic"):
+    for kind_filter in _PULL_KINDS:
         params: dict = {"smartnote_type": kind_filter}
         if since:
             params["since"] = since
@@ -771,23 +835,63 @@ def pull_all() -> dict:
             r = _cloud_request("GET", "/v1/documents", params=params)
             r.raise_for_status()
         except Exception as e:
-            summary[kind_filter] = [{"action": "error", "error": str(e)}]
+            yield kind_filter, None, {"action": "error", "error": str(e)}
             continue
-        docs = r.json().get("documents") or []
-        # /v1/documents list excludes content — fetch each full doc.
-        kind_out: list[dict] = []
-        for doc_brief in docs:
+        for doc_brief in r.json().get("documents") or []:
             try:
                 full = _cloud_request("GET", f"/v1/documents/{doc_brief['id']}")
                 full.raise_for_status()
-                kind_out.append({
-                    "doc_id": doc_brief["id"],
-                    **_apply_remote(full.json()),
-                })
+                yield kind_filter, full.json(), None
             except Exception as e:
-                kind_out.append({"doc_id": doc_brief.get("id"), "action": "error", "error": str(e)})
-        summary[kind_filter] = kind_out
-    return {"pulled": summary, "since": since}
+                yield kind_filter, None, {
+                    "action": "error", "doc_id": doc_brief.get("id"), "error": str(e),
+                }
+
+
+def pull_all(force: bool = False) -> dict:
+    """Fetch every remote document the workspace has that we care about
+    and apply it. Uses `since=` when we have a last-pull watermark to
+    cut bandwidth.
+
+    `force=True` ignores the watermark + skips in-sync short-circuit,
+    so a corrupted-local recovery actually overwrites everything from
+    cloud. Conflict snapshots are still saved when local has diverged.
+    """
+    summary: dict[str, list[dict]] = {k: [] for k in _PULL_KINDS}
+    for kind, doc, err in _iter_remote_docs(force=force):
+        if err is not None:
+            summary[kind].append(err)
+            continue
+        if doc is None:
+            continue
+        result = _apply_remote(doc, force=force)
+        summary[kind].append({"doc_id": doc.get("id"), **result})
+    return {"pulled": summary, "force": force}
+
+
+def pull_diff() -> dict:
+    """Read-only preview of what `pull_all(force=True)` would do.
+
+    Returns counts + per-doc rows so the UI can render a confirmation
+    dialog ("about to overwrite N items, of which K diverge from
+    cloud — proceed?"). Performs the same network fetches as
+    `pull_all` but never writes.
+    """
+    rows: list[dict] = []
+    counts = {"new": 0, "in-sync": 0, "would-overwrite-clean": 0,
+              "would-overwrite-conflict": 0, "skip": 0, "error": 0}
+    for kind, doc, err in _iter_remote_docs(force=True):
+        if err is not None:
+            counts["error"] += 1
+            rows.append({"kind": kind, **err})
+            continue
+        if doc is None:
+            continue
+        verdict = _classify_remote(doc)
+        action = verdict.get("action", "skip")
+        counts[action] = counts.get(action, 0) + 1
+        rows.append({"cloud_doc_id": doc.get("id"), "name": doc.get("name"), **verdict})
+    return {"counts": counts, "rows": rows}
 
 
 def full_sync() -> dict:

@@ -1273,9 +1273,33 @@ export async function triggerSyncPush(): Promise<unknown> {
   return res.json();
 }
 
-export async function triggerSyncPull(): Promise<unknown> {
-  const res = await fetch(`${BASE}/sync/pull`, { method: "POST" });
+export async function triggerSyncPull(opts: { force?: boolean } = {}): Promise<unknown> {
+  const url = opts.force ? `${BASE}/sync/pull?force=true` : `${BASE}/sync/pull`;
+  const res = await fetch(url, { method: "POST" });
   if (!res.ok) throw new Error(`sync pull: ${res.status}`);
+  return res.json();
+}
+
+export type SyncPullPreviewRow = {
+  cloud_doc_id?: string;
+  name?: string;
+  kind?: string;
+  local_id?: string;
+  local_size?: number;
+  remote_size?: number;
+  action: "new" | "in-sync" | "would-overwrite-clean" | "would-overwrite-conflict" | "skip" | "error";
+  reason?: string;
+  error?: string;
+};
+
+export type SyncPullPreview = {
+  counts: Record<SyncPullPreviewRow["action"], number>;
+  rows: SyncPullPreviewRow[];
+};
+
+export async function fetchSyncPullPreview(): Promise<SyncPullPreview> {
+  const res = await fetch(`${BASE}/sync/pull-preview`, { method: "POST" });
+  if (!res.ok) throw new Error(`pull preview: ${res.status}`);
   return res.json();
 }
 

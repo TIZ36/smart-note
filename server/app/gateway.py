@@ -3759,13 +3759,33 @@ def api_sync_push() -> dict:
 
 
 @app.post("/sync/pull")
-def api_sync_pull() -> dict:
+def api_sync_pull(force: bool = False) -> dict:
     """Pull every remote document we care about (filtered by
     smartnote_type) and apply it locally. LWW conflict policy with
-    losing snapshots saved to sync_conflicts."""
+    losing snapshots saved to sync_conflicts.
+
+    `force=true` skips the watermark + in-sync short-circuit and
+    overwrites local even when timestamps suggest otherwise — the
+    "blow away local with cloud" recovery path. Use with the preview
+    endpoint to show the user what's about to change.
+    """
     from app import cloud_sync
     try:
-        return cloud_sync.pull_all()
+        return cloud_sync.pull_all(force=force)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/sync/pull-preview")
+def api_sync_pull_preview() -> dict:
+    """Read-only preview of what a force pull would do. Returns counts
+    by category (new / in-sync / would-overwrite-clean / -conflict /
+    skip / error) plus per-doc rows. Powers the confirmation dialog
+    before /sync/pull?force=true.
+    """
+    from app import cloud_sync
+    try:
+        return cloud_sync.pull_diff()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

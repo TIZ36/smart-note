@@ -237,6 +237,39 @@ export function CloudSyncPage() {
     }
   }
 
+  // Force-pull: blow away local with cloud. Shows a preview first so
+  // the user can see exactly what will be overwritten before they
+  // commit. Conflicting (locally-modified) items are flagged.
+  const [forcePreview, setForcePreview] = useState<api.SyncPullPreview | null>(null);
+  const [forceLoading, setForceLoading] = useState(false);
+  const [forceConfirming, setForceConfirming] = useState(false);
+
+  async function openForcePullDialog() {
+    setForceLoading(true);
+    setPullError("");
+    try {
+      setForcePreview(await api.fetchSyncPullPreview());
+    } catch (e) {
+      setPullError(String(e));
+    } finally {
+      setForceLoading(false);
+    }
+  }
+
+  async function confirmForcePull() {
+    setForceConfirming(true);
+    setPullError("");
+    try {
+      await api.triggerSyncPull({ force: true });
+      setForcePreview(null);
+      await refresh();
+    } catch (e) {
+      setPullError(String(e));
+    } finally {
+      setForceConfirming(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="proto-page-content">
@@ -532,6 +565,16 @@ export function CloudSyncPage() {
                   </button>
                   <button
                     type="button"
+                    className="proto-btn"
+                    onClick={openForcePullDialog}
+                    disabled={pulling || forceLoading || forceConfirming}
+                    title="Pull every cloud doc and overwrite local. Use for disaster recovery."
+                  >
+                    {forceLoading ? <Loader2 size={14} className="animate-spin" /> : <AlertTriangle size={14} />}
+                    Force pull from cloud
+                  </button>
+                  <button
+                    type="button"
                     className="proto-btn proto-cloud-sync-refresh"
                     onClick={refresh}
                     title="Refresh status"
@@ -573,8 +616,153 @@ export function CloudSyncPage() {
           )}
         </div>
       </div>
+
+      {forcePreview && (
+        <ForcePullDialog
+          preview={forcePreview}
+          onConfirm={confirmForcePull}
+          onCancel={() => setForcePreview(null)}
+          confirming={forceConfirming}
+        />
+      )}
     </div>
   );
+}
+
+function ForcePullDialog({ preview, onConfirm, onCancel, confirming }: {
+  preview: api.SyncPullPreview;
+  onConfirm: () => void;
+  onCancel: () => void;
+  confirming: boolean;
+}) {
+  const c = preview.counts;
+  const willOverwrite = (c["would-overwrite-clean"] || 0) + (c["would-overwrite-conflict"] || 0);
+  const conflicts = c["would-overwrite-conflict"] || 0;
+  const newItems = c["new"] || 0;
+  const inSync = c["in-sync"] || 0;
+  const totalAffected = willOverwrite + newItems;
+
+  // Top-N preview: prioritize conflicts, then clean overwrites, then new.
+  const priority = (a: api.SyncPullPreviewRow["action"]) => ({
+    "would-overwrite-conflict": 0,
+    "would-overwrite-clean": 1,
+    "new": 2,
+    "skip": 3, "in-sync": 4, "error": 5,
+  }[a] ?? 9);
+  const sorted = [...preview.rows]
+    .filter(r => r.action !== "in-sync")
+    .sort((a, b) => priority(a.action) - priority(b.action));
+  const sample = sorted.slice(0, 30);
+
+  return (
+    <div className="proto-force-pull-overlay">
+      <div className="proto-force-pull-dialog">
+        <header className="proto-force-pull-header">
+          <AlertTriangle size={18} />
+          <h2>Force pull from cloud</h2>
+          <button type="button" className="proto-force-pull-close" onClick={onCancel} aria-label="Close">
+            <X size={16} />
+          </button>
+        </header>
+
+        <div className="proto-force-pull-summary">
+          <SummaryStat n={totalAffected} label="will change" tone="warn" />
+          <SummaryStat n={newItems} label="new (no local)" tone="ok" />
+          <SummaryStat n={c["would-overwrite-clean"] || 0} label="clean overwrite" tone="ok" />
+          <SummaryStat n={conflicts} label="conflicts (local diverged)" tone="err" />
+          <SummaryStat n={inSync} label="already in sync" tone="muted" />
+        </div>
+
+        {conflicts > 0 && (
+          <div className="proto-force-pull-warn">
+            <AlertTriangle size={12} />
+            {conflicts} item{conflicts === 1 ? "" : "s"} have local edits that differ from cloud.
+            Their current local content will be saved to <code>sync_conflicts</code> before overwrite.
+          </div>
+        )}
+
+        <div className="proto-force-pull-list">
+          {sample.length === 0 ? (
+            <div className="proto-force-pull-empty">Nothing to pull — everything is already in sync.</div>
+          ) : (
+            <table>
+              <thead>
+                <tr><th>Action</th><th>Kind</th><th>Item</th><th>Size</th></tr>
+              </thead>
+              <tbody>
+                {sample.map((r, i) => (
+                  <tr key={(r.cloud_doc_id || r.local_id || i) + "/" + r.action}>
+                    <td><ActionChip action={r.action} /></td>
+                    <td className="proto-force-pull-kind">{r.kind || "—"}</td>
+                    <td className="proto-force-pull-name">{r.name || r.local_id || "(unnamed)"}</td>
+                    <td className="proto-force-pull-size">
+                      {r.action === "would-overwrite-conflict" || r.action === "would-overwrite-clean"
+                        ? `${formatBytes(r.local_size)} → ${formatBytes(r.remote_size)}`
+                        : r.action === "new"
+                          ? formatBytes(r.remote_size)
+                          : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {sorted.length > sample.length && (
+            <div className="proto-force-pull-truncated">
+              + {sorted.length - sample.length} more not shown
+            </div>
+          )}
+        </div>
+
+        <footer className="proto-force-pull-footer">
+          <button className="proto-btn" onClick={onCancel} disabled={confirming}>
+            Cancel
+          </button>
+          <button
+            className="proto-btn proto-btn-primary"
+            onClick={onConfirm}
+            disabled={confirming || totalAffected === 0}
+            data-tone="danger"
+          >
+            {confirming
+              ? <><Loader2 size={14} className="animate-spin" /> Overwriting…</>
+              : totalAffected === 0
+                ? "Nothing to do"
+                : `Overwrite ${totalAffected} local item${totalAffected === 1 ? "" : "s"}`}
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+function SummaryStat({ n, label, tone }: { n: number; label: string; tone: "ok" | "warn" | "err" | "muted" }) {
+  return (
+    <div className={"proto-force-pull-stat proto-force-pull-stat-" + tone}>
+      <div className="proto-force-pull-stat-n">{n}</div>
+      <div className="proto-force-pull-stat-label">{label}</div>
+    </div>
+  );
+}
+
+function ActionChip({ action }: { action: api.SyncPullPreviewRow["action"] }) {
+  const map: Record<api.SyncPullPreviewRow["action"], { label: string; tone: string }> = {
+    "new":                       { label: "new",        tone: "ok" },
+    "would-overwrite-clean":     { label: "overwrite",  tone: "warn" },
+    "would-overwrite-conflict":  { label: "conflict",   tone: "err" },
+    "in-sync":                   { label: "in sync",    tone: "muted" },
+    "skip":                      { label: "skip",       tone: "muted" },
+    "error":                     { label: "error",      tone: "err" },
+  };
+  const { label, tone } = map[action];
+  return <span className={"proto-force-pull-chip proto-force-pull-chip-" + tone}>{label}</span>;
+}
+
+function formatBytes(n?: number): string {
+  if (n === undefined || n === null) return "—";
+  if (n < 1024) return `${n}B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)}MB`;
 }
 
 // ── sub-components ──────────────────────────────────────────────
