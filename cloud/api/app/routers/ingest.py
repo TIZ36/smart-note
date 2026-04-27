@@ -291,6 +291,15 @@ async def search_chunks(
         req.query, identity.workspace_id,
         topk=req.topk, dimension=req.dimension,
     )
+    # Record into search_history for cross-device "recent searches".
+    # Best-effort — failure here doesn't block the response.
+    try:
+        from app.routers.search_history import record as _record_history
+        await _record_history(
+            identity.workspace_id, req.query, len(hits), req.dimension,
+        )
+    except Exception:
+        pass
     return ChunkSearchResponse(
         query_embedded=any(h.path_scores.get("vec", 0) > 0 for h in hits),
         results=[

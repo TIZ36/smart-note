@@ -244,6 +244,43 @@ export const fetchGraph = (topN = 200) =>
 export const fetchWikiGraph = (topN = 200) =>
   call<CloudGraphResponse>("GET", `/v1/graph/wiki?top_n=${topN}`);
 
+// ── Search history (cross-device "Recent searches") ───────────────
+
+export type CloudSearchHistoryItem = {
+  id: string;
+  query_text: string;
+  result_count: number;
+  tag_filter: string | null;
+  created_at: string;
+};
+
+export const fetchSearchHistory = (limit = 20) =>
+  call<CloudSearchHistoryItem[]>("GET", `/v1/search/history?limit=${limit}`);
+
+export const clearSearchHistory = () =>
+  call<{ ok: boolean; deleted: number }>("DELETE", "/v1/search/history");
+
+// ── Workspace tag config ──────────────────────────────────────────
+
+export type CloudTag = {
+  id: string;
+  name: string;
+  description: string;
+  color: string;
+  sort_order: number;
+};
+
+export const fetchTags = () => call<CloudTag[]>("GET", "/v1/tags");
+
+export const upsertTag = (tag: { name: string; description?: string; color?: string; sort_order?: number }) =>
+  call<CloudTag>("POST", "/v1/tags", tag);
+
+export const deleteTag = (name: string) =>
+  call<{ ok: boolean; deleted: number }>("DELETE", `/v1/tags/${encodeURIComponent(name)}`);
+
+export const reorderTags = (order: string[]) =>
+  call<{ ok: boolean; reordered: number }>("POST", "/v1/tags/reorder", { order });
+
 
 // ── Proposals (agent-submitted draft memories awaiting user review) ───
 //

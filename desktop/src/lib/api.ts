@@ -86,6 +86,28 @@ export async function fetchTagStats(): Promise<{ tags: { name: string; segments:
 export type SearchHistoryItem = { id: number; query: string; result_count: number; tag_filter: string | null; created_at: string };
 
 export async function fetchSearchHistory(): Promise<{ history: SearchHistoryItem[] }> {
+  // Cloud-prefer when configured — multi-device recent searches.
+  try {
+    const cloudApi = await import("./cloud-api");
+    if (await cloudApi.isCloudConfigured()) {
+      const items = await cloudApi.fetchSearchHistory(20);
+      return {
+        history: items.map((h, i) => ({
+          id: i + 1,  // local SearchHistoryItem expects numeric id; UI just renders it
+          query: h.query_text,
+          result_count: h.result_count,
+          tag_filter: h.tag_filter,
+          created_at: h.created_at,
+        })),
+      };
+    }
+  } catch (e) {
+    console.warn("cloud search-history failed, falling back to local:", e);
+  }
+  return _fetchLocalSearchHistory();
+}
+
+async function _fetchLocalSearchHistory(): Promise<{ history: SearchHistoryItem[] }> {
   const res = await fetch(`${BASE}/search/history`);
   return res.json();
 }
@@ -252,6 +274,29 @@ export type TagSegment = {
 };
 
 export async function fetchTags(): Promise<{ tags: TagInfo[] }> {
+  try {
+    const cloudApi = await import("./cloud-api");
+    if (await cloudApi.isCloudConfigured()) {
+      const cloudTags = await cloudApi.fetchTags();
+      // Adapt cloud Tag → local TagInfo (segments/lines counts default 0;
+      // the real numbers come from /tags/stats which is still local).
+      return {
+        tags: cloudTags.map((t) => ({
+          name: t.name,
+          desc: t.description,
+          color: t.color,
+          segments: 0,
+          lines: 0,
+        })),
+      };
+    }
+  } catch (e) {
+    console.warn("cloud tags failed, falling back to local:", e);
+  }
+  return _fetchLocalTags();
+}
+
+async function _fetchLocalTags(): Promise<{ tags: TagInfo[] }> {
   const res = await fetch(`${BASE}/tags`);
   return res.json();
 }
