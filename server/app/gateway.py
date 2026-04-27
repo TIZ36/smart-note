@@ -2666,18 +2666,24 @@ def api_special_ingest(req: SpecialIngestRequest) -> dict:
 
 @app.get("/special-knowledge")
 def api_special_knowledge() -> dict:
-    """List all specialknowledge topics."""
+    """List all specialknowledge topics.
+
+    Primary source: `tag_segments` rows tagged `wiki:*` — populated by
+    ingest. Falls back to a filesystem scan of `wiki_sources_dir` so
+    topics are visible right after a cloud sync pull, before ingest
+    has had a chance to run. Filesystem-derived topics carry
+    `ingested=false` so the UI can prompt a one-click ingest.
+    """
     with connect() as conn:
         rows = conn.execute(
             "SELECT id, topic_name, summary, source_file, entities_json, created_at FROM tag_segments WHERE tag LIKE 'wiki:%' ORDER BY created_at DESC"
         ).fetchall()
     topics = []
-    seen = set()
+    seen: set[str] = set()
     for r in rows:
         if r["topic_name"] in seen:
             continue
         seen.add(r["topic_name"])
-        # Extract category from entities_json metadata
         category = "reference"
         try:
             meta = json.loads(r["entities_json"]) if r["entities_json"] else {}
@@ -2693,8 +2699,39 @@ def api_special_knowledge() -> dict:
                 "folder": r["source_file"],
                 "category": category,
                 "created_at": r["created_at"],
+                "ingested": True,
             }
         )
+
+    # Filesystem fallback: every top-level entry under wiki_sources_dir
+    # not already covered by tag_segments shows up as a not-yet-
+    # ingested topic. A "topic" maps to a top-level dir or a stray
+    # .md/.markdown at the root.
+    base_dir_str = settings.wiki_sources_dir
+    if base_dir_str:
+        base = Path(base_dir_str).expanduser().resolve()
+        if base.exists():
+            for entry in sorted(base.iterdir()):
+                if entry.name.startswith("."):
+                    continue
+                if entry.is_dir():
+                    name = entry.name
+                elif entry.is_file() and entry.suffix.lower() in (".md", ".markdown"):
+                    name = entry.stem
+                else:
+                    continue
+                if name in seen:
+                    continue
+                seen.add(name)
+                topics.append({
+                    "id": None,
+                    "topic": name,
+                    "summary": "",
+                    "folder": str(entry),
+                    "category": "reference",
+                    "created_at": None,
+                    "ingested": False,
+                })
     return {"topics": topics}
 
 
@@ -3636,8 +3673,41 @@ def api_wiki_sources() -> dict:
                 "name": Path(sf).stem,
                 "topic": r["topic_name"] or "",
                 "category": category,
+                "ingested": True,
             }
         )
+
+    # Filesystem fallback: a wiki source can land on disk via cloud
+    # sync (Force pull / Pull) but not yet have an ingest run, so it
+    # has no rows in `chunks`. Without this scan, the WikiSourcesPanel
+    # would render empty even though the .md files are right there.
+    # We list those files as `ingested=false` so the UI can offer a
+    # one-click "Ingest" action while still showing them in the tree.
+    if base_dir.exists():
+        seen_abs = {s["path"] for s in sources}
+        for ext in ("*.md", "*.markdown"):
+            for f in base_dir.rglob(ext):
+                if not f.is_file():
+                    continue
+                abs_path = str(f.resolve())
+                if abs_path in seen_abs:
+                    continue
+                try:
+                    rel_path = _os.path.relpath(abs_path, base_dir_str)
+                    if rel_path.startswith(".."):
+                        rel_path = f.name
+                except ValueError:
+                    rel_path = f.name
+                sources.append({
+                    "path": abs_path,
+                    "rel_path": rel_path,
+                    "name": f.stem,
+                    "topic": "",
+                    "category": "reference",
+                    "ingested": False,
+                })
+
+    sources.sort(key=lambda s: s["rel_path"])
     return {
         "sources": sources,
         "base_dir": base_dir_str,

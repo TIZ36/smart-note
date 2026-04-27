@@ -824,6 +824,142 @@ function formatBytes(n?: number): string {
 
 // ── sub-components ──────────────────────────────────────────────
 
+function PairWithCodeCard({
+  currentUrl,
+  onPaired,
+}: {
+  currentUrl: string;
+  onPaired: (r: { baseUrl: string; apiKey: string }) => void | Promise<void>;
+}) {
+  // Defaults: reuse the URL the user already typed in the credentials
+  // card if any, otherwise the dev port. Saves a paste step.
+  const [open, setOpen] = useState(false);
+  const [baseUrl, setBaseUrl] = useState(currentUrl || "http://localhost:58000");
+  const [code, setCode] = useState("");
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [okMsg, setOkMsg] = useState<string | null>(null);
+
+  // Pre-populate the device name with something recognizable. We ask
+  // the main process indirectly via window.navigator since we want to
+  // avoid yet another IPC just for hostname.
+  useEffect(() => {
+    if (!name) {
+      const guess = (navigator as { userAgentData?: { platform?: string } }).userAgentData?.platform
+        || navigator.platform
+        || "this device";
+      setName(guess);
+    }
+  }, [name]);
+
+  // Keep the URL field in sync with the credentials card when the user
+  // hasn't manually edited the pair URL — small UX nicety.
+  useEffect(() => {
+    if (currentUrl) setBaseUrl(currentUrl);
+  }, [currentUrl]);
+
+  async function submit() {
+    setErr(null); setOkMsg(null); setBusy(true);
+    try {
+      const cleanCode = code.replace(/\s/g, "");
+      if (!/^\d{6}$/.test(cleanCode)) {
+        throw new Error("Pairing code must be 6 digits");
+      }
+      const platform = navigator.platform || "unknown";
+      const r = await claimDevice(baseUrl, cleanCode, name || "this device", platform);
+      setOkMsg(`Paired as "${r.device.name}". Credentials saved.`);
+      setCode("");
+      await onPaired({ baseUrl, apiKey: r.api_key });
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="proto-cloud-sync-card">
+      <div
+        style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <h2 className="proto-cloud-sync-card-title" style={{ margin: 0 }}>
+          Pair to an existing workspace
+        </h2>
+        <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+          {open ? "Hide" : "I have a code"}
+        </span>
+      </div>
+      {!open && (
+        <div className="proto-form-hint" style={{ marginTop: 6 }}>
+          Already running SmartNote Cloud on another device? Get a 6-digit
+          code from there (Cloud Console → Devices → Pair new device) and
+          paste it here — no API key needed.
+        </div>
+      )}
+      {open && (
+        <>
+          <div className="proto-form-field">
+            <label className="proto-form-label">Cloud API URL</label>
+            <input
+              type="text"
+              value={baseUrl}
+              onChange={(e) => setBaseUrl(e.target.value)}
+              placeholder="http://localhost:58000"
+              className="proto-form-input"
+              disabled={busy}
+            />
+          </div>
+          <div className="proto-form-field">
+            <label className="proto-form-label">Pairing code</label>
+            <input
+              type="text"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="123456"
+              inputMode="numeric"
+              maxLength={7}
+              className="proto-form-input"
+              style={{ letterSpacing: "0.3em", fontFamily: "var(--font-mono, monospace)" }}
+              disabled={busy}
+              autoFocus
+            />
+          </div>
+          <div className="proto-form-field">
+            <label className="proto-form-label">This device's name</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="MacBook Pro"
+              className="proto-form-input"
+              disabled={busy}
+            />
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={submit}
+              disabled={busy || !code.trim() || !baseUrl.trim()}
+              className={cn("proto-btn", "proto-btn-primary")}
+            >
+              {busy ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+              {busy ? "Pairing…" : "Pair this device"}
+            </button>
+            {okMsg && (
+              <span className="proto-settings-status proto-settings-status-success">✓ {okMsg}</span>
+            )}
+            {err && (
+              <span className="proto-settings-status proto-settings-status-error">✗ {err}</span>
+            )}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 function GuideStep({ num, title, cmd }: { num: number; title: string; cmd: string }) {
   const [copied, setCopied] = useState(false);
   function copy() {

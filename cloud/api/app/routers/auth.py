@@ -51,10 +51,19 @@ async def exchange_token(req: TokenRequest) -> TokenResponse:
 
     # Update last_used_at on a best-effort basis. Don't fail the exchange
     # if this write errors — it's telemetry, not security.
+    # Also bump the bound device's last_seen_at so the console can render
+    # heartbeat-based "online" status (see devices.list_devices). A row
+    # is considered online if it pinged within DEVICE_ONLINE_WINDOW_SEC.
     try:
         async with pool().acquire() as conn:
             await conn.execute(
                 "UPDATE api_keys SET last_used_at = now() WHERE id = $1",
+                row["id"],
+            )
+            await conn.execute(
+                "UPDATE devices SET last_seen_at = now() "
+                "WHERE id = (SELECT device_id FROM api_keys WHERE id = $1) "
+                "AND id IS NOT NULL",
                 row["id"],
             )
     except Exception:

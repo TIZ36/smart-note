@@ -39,11 +39,13 @@ export function DevicesTab() {
         {pairing && (
           <div className="proto-cc-pair-banner">
             <div className="proto-cc-pair-banner-label">
-              Enter this code on the new device within 10 minutes:
+              On the new device: open SmartNote → Cloud Sync →
+              "Pair to an existing workspace" and enter:
             </div>
             <div className="proto-cc-pair-code">{pairing.code}</div>
             <div className="proto-cc-pair-banner-meta">
-              expires {new Date(pairing.expiresAt).toLocaleTimeString()}
+              expires {new Date(pairing.expiresAt).toLocaleTimeString()} ·
+              single-use, becomes invalid once redeemed
             </div>
           </div>
         )}

@@ -37,6 +37,13 @@ router = APIRouter(prefix="/v1/devices", tags=["devices"])
 
 PAIRING_TTL_MIN = 10
 
+# Heartbeat window for the "online" indicator. A device is shown as
+# online when its `last_seen_at` is within this many seconds; that
+# timestamp is bumped by /v1/auth/token on every JWT exchange (the
+# desktop SDK exchanges roughly every JWT TTL so a 60s window catches
+# active sessions while still going dark within a minute of shutdown).
+DEVICE_ONLINE_WINDOW_SEC = 60
+
 
 class DeviceOut(BaseModel):
     id: str
@@ -81,6 +88,14 @@ _DEVICE_SCOPES: list[str] = [
     "retrieve",
     "admin",
 ]
+
+
+def _is_online(last_seen_at) -> bool:
+    """Heartbeat-based: did this device hit /v1/auth/token recently?"""
+    if not last_seen_at:
+        return False
+    delta = datetime.now(timezone.utc) - last_seen_at
+    return delta.total_seconds() < DEVICE_ONLINE_WINDOW_SEC
 
 
 def _row_to_out(r, online: bool) -> DeviceOut:
@@ -183,8 +198,11 @@ async def list_devices(
             "SELECT * FROM devices WHERE workspace_id = $1 ORDER BY is_primary DESC, last_seen_at DESC NULLS LAST",
             ws,
         )
-    online = ws_registry.has_primary(identity.workspace_id)
-    return [_row_to_out(r, online and bool(r["is_primary"])) for r in rows]
+    # Online is per-row heartbeat now, decoupled from is_primary. The
+    # ws_registry signal still drives the Overview "WS relay" executor
+    # capability (see console.py) — that's a workspace-level question
+    # ("is anyone serving enrich?"), distinct from "is this device on?".
+    return [_row_to_out(r, _is_online(r["last_seen_at"])) for r in rows]
 
 
 @router.post("/{device_id}/promote", response_model=DeviceOut,
