@@ -48,6 +48,46 @@ export function SpecialKnowledgePanel({ ingestBusy, ingestSteps, ingestResult, o
     } catch {}
   }
 
+  // Single-topic ingest. Reuses the same Python ingest pipeline the
+  // Import dialog uses, but pre-fills the folder + topic name from
+  // the row, so a synced-but-unindexed topic is one click away.
+  async function handleIngestTopic(t: api.SpecialKnowledgeTopic) {
+    if (ingestBusy || !t.folder) return;
+    const isPdf = t.folder.toLowerCase().endsWith(".pdf");
+    const isFile = isPdf || t.folder.toLowerCase().endsWith(".md") || t.folder.toLowerCase().endsWith(".markdown");
+    try {
+      await specialIngestAsync(
+        isFile
+          ? { filePath: t.folder, topicName: t.topic }
+          : { folderPath: t.folder, topicName: t.topic },
+      );
+    } catch (e) {
+      console.warn("ingest failed for", t.topic, e);
+    }
+  }
+
+  // Bulk: queue every pending topic. The pipeline runs them serially
+  // because a fresh build is a single global object — running in
+  // parallel would step on chunks/tag_segments. We just kick off the
+  // first; ingest_status events drive the UI, and when one finishes
+  // we kick the next.
+  async function handleIngestAllPending() {
+    if (ingestBusy) return;
+    const pending = topics.filter((t) => t.ingested === false);
+    for (const t of pending) {
+      await handleIngestTopic(t);
+      // Wait for ingest to finish before queuing the next one. The
+      // App-level effect updates ingestBusy when complete; we poll
+      // here with a small ceiling so we never deadlock if events
+      // miss.
+      const start = Date.now();
+      while (Date.now() - start < 10 * 60_000) {
+        await new Promise((r) => setTimeout(r, 1500));
+        if (!ingestBusy) break;
+      }
+    }
+  }
+
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Header */}
@@ -98,10 +138,20 @@ export function SpecialKnowledgePanel({ ingestBusy, ingestSteps, ingestResult, o
             <div className="proto-ingest-banner-body">
               <strong>{ingestPending}</strong>{" "}
               {ingestPending === 1 ? "topic" : "topics"} synced from cloud, not yet
-              indexed. Run <em>Ingest</em> on each to populate keywords, summaries,
-              and the knowledge graph. Files are readable now; AI features stay
-              dark until ingest finishes.
+              indexed. Run <em>Ingest</em> to populate keywords, summaries, and
+              the knowledge graph — files are readable now; AI stays dark until
+              ingest finishes.
             </div>
+            <button
+              type="button"
+              className="proto-btn proto-btn-primary"
+              onClick={handleIngestAllPending}
+              disabled={ingestBusy}
+              style={{ flexShrink: 0, alignSelf: "center" }}
+            >
+              {ingestBusy ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+              Ingest all
+            </button>
           </div>
         )}
         {viewTab === "graph" ? (
@@ -122,15 +172,33 @@ export function SpecialKnowledgePanel({ ingestBusy, ingestSteps, ingestResult, o
                       <span className="proto-wiki-category-count">{catTopics.length}</span>
                     </div>
                     {catTopics.map((t) => (
-                      <div key={t.id} className="proto-wiki-topic-item">
+                      <div key={t.topic} className="proto-wiki-topic-item">
                         <div className="proto-wiki-topic-body">
-                          <div className="proto-wiki-topic-name">{t.topic}</div>
+                          <div className="proto-wiki-topic-name">
+                            {t.topic}
+                            {t.ingested === false && (
+                              <span className="proto-wiki-topic-pending">unindexed</span>
+                            )}
+                          </div>
                           {t.summary && <div className="proto-wiki-topic-summary">{t.summary}</div>}
                           <div className="proto-wiki-topic-meta">
                             <span>{t.folder}</span>
                             <span>{t.created_at ? new Date(t.created_at).toLocaleDateString() : ""}</span>
                           </div>
                         </div>
+                        {t.ingested === false && (
+                          <button
+                            type="button"
+                            onClick={() => handleIngestTopic(t)}
+                            className="proto-btn proto-btn-secondary"
+                            disabled={ingestBusy}
+                            title={`Run ingest on ${t.folder}`}
+                            style={{ fontSize: 12, padding: "4px 10px", marginRight: 6 }}
+                          >
+                            <Sparkles size={13} />
+                            Ingest
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => handleDelete(t.topic)}
