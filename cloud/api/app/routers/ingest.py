@@ -23,7 +23,7 @@ import json
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from app.common.db import pool
@@ -68,6 +68,10 @@ class BulkIngestRequest(BaseModel):
     document_ids: list[str] = Field(default_factory=list)
     smartnote_type: str | None = None  # filter by metadata.smartnote_type
     topic_prefix: str | None = None    # filter wiki by relative_path prefix
+    # When true, fire /v1/enrich/run with executor_prefs=['cloud_pool']
+    # for each successfully chunked doc. Requires the workspace's
+    # provider config to be set (PUT /v1/enrich/provider).
+    enrich_with_ai: bool = False
 
 
 class BulkIngestResponse(BaseModel):
@@ -75,6 +79,9 @@ class BulkIngestResponse(BaseModel):
     ingested: int
     chunks: int
     failures: list[dict]
+    enriched: int = 0
+    enrich_failed: int = 0
+    enrich_skipped_no_provider: bool = False
 
 
 @router.post(
@@ -84,6 +91,7 @@ class BulkIngestResponse(BaseModel):
 )
 async def ingest_bulk(
     req: BulkIngestRequest,
+    background_tasks: BackgroundTasks,
     identity: Identity = Depends(require_scope("documents:write")),
 ) -> BulkIngestResponse:
     """Ingest many documents serially. The pipeline is single-threaded
@@ -140,20 +148,67 @@ async def ingest_bulk(
     failures: list[dict] = []
     chunks_total = 0
     ingested_count = 0
+    successfully_ingested: list[str] = []
     for doc_id in ordered:
         try:
             out = await ingest_document(identity.workspace_id, doc_id)
             if out.get("status") == "done":
                 ingested_count += 1
                 chunks_total += int(out.get("chunk_count") or 0)
+                successfully_ingested.append(doc_id)
             else:
                 failures.append({"document_id": doc_id, "error": out.get("error", "unknown")})
         except Exception as e:
             log.exception("bulk ingest failed for %s", doc_id)
             failures.append({"document_id": doc_id, "error": str(e)})
+
+    enrich_skipped_no_provider = False
+    enrich_scheduled = 0
+    if req.enrich_with_ai and successfully_ingested:
+        # Pre-check provider config — if missing, surface a clear flag
+        # so the UI can prompt "configure provider first" instead of
+        # firing 18 jobs that all immediately fail.
+        from app.services.enrich.executors.cloud_pool import _load_provider
+        cfg = await _load_provider(identity.workspace_id)
+        if not cfg:
+            enrich_skipped_no_provider = True
+            log.info("bulk_ingest: enrich_with_ai requested but no "
+                     "provider config — skipping enrich step")
+        else:
+            # Enrich is fire-and-forget. Each /v1/enrich/run call is
+            # synchronous against deepseek/openai (run_classify uses
+            # ThreadPoolExecutor for concurrency WITHIN a doc) and can
+            # take 30+ seconds for large notes — looping serially in
+            # the request handler would block the response well past
+            # any reasonable HTTP timeout.
+            #
+            # Instead: schedule one task per doc via BackgroundTasks.
+            # Caller polls /v1/enrich/jobs to see progress. The UI
+            # already does this for the Cloud Console "Enrich" tab.
+            ws_id = identity.workspace_id
+            scope_for_run = identity  # snapshot identity for the task
+            for doc_id in successfully_ingested:
+                async def _runner(doc_id=doc_id, ws_id=ws_id, identity=scope_for_run):
+                    try:
+                        from app.routers.enrich import EnrichRunRequest, run_enrich
+                        await run_enrich(
+                            EnrichRunRequest(
+                                document_id=doc_id,
+                                executor_prefs=["cloud_pool"],
+                            ),
+                            identity=identity,
+                        )
+                    except Exception:
+                        log.exception("bg enrich failed for %s", doc_id)
+                background_tasks.add_task(_runner)
+            enrich_scheduled = len(successfully_ingested)
+
     return BulkIngestResponse(
         total=len(ordered), ingested=ingested_count,
         chunks=chunks_total, failures=failures,
+        enriched=enrich_scheduled,  # treat 'scheduled' as 'will-be-enriched'
+        enrich_failed=0,
+        enrich_skipped_no_provider=enrich_skipped_no_provider,
     )
 
 

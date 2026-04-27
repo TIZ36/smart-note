@@ -156,6 +156,9 @@ export type BulkIngestResult = {
   ingested: number;
   chunks: number;
   failures: { document_id: string; error: string }[];
+  enriched: number;
+  enrich_failed: number;
+  enrich_skipped_no_provider: boolean;
 };
 
 export type ChunkSource = {
@@ -193,7 +196,15 @@ export const bulkIngest = (opts: {
   document_ids?: string[];
   smartnote_type?: string;
   topic_prefix?: string;
-}) => call<BulkIngestResult>("POST", "/v1/ingest/bulk", opts);
+  /** When true, also fires LLM tag classification via cloud_pool
+   *  (workspace's stored provider). Default true — most clicks of
+   *  "Ingest" expect both chunking and AI tagging. */
+  enrich_with_ai?: boolean;
+}) =>
+  call<BulkIngestResult>("POST", "/v1/ingest/bulk", {
+    enrich_with_ai: true,
+    ...opts,
+  });
 
 export const listIngestSources = () =>
   call<ChunkSource[]>("GET", "/v1/ingest/sources");
