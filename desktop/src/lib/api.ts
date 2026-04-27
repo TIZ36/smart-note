@@ -1257,6 +1257,39 @@ export async function deleteBuild(buildId: string): Promise<void> {
 }
 
 export async function fetchGraph(): Promise<GraphData> {
+  // Prefer cloud /v1/graph when configured — entities are workspace-
+  // scoped on the cloud side so multiple devices share one graph.
+  // Local /graph stays as offline fallback.
+  try {
+    const cloudApi = await import("./cloud-api");
+    if (await cloudApi.isCloudConfigured()) {
+      const r = await cloudApi.fetchGraph();
+      // Cloud nodes use string UUIDs; local rendering accepts numeric
+      // ids in `GraphNode`. Cast strings to numbers via a hash so
+      // edge.source / edge.target lookups stay int-keyed.
+      const idMap = new Map<string, number>();
+      r.nodes.forEach((n, i) => idMap.set(n.id, i + 1));
+      const adapt = {
+        nodes: r.nodes.map((n) => ({
+          id: idMap.get(n.id) ?? 0,
+          name: n.name,
+          type: n.type,
+          mentions: n.mentions,
+        })),
+        edges: r.edges.map((e) => ({
+          source: idMap.get(e.source) ?? 0,
+          target: idMap.get(e.target) ?? 0,
+          relation: e.relation,
+          weight: e.weight,
+        })),
+        tag_entities: r.tag_entities,
+        stats: r.stats,
+      } as GraphData;
+      return adapt;
+    }
+  } catch (e) {
+    console.warn("cloud graph failed, falling back to local:", e);
+  }
   const res = await fetch(`${BASE}/graph`);
   return res.json();
 }

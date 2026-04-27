@@ -210,6 +210,40 @@ export const searchChunks = (
     { query, topk: opts.topk ?? 20, dimension: opts.dimension },
   );
 
+// ── Knowledge graph ─────────────────────────────────────────────────
+//
+// Cloud entities + entity_links are populated by /v1/enrich/run
+// (services/kb/entity_graph.py upserts during _write_segments_done).
+// Multi-device: device A enriches once, every device renders the
+// same graph.
+
+export type CloudGraphNode = {
+  id: string; name: string; type: string; mentions: number;
+};
+export type CloudGraphEdge = {
+  source: string; target: string;
+  source_name: string; target_name: string;
+  relation: string; weight: number;
+};
+export type CloudGraphResponse = {
+  nodes: CloudGraphNode[];
+  edges: CloudGraphEdge[];
+  tag_entities: Record<string, { name: string; count: number; mention_count: number }[]>;
+  stats: {
+    total_chunks: number;
+    total_entities: number;
+    total_memories: number;
+    total_feedback: number;
+    tags: Record<string, { segments: number; lines: number }>;
+  };
+};
+
+export const fetchGraph = (topN = 200) =>
+  call<CloudGraphResponse>("GET", `/v1/graph?top_n=${topN}`);
+
+export const fetchWikiGraph = (topN = 200) =>
+  call<CloudGraphResponse>("GET", `/v1/graph/wiki?top_n=${topN}`);
+
 
 // ── Proposals (agent-submitted draft memories awaiting user review) ───
 //

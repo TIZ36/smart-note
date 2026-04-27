@@ -99,8 +99,14 @@ async def _write_segments_done(
     conn, ws_uuid, doc_uuid, job_id, segments, executor: str,
     prompt_tokens=0, completion_tokens=0, total_tokens=0,
 ):
+    from app.services.kb.entity_graph import upsert_entities_for_segments
     async with conn.transaction():
         await conn.execute("DELETE FROM tag_segments WHERE document_id=$1", doc_uuid)
+        # Re-ingesting clears prior entity_links for this doc's segments
+        # by rebuilding from scratch — the fresh segments have new
+        # entity sets so any stale edges from the prior run wouldn't
+        # belong here. We don't delete `entities` rows themselves
+        # (their mention_count is workspace-scoped, not per-doc).
         for seg in segments:
             await conn.execute(
                 """
@@ -123,6 +129,13 @@ async def _write_segments_done(
                     "is_credential": bool(seg.get("is_credential", False)),
                 }),
             )
+        # Persist entities + co-occurrence edges. Best-effort: if the
+        # enrich run somehow returns malformed segments we still want
+        # the tag_segments + job-status writes to land.
+        try:
+            await upsert_entities_for_segments(conn, str(ws_uuid), segments)
+        except Exception as e:
+            log.warning("entity graph upsert failed for doc %s: %s", doc_uuid, e)
         return await conn.fetchrow(
             """
             UPDATE enrich_jobs
@@ -329,6 +342,14 @@ async def submit_job(
                         "is_credential": seg.is_credential,
                     }),
                 )
+            try:
+                from app.services.kb.entity_graph import upsert_entities_for_segments
+                await upsert_entities_for_segments(
+                    conn, str(ws_uuid),
+                    [s.model_dump() for s in req.segments],
+                )
+            except Exception as e:
+                log.warning("entity graph upsert (submit_job) failed: %s", e)
             row = await conn.fetchrow(
                 """
                 UPDATE enrich_jobs
