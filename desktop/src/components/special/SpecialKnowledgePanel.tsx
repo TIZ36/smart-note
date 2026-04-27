@@ -4,6 +4,7 @@ import { cn } from "@/lib/cn";
 import { specialIngestAsync, mcpImportAsync, pickFolder, pickPdf } from "@/lib/electron";
 import { WikiGraph } from "./WikiGraph";
 import * as api from "@/lib/api";
+import * as cloudApi from "@/lib/cloud-api";
 import type { WikiCategory } from "@/lib/api";
 import type { IngestStep } from "@/App";
 import { PipelineStep } from "../shared/PipelineStep";
@@ -33,12 +34,33 @@ export function SpecialKnowledgePanel({ ingestBusy, ingestSteps, ingestResult, o
 
   useEffect(() => { loadTopics(); }, [ingestResult]);
 
-  function loadTopics() {
-    api.fetchSpecialKnowledge().then((d) => {
-      setTopics(d.topics);
-      setIngestPending(d.ingest_pending ?? d.topics.filter(t => t.ingested === false).length);
-      onTopicsChanged?.(d.topics.length);
-    }).catch(() => {});
+  async function loadTopics() {
+    try {
+      const local = await api.fetchSpecialKnowledge();
+      let topicsOut = local.topics;
+      try {
+        if (await cloudApi.isCloudConfigured()) {
+          const cloudTopics = await cloudApi.listIngestTopics();
+          // dimension format: 'wiki:<topic>'. Strip the prefix and match
+          // against local topic names.
+          const cloudTopicNames = new Set(
+            cloudTopics
+              .map((t) => t.dimension.startsWith("wiki:") ? t.dimension.slice(5) : "")
+              .filter(Boolean),
+          );
+          topicsOut = topicsOut.map((t) =>
+            cloudTopicNames.has(t.topic) ? { ...t, ingested: true } : t,
+          );
+        }
+      } catch (e) {
+        console.warn("cloud topics merge skipped:", e);
+      }
+      setTopics(topicsOut);
+      setIngestPending(topicsOut.filter((t) => t.ingested === false).length);
+      onTopicsChanged?.(topicsOut.length);
+    } catch {
+      /* silent */
+    }
   }
 
   async function handleDelete(topic: string) {
@@ -48,11 +70,33 @@ export function SpecialKnowledgePanel({ ingestBusy, ingestSteps, ingestResult, o
     } catch {}
   }
 
-  // Single-topic ingest. Reuses the same Python ingest pipeline the
-  // Import dialog uses, but pre-fills the folder + topic name from
-  // the row, so a synced-but-unindexed topic is one click away.
+  // Single-topic ingest. Prefers the cloud pipeline when configured —
+  // one device pays the embed cost, all devices read the same chunks.
+  // Falls back to the local Python pipeline (specialIngestAsync) when
+  // cloud is unavailable / not configured.
   async function handleIngestTopic(t: api.SpecialKnowledgeTopic) {
     if (ingestBusy || !t.folder) return;
+    if (await cloudApi.isCloudConfigured()) {
+      try {
+        const r = await cloudApi.bulkIngest({
+          smartnote_type: "wiki_topic",
+          topic_prefix: t.topic + "/",
+        });
+        // For topics that exist as a single root .md (not a dir), the
+        // prefix won't match — fall through to a folder-name-based
+        // bulk that catches those too.
+        if (r.ingested === 0) {
+          await cloudApi.bulkIngest({
+            smartnote_type: "wiki_topic",
+            topic_prefix: t.topic,
+          });
+        }
+        loadTopics();
+        return;
+      } catch (e) {
+        console.warn("cloud ingest failed; falling back to local:", e);
+      }
+    }
     const isPdf = t.folder.toLowerCase().endsWith(".pdf");
     const isFile = isPdf || t.folder.toLowerCase().endsWith(".md") || t.folder.toLowerCase().endsWith(".markdown");
     try {
@@ -66,20 +110,24 @@ export function SpecialKnowledgePanel({ ingestBusy, ingestSteps, ingestResult, o
     }
   }
 
-  // Bulk: queue every pending topic. The pipeline runs them serially
-  // because a fresh build is a single global object — running in
-  // parallel would step on chunks/tag_segments. We just kick off the
-  // first; ingest_status events drive the UI, and when one finishes
-  // we kick the next.
+  // Bulk: cloud path is one round-trip — the cloud's /v1/ingest/bulk
+  // accepts smartnote_type=wiki_topic and ingests every doc serially.
+  // Local fallback queues each topic and polls ingestBusy between.
   async function handleIngestAllPending() {
     if (ingestBusy) return;
+    if (await cloudApi.isCloudConfigured()) {
+      try {
+        const r = await cloudApi.bulkIngest({ smartnote_type: "wiki_topic" });
+        console.log("cloud bulk ingest:", r);
+        loadTopics();
+        return;
+      } catch (e) {
+        console.warn("cloud bulk ingest failed; falling back to local:", e);
+      }
+    }
     const pending = topics.filter((t) => t.ingested === false);
     for (const t of pending) {
       await handleIngestTopic(t);
-      // Wait for ingest to finish before queuing the next one. The
-      // App-level effect updates ingestBusy when complete; we poll
-      // here with a small ceiling so we never deadlock if events
-      // miss.
       const start = Date.now();
       while (Date.now() - start < 10 * 60_000) {
         await new Promise((r) => setTimeout(r, 1500));

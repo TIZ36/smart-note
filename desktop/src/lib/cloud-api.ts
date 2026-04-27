@@ -137,6 +137,80 @@ export const listEnrichJobs = (status?: string) =>
 export const runEnrich = (documentId: string) =>
   call<EnrichJob>("POST", "/v1/enrich/run", { document_id: documentId });
 
+// ── Cloud-side ingest + chunk search (Stage B) ──────────────────────
+//
+// Replaces the local Python ingest pipeline. One device runs ingest,
+// every device reads the same chunks. The desktop's Search panel /
+// Wiki Sources / Special Knowledge prefer these endpoints when cloud
+// is configured; local server endpoints stay as offline fallback.
+
+export type IngestRunResult = {
+  ingest_run_id: string;
+  chunk_count: number;
+  dimension: string;
+  status: string;
+};
+
+export type BulkIngestResult = {
+  total: number;
+  ingested: number;
+  chunks: number;
+  failures: { document_id: string; error: string }[];
+};
+
+export type ChunkSource = {
+  document_id: string;
+  document_name: string;
+  dimension: string;
+  chunk_count: number;
+  last_ingested_at: string | null;
+};
+
+export type ChunkTopic = {
+  dimension: string;
+  chunk_count: number;
+  document_count: number;
+};
+
+export type ChunkSearchHit = {
+  id: string;
+  document_id: string;
+  document_name: string;
+  dimension: string;
+  text: string;
+  keywords: string[];
+  line_start: number;
+  line_end: number;
+  source_ref: string;
+  score: number;
+  path_scores: Record<string, number>;
+};
+
+export const ingestDocument = (documentId: string) =>
+  call<IngestRunResult>("POST", "/v1/ingest/document", { document_id: documentId });
+
+export const bulkIngest = (opts: {
+  document_ids?: string[];
+  smartnote_type?: string;
+  topic_prefix?: string;
+}) => call<BulkIngestResult>("POST", "/v1/ingest/bulk", opts);
+
+export const listIngestSources = () =>
+  call<ChunkSource[]>("GET", "/v1/ingest/sources");
+
+export const listIngestTopics = () =>
+  call<ChunkTopic[]>("GET", "/v1/ingest/topics");
+
+export const searchChunks = (
+  query: string,
+  opts: { topk?: number; dimension?: string } = {},
+) =>
+  call<{ results: ChunkSearchHit[]; query_embedded: boolean }>(
+    "POST", "/v1/chunks/search",
+    { query, topk: opts.topk ?? 20, dimension: opts.dimension },
+  );
+
+
 // ── Proposals (agent-submitted draft memories awaiting user review) ───
 //
 // Backed by /v1/memories/proposals on the cloud (router/proposals.py).

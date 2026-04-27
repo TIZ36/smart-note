@@ -87,19 +87,45 @@ export function WikiSourcesPanel({ onSelectSource }: Props) {
   const [collapsed, setCollapsed] = useState<Set<string>>(() => loadCollapsed());
   const [ingestPending, setIngestPending] = useState(0);
 
-  const load = useCallback(() => {
+  const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    api.fetchWikiSources()
-      .then((d) => {
-        setSources(d.sources);
-        setIngestPending(d.ingest_pending ?? d.sources.filter(s => s.ingested === false).length);
-        setLoading(false);
-      })
-      .catch((e) => {
-        setError(String(e));
-        setLoading(false);
-      });
+    try {
+      // Cloud-side counterpart: list (document, dimension, chunk_count)
+      // groups currently in cloud chunks. Merge with local /wiki-sources
+      // so users see both ingested-locally AND ingested-on-another-device
+      // items in one panel.
+      const local = await api.fetchWikiSources();
+      try {
+        const cloudApi = await import("@/lib/cloud-api");
+        if (await cloudApi.isCloudConfigured()) {
+          const cloud = await cloudApi.listIngestSources();
+          // Mark each local source as ingested if cloud has any chunks for it.
+          // Match by basename of the path against cloud's document_name —
+          // cloud names notes/wiki by file basename, local /wiki-sources
+          // also uses basename in rel_path, so a substring/endsWith
+          // suffices and tolerates different absolute paths across
+          // machines.
+          local.sources = local.sources.map((s) => {
+            const basename = s.path?.split("/").pop() ?? s.name;
+            const matched = cloud.some((cs) =>
+              cs.document_name === s.rel_path
+              || cs.document_name === s.name
+              || (basename && cs.document_name.endsWith(basename)));
+            return matched ? { ...s, ingested: true } : s;
+          });
+          local.ingest_pending = local.sources.filter((s) => s.ingested === false).length;
+        }
+      } catch (e) {
+        console.warn("cloud sources merge skipped:", e);
+      }
+      setSources(local.sources);
+      setIngestPending(local.ingest_pending ?? local.sources.filter(s => s.ingested === false).length);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => { load(); }, [load]);

@@ -10,12 +10,62 @@ import type {
 const BASE = "http://127.0.0.1:8787";
 
 // Stage 1: Recall
+//
+// Prefers the cloud's /v1/chunks/search endpoint when the workspace
+// is configured (Stage B day 2 — multi-device search). Falls back to
+// the local /search endpoint otherwise. The cloud and local
+// responses share enough shape (results[].text/score/dimension/
+// path_scores) that downstream components don't need to branch.
 export async function search(
   query: string,
   topk = 20,
   tagFilter?: string | null,
   includeWiki?: string[]
 ): Promise<SearchResponse> {
+  // Cloud path: only when configured AND tagFilter (single wiki dim
+  // OR null) is compatible. Multi-wiki @-mentions stay on local since
+  // /v1/chunks/search takes a single dimension. We can extend later.
+  try {
+    const cloudApi = await import("./cloud-api");
+    if (await cloudApi.isCloudConfigured() && (!includeWiki || includeWiki.length <= 1)) {
+      const dimension = tagFilter && tagFilter.startsWith("wiki:")
+        ? tagFilter
+        : (includeWiki && includeWiki.length === 1 ? `wiki:${includeWiki[0]}` : undefined);
+      const t0 = performance.now();
+      const r = await cloudApi.searchChunks(query, { topk, dimension });
+      const ms = Math.round(performance.now() - t0);
+      // Cloud chunk ids are UUID strings. The `typeof r.id === "number"`
+      // filter downstream (used to feed the local rerank endpoint) will
+      // skip them — that's intentional; cloud's /chunks/search already
+      // applies 6-path scoring, no need to re-rerank locally.
+      const results = r.results.map((h): import("./types").SearchResult => ({
+        id: h.id,
+        text: h.text,
+        source_ref: h.source_ref || `cloud:${h.document_id}#${h.line_start}-${h.line_end}`,
+        dimension: h.dimension,
+        score: h.score,
+        path_scores: {
+          fts: h.path_scores.fts || 0,
+          sub: h.path_scores.sub || 0,
+          ngram: h.path_scores.ngram || 0,
+          vec: h.path_scores.vec || 0,
+          kw: h.path_scores.kw || 0,
+          tag_meta: h.path_scores.tag_meta || 0,
+        },
+        is_wiki: h.dimension.startsWith("wiki:"),
+        segment_topic: h.dimension.startsWith("wiki:") ? h.dimension.slice(5) : undefined,
+      }));
+      return {
+        results,
+        latency_ms: ms,
+        total_recall: results.length,
+        is_adaptive: false,
+        wiki_topics_found: {},
+      };
+    }
+  } catch (e) {
+    console.warn("cloud search failed, falling back to local:", e);
+  }
   const body: Record<string, unknown> = { query, topk };
   if (tagFilter) body.tag_filter = tagFilter;
   if (includeWiki && includeWiki.length > 0) body.include_wiki = includeWiki;
