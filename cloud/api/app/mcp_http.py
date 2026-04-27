@@ -89,6 +89,16 @@ async def _call(
             "'Authorization: Bearer sn_live_...' on every request."
         )
     jwt = await _jwt_for(key)
+    # Mark this workspace as having a live MCP session — feeds the
+    # mcp_pull executor's availability check.
+    try:
+        from app.security import verify_jwt as _vj
+        from app.services.enrich.executors import mcp_pull as _mp
+        claims = _vj(jwt)
+        if claims:
+            _mp.mark_active(claims.workspace_id)
+    except Exception:
+        pass
     async with httpx.AsyncClient(timeout=30.0) as c:
         r = await c.request(
             method, f"{_SELF_BASE}{path}",

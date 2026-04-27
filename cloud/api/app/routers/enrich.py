@@ -20,6 +20,7 @@ call for `dispatcher.dispatch(job)`.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -30,11 +31,13 @@ from pydantic import BaseModel, Field
 
 from app.common.db import pool
 from app.deps import Identity, require_scope
+from app.services.enrich import dispatcher
 from app.services.enrich.classifier import (
     DEFAULT_TAGS,
     ProviderConfig,
     run_classify,
 )
+from app.services.enrich.protocols import EnrichJob
 
 router = APIRouter(prefix="/v1/enrich", tags=["enrich"])
 log = logging.getLogger(__name__)
@@ -92,6 +95,51 @@ def _row_to_out(r) -> EnrichJobOut:
     )
 
 
+async def _write_segments_done(
+    conn, ws_uuid, doc_uuid, job_id, segments, executor: str,
+    prompt_tokens=0, completion_tokens=0, total_tokens=0,
+):
+    async with conn.transaction():
+        await conn.execute("DELETE FROM tag_segments WHERE document_id=$1", doc_uuid)
+        for seg in segments:
+            await conn.execute(
+                """
+                INSERT INTO tag_segments
+                    (workspace_id, document_id, start_line, end_line,
+                     tag, confidence, summary, meta)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb)
+                """,
+                ws_uuid, doc_uuid,
+                int(seg.get("line_start", 0)),
+                int(seg.get("line_end", 0)),
+                str(seg.get("tag") or "others"),
+                float(seg.get("confidence", 0.0)),
+                str(seg.get("summary") or ""),
+                json.dumps({
+                    "secondary_tags": seg.get("secondary_tags", []),
+                    "topic_name": seg.get("topic_name", ""),
+                    "keywords": seg.get("keywords", []),
+                    "entities": seg.get("entities", []),
+                    "is_credential": bool(seg.get("is_credential", False)),
+                }),
+            )
+        return await conn.fetchrow(
+            """
+            UPDATE enrich_jobs
+            SET status='done', executor=$2, finished_at=now(),
+                dispatched_at=COALESCE(dispatched_at, now()), result=$3::jsonb
+            WHERE id=$1 RETURNING *
+            """,
+            job_id, executor,
+            json.dumps({
+                "segments": segments,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+            }),
+        )
+
+
 @router.post(
     "/run",
     response_model=EnrichJobOut,
@@ -106,99 +154,61 @@ async def run_enrich(
 
     async with pool().acquire() as conn:
         doc = await conn.fetchrow(
-            "SELECT id, content FROM documents WHERE id = $1 AND workspace_id = $2",
+            "SELECT id, content FROM documents WHERE id=$1 AND workspace_id=$2",
             doc_uuid, ws_uuid,
         )
         if not doc:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "document not found")
-
         job = await conn.fetchrow(
-            """
-            INSERT INTO enrich_jobs (workspace_id, document_id, status)
-            VALUES ($1, $2, 'queued')
-            RETURNING *
-            """,
+            "INSERT INTO enrich_jobs (workspace_id, document_id, status) "
+            "VALUES ($1, $2, 'queued') RETURNING *",
             ws_uuid, doc_uuid,
         )
 
-        if req.provider is None:
-            # No provider — leave queued for the Phase 2 dispatcher.
-            return _row_to_out(job)
-
-        # Inline BYOK path: run classifier here, write tag_segments,
-        # mark job done. This is intentionally synchronous; once the
-        # worker pod exists this branch goes away.
-        cfg = ProviderConfig(
-            api_key=req.provider.api_key,
-            base_url=req.provider.base_url,
-            model=req.provider.model,
-            timeout_sec=req.provider.timeout_sec,
-            max_tokens=req.provider.max_tokens,
-        )
-        await conn.execute(
-            "UPDATE enrich_jobs SET status='running', executor='cloud_pool', "
-            "dispatched_at=now(), attempts=attempts+1 WHERE id=$1",
-            job["id"],
-        )
-
-    # Run outside the pool acquire — classify is blocking + slow.
-    try:
-        lines = (doc["content"] or "").splitlines()
-        out = run_classify(lines, cfg, tags=req.tags or DEFAULT_TAGS)
-    except Exception as e:
-        log.exception("enrich classify failed")
+    # Inline BYOK debug path: provider supplied in request body.
+    if req.provider is not None:
+        cfg = ProviderConfig(**req.provider.model_dump())
+        try:
+            lines = (doc["content"] or "").splitlines()
+            out = await asyncio.to_thread(
+                run_classify, lines, cfg, req.tags or DEFAULT_TAGS,
+            )
+        except Exception as e:
+            log.exception("inline enrich failed")
+            async with pool().acquire() as conn:
+                row = await conn.fetchrow(
+                    "UPDATE enrich_jobs SET status='failed', error=$2, "
+                    "finished_at=now() WHERE id=$1 RETURNING *",
+                    job["id"], str(e),
+                )
+            return _row_to_out(row)
         async with pool().acquire() as conn:
-            row = await conn.fetchrow(
-                "UPDATE enrich_jobs SET status='failed', error=$2, finished_at=now() "
-                "WHERE id=$1 RETURNING *",
-                job["id"], str(e),
+            row = await _write_segments_done(
+                conn, ws_uuid, doc_uuid, job["id"], out.segments, "cloud_pool",
+                out.prompt_tokens, out.completion_tokens, out.total_tokens,
             )
         return _row_to_out(row)
 
+    # Default path: hand to dispatcher (Phase 2 Executor Registry).
+    ej = EnrichJob(
+        job_id=str(job["id"]),
+        workspace_id=identity.workspace_id,
+        document_id=str(doc_uuid),
+        content=doc["content"] or "",
+        tags=req.tags or list(DEFAULT_TAGS),
+    )
+    outcome = await dispatcher.dispatch(ej)
     async with pool().acquire() as conn:
-        async with conn.transaction():
-            await conn.execute(
-                "DELETE FROM tag_segments WHERE document_id=$1",
-                doc_uuid,
+        if outcome.executor and outcome.segments:
+            row = await _write_segments_done(
+                conn, ws_uuid, doc_uuid, job["id"],
+                outcome.segments, outcome.executor,
+                outcome.prompt_tokens, outcome.completion_tokens, outcome.total_tokens,
             )
-            for seg in out.segments:
-                await conn.execute(
-                    """
-                    INSERT INTO tag_segments
-                        (workspace_id, document_id, start_line, end_line,
-                         tag, confidence, summary, meta)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
-                    """,
-                    ws_uuid, doc_uuid,
-                    int(seg.get("line_start", 0)),
-                    int(seg.get("line_end", 0)),
-                    str(seg.get("tag") or "others"),
-                    float(seg.get("confidence", 0.0)),
-                    str(seg.get("summary") or ""),
-                    json.dumps({
-                        "secondary_tags": seg.get("secondary_tags", []),
-                        "topic_name": seg.get("topic_name", ""),
-                        "keywords": seg.get("keywords", []),
-                        "entities": seg.get("entities", []),
-                        "is_credential": bool(seg.get("is_credential", False)),
-                    }),
-                )
-            row = await conn.fetchrow(
-                """
-                UPDATE enrich_jobs
-                SET status='done', finished_at=now(),
-                    result=$2::jsonb
-                WHERE id=$1 RETURNING *
-                """,
-                job["id"],
-                json.dumps({
-                    "segments": out.segments,
-                    "prompt_tokens": out.prompt_tokens,
-                    "completion_tokens": out.completion_tokens,
-                    "total_tokens": out.total_tokens,
-                    "failed_batches": out.failed_batches,
-                }),
-            )
+        else:
+            # Stays queued — mcp_pull is waiting on the agent, or no
+            # executor was available at all.
+            row = job
     return _row_to_out(row)
 
 
