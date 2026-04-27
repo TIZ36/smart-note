@@ -24,17 +24,23 @@ log = logging.getLogger(__name__)
 
 
 async def _load_provider(workspace_id: str) -> ProviderConfig | None:
+    """Provider config lives as a `kind='preference'` memory keyed
+    `enrich_provider`. The structured payload is the JSON config."""
     async with pool().acquire() as conn:
         row = await conn.fetchrow(
             """
-            SELECT value FROM preferences
-            WHERE workspace_id = $1 AND key = 'enrich_provider'
+            SELECT structured FROM memories
+            WHERE workspace_id = $1
+              AND kind = 'preference'
+              AND content = 'enrich_provider'
+              AND status IN ('active', 'draft')
+            ORDER BY created_at DESC LIMIT 1
             """,
             UUID(workspace_id),
         )
     if not row:
         return None
-    raw = row["value"]
+    raw = row["structured"]
     if isinstance(raw, str):
         try:
             raw = json.loads(raw)

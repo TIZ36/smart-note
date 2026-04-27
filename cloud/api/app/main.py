@@ -17,8 +17,8 @@ from app.config import get_settings
 from app.db import close_pool, init_pool, run_migrations
 from app.mcp_http import build_mcp_asgi, mcp as mcp_server
 from app.routers import (
-    auth, dev, devices, documents, enrich, health, memories, preferences,
-    proposals, retrieve, usage_route, wiki, workspaces,
+    auth, console, dev, devices, documents, enrich, health, memories,
+    preferences, proposals, retrieve, usage_route, wiki, workspaces,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -69,6 +69,7 @@ app.include_router(documents.router)
 app.include_router(enrich.router)
 app.include_router(wiki.router)
 app.include_router(devices.router)
+app.include_router(console.router)
 
 from app import ws_relay  # noqa: E402
 app.include_router(ws_relay.router)

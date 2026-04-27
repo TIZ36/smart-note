@@ -146,7 +146,7 @@ export function Sidebar({ activeChannel, onSelect, ingestBusy, wikiTopicCount = 
       <div className="proto-sidebar-footer">
         <NavItem label="Skills" icon={<Zap size={15} strokeWidth={2} />} active={activeChannel === "skills"} onClick={() => onSelect("skills")} />
         <NavItem
-          label="Cloud Sync"
+          label="Cloud"
           icon={<CloudIconAnimated size={15} progress={cloudProgress} animating={cloudAnimating} />}
           active={activeChannel === "cloud-sync"}
           onClick={() => onSelect("cloud-sync")}
