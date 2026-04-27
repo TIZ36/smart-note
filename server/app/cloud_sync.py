@@ -60,6 +60,25 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _bundle_hash(metadata: dict | None) -> str:
+    """Stable hash of the per-note bundle embedded in metadata. Empty
+    bundle returns the empty string so legacy docs (no bundle) get a
+    hash equal to sha256(content) — backward compatible."""
+    bundle = (metadata or {}).get("smartnote_note") or {}
+    if not bundle:
+        return ""
+    return _sha256(json.dumps(bundle, sort_keys=True, default=str))
+
+
+def _content_hash(content: str, metadata: dict | None = None) -> str:
+    """Hash that captures both the file content AND the per-note bundle
+    (views / line marks / tag segments). Used everywhere we compare
+    local vs remote so a bookmark change still moves the hash even
+    when the file body didn't change."""
+    bh = _bundle_hash(metadata)
+    return _sha256(content) if not bh else _sha256(content + "\n---bundle---\n" + bh)
+
+
 def _sanitize_content(text: str) -> str:
     """Postgres TEXT columns can't hold NUL bytes, and some scraped
     wiki files (esp. Chinese copies from PDFs) carry stray \\x00s.
@@ -139,6 +158,77 @@ class LocalEntity:
     metadata: dict
 
 
+def _gather_note_bundle(path: str) -> dict:
+    """Per-note state that lives outside the file itself:
+       - custom views the user defined for this file (note_view) and
+         their line memberships (note_view_member)
+       - per-line marks (note_lines: bookmarks, highlights, timestamps)
+       - AI tag classifications (tag_segments) — keep so a fresh
+         install doesn't have to re-pay the LLM for re-enrichment
+
+    Everything is keyed by line_hash, which is content-addressable, so
+    after restoring on a different machine the marks still find their
+    lines as long as the line text matches.
+    """
+    bundle: dict[str, Any] = {"views": [], "lines": [], "segments": []}
+    with connect() as conn:
+        view_rows = conn.execute(
+            "SELECT id, name, rule_json, display_json, sort_order, created_at, updated_at "
+            "FROM note_view WHERE raw_path = ? ORDER BY sort_order, id",
+            (path,),
+        ).fetchall()
+        for v in view_rows:
+            members = conn.execute(
+                "SELECT line_hash, source, excluded, ord FROM note_view_member "
+                "WHERE view_id = ? ORDER BY ord, line_hash",
+                (v[0],),
+            ).fetchall()
+            bundle["views"].append({
+                "name": v[1], "rule_json": v[2], "display_json": v[3],
+                "sort_order": v[4], "created_at": v[5], "updated_at": v[6],
+                "members": [
+                    {"line_hash": m[0], "source": m[1], "excluded": m[2], "ord": m[3]}
+                    for m in members
+                ],
+            })
+        for r in conn.execute(
+            "SELECT line_hash, line_no_last, line_preview, ts, bookmark, "
+            "highlight_color, highlight_note FROM note_lines WHERE file_path = ? "
+            "ORDER BY line_no_last",
+            (path,),
+        ).fetchall():
+            bundle["lines"].append({
+                "line_hash": r[0], "line_no_last": r[1], "line_preview": r[2],
+                "ts": r[3], "bookmark": r[4], "highlight_color": r[5],
+                "highlight_note": r[6],
+            })
+        # tag_segments: AI classifications. We preserve them across
+        # devices so a freshly-pulled install doesn't have to re-pay
+        # the LLM. They get rebuilt on next ingest, but keeping them
+        # avoids that round-trip on the recovery path.
+        try:
+            seg_rows = conn.execute(
+                "SELECT tag, topic_name, line_start, line_end, summary, "
+                "keywords_json FROM tag_segments WHERE source_file = ? "
+                "ORDER BY line_start",
+                (path,),
+            ).fetchall()
+            bundle["segments"] = [
+                {
+                    "tag": s[0], "topic_name": s[1],
+                    "line_start": s[2], "line_end": s[3],
+                    "summary": s[4], "keywords_json": s[5],
+                }
+                for s in seg_rows
+            ]
+        except Exception:
+            # tag_segments may have extra columns we didn't ask for, or
+            # the table may not exist on a stripped-down install. Either
+            # way, an empty segments list is the safe default.
+            bundle["segments"] = []
+    return bundle
+
+
 def _serialize_note(path: str) -> LocalEntity | None:
     try:
         content = _sanitize_content(Path(path).read_text(encoding="utf-8"))
@@ -147,6 +237,7 @@ def _serialize_note(path: str) -> LocalEntity | None:
     # Drop filenames to their basename for the cloud UI; full path
     # preserved in metadata.
     name = Path(path).name
+    bundle = _gather_note_bundle(path)
     return LocalEntity(
         kind="note",
         local_id=path,
@@ -156,6 +247,10 @@ def _serialize_note(path: str) -> LocalEntity | None:
             "smartnote_type": "note",
             "local_path": path,
             "content_md5": hashlib.md5(content.encode("utf-8")).hexdigest(),
+            # smartnote_note is the per-note bundle: views, line marks,
+            # tag segments. Hashed alongside content so any of these
+            # changing fires a push.
+            "smartnote_note": bundle,
         },
     )
 
@@ -409,17 +504,94 @@ _REGISTRY: dict[str, tuple[Callable[[], list[str]], Callable[[str], LocalEntity 
 }
 
 
-def _apply_remote_note(local_id: str, content: str) -> None:
-    """Overwrite the local note file. This is the LWW-pull path — we've
-    already decided remote wins. We do a tiny safety check: don't write
-    to a path that doesn't exist as a parent (i.e. don't create new
-    directories from the cloud side)."""
+def _apply_remote_note(local_id: str, content: str, metadata: dict | None = None) -> None:
+    """Overwrite the local note file AND restore the per-note bundle
+    (custom views, line marks, tag segments) from cloud metadata.
+
+    The bundle is keyed by line_hash so it survives across machines
+    even when absolute file paths differ. Bundle missing → only the
+    file content is rewritten (legacy doc shape, backward compatible).
+    """
     path = Path(local_id)
     if not path.parent.exists():
         raise RuntimeError(
             f"refusing to apply remote note: parent dir missing for {local_id}"
         )
     path.write_text(content, encoding="utf-8")
+
+    bundle = (metadata or {}).get("smartnote_note") or {}
+    if not bundle:
+        return  # legacy doc — nothing more to restore
+
+    with connect() as conn:
+        # Wipe per-note state and rebuild from the bundle. This is a
+        # destructive overwrite by design — the cloud is source of
+        # truth on the pull path and we want bundle changes to be
+        # idempotent (no orphaned rows from a previous version).
+        conn.execute("DELETE FROM note_lines WHERE file_path = ?", (local_id,))
+        for ln in bundle.get("lines") or []:
+            conn.execute(
+                "INSERT INTO note_lines (file_path, line_hash, line_no_last, "
+                "line_preview, ts, bookmark, highlight_color, highlight_note) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (local_id, ln.get("line_hash") or "", int(ln.get("line_no_last") or 0),
+                 ln.get("line_preview") or "", ln.get("ts"),
+                 ln.get("bookmark") or "", ln.get("highlight_color") or "",
+                 ln.get("highlight_note") or ""),
+            )
+
+        # Views: delete existing for this raw_path then re-insert.
+        # note_view_member rows cascade on view_id deletion if FK is
+        # set, but be explicit so this works on either schema.
+        old_view_ids = [
+            r[0] for r in conn.execute(
+                "SELECT id FROM note_view WHERE raw_path = ?", (local_id,)
+            ).fetchall()
+        ]
+        if old_view_ids:
+            placeholders = ",".join("?" * len(old_view_ids))
+            conn.execute(
+                f"DELETE FROM note_view_member WHERE view_id IN ({placeholders})",
+                old_view_ids,
+            )
+        conn.execute("DELETE FROM note_view WHERE raw_path = ?", (local_id,))
+        for v in bundle.get("views") or []:
+            cur = conn.execute(
+                "INSERT INTO note_view (raw_path, name, rule_json, display_json, "
+                "sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (local_id, v.get("name") or "(unnamed)",
+                 v.get("rule_json") or "{}", v.get("display_json") or "{}",
+                 int(v.get("sort_order") or 0),
+                 v.get("created_at"), v.get("updated_at")),
+            )
+            new_view_id = cur.lastrowid
+            for m in v.get("members") or []:
+                conn.execute(
+                    "INSERT INTO note_view_member (view_id, line_hash, source, excluded, ord) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (new_view_id, m.get("line_hash") or "",
+                     m.get("source") or "manual",
+                     int(m.get("excluded") or 0), int(m.get("ord") or 0)),
+                )
+
+        # Tag segments — best-effort. If the table shape on this
+        # install differs (extra columns, NOT NULL constraints we
+        # don't know about), skip rather than fail the whole pull.
+        try:
+            conn.execute("DELETE FROM tag_segments WHERE source_file = ?", (local_id,))
+            for s in bundle.get("segments") or []:
+                conn.execute(
+                    "INSERT INTO tag_segments (source_file, tag, topic_name, "
+                    "line_start, line_end, summary, keywords_json) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (local_id, s.get("tag") or "others",
+                     s.get("topic_name") or "",
+                     int(s.get("line_start") or 1), int(s.get("line_end") or 1),
+                     s.get("summary") or "", s.get("keywords_json") or "[]"),
+                )
+        except Exception as e:
+            log.warning("tag_segments restore skipped for %s: %s", local_id, e)
+        conn.commit()
 
 
 def _apply_remote_smart_table(local_id: str, content: str) -> None:
@@ -570,7 +742,7 @@ def _record_conflict(
 
 def _push_entity(entity: LocalEntity) -> dict:
     state = _get_state(entity.kind, entity.local_id)
-    local_hash = _sha256(entity.content)
+    local_hash = _content_hash(entity.content, entity.metadata)
     if state and state.local_hash == local_hash and state.cloud_doc_id:
         return {"action": "skip", "reason": "unchanged"}
 
@@ -581,7 +753,7 @@ def _push_entity(entity: LocalEntity) -> dict:
         r_head = _cloud_request("GET", f"/v1/documents/{state.cloud_doc_id}")
         if r_head.status_code == 200:
             remote = r_head.json()
-            remote_hash = _sha256(remote.get("content") or "")
+            remote_hash = _content_hash(remote.get("content") or "", remote.get("metadata"))
             if state.remote_hash and remote_hash != state.remote_hash:
                 _record_conflict(
                     entity.kind, entity.local_id, state.cloud_doc_id,
@@ -718,7 +890,8 @@ def _classify_remote(doc: dict) -> dict:
         return {"action": "skip", "reason": "missing local_id in metadata"}
 
     remote_content = doc.get("content") or ""
-    remote_hash = _sha256(remote_content)
+    remote_meta = doc.get("metadata") or {}
+    remote_hash = _content_hash(remote_content, remote_meta)
     state = _get_state(kind, local_id)
 
     # Already in sync → nothing to show.
@@ -737,7 +910,7 @@ def _classify_remote(doc: dict) -> dict:
             "cloud_doc_id": doc.get("id"),
         }
 
-    local_hash = _sha256(current_local.content)
+    local_hash = _content_hash(current_local.content, current_local.metadata)
     if local_hash == remote_hash:
         return {"action": "in-sync", "kind": kind, "local_id": local_id}
 
@@ -771,7 +944,8 @@ def _apply_remote(doc: dict, *, force: bool = False) -> dict:
 
     state = _get_state(kind, local_id)
     remote_content = doc.get("content") or ""
-    remote_hash = _sha256(remote_content)
+    remote_meta = doc.get("metadata") or {}
+    remote_hash = _content_hash(remote_content, remote_meta)
 
     # In-sync short-circuit. force=True bypasses so a "force pull" still
     # rewrites the local file even when hashes match — useful when the
@@ -781,7 +955,7 @@ def _apply_remote(doc: dict, *, force: bool = False) -> dict:
 
     _, serializer = _REGISTRY[kind]
     current_local = serializer(local_id)
-    local_hash = _sha256(current_local.content) if current_local else ""
+    local_hash = _content_hash(current_local.content, current_local.metadata) if current_local else ""
 
     if state and local_hash and local_hash != state.local_hash:
         # Local changed since last sync — conflict. LWW: whoever has
@@ -799,7 +973,14 @@ def _apply_remote(doc: dict, *, force: bool = False) -> dict:
     if not apply_fn:
         return {"action": "skip", "reason": f"no applier for {kind}"}
     try:
-        apply_fn(local_id, remote_content)
+        # Appliers accept metadata so per-kind bundles (note views,
+        # marks, etc.) can be restored. Older signatures that only
+        # take (local_id, content) are still supported via a try/
+        # fallback so we don't break existing kinds.
+        try:
+            apply_fn(local_id, remote_content, remote_meta)
+        except TypeError:
+            apply_fn(local_id, remote_content)
     except Exception as e:
         return {"action": "error", "error": str(e)}
 
