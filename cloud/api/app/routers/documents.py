@@ -13,13 +13,41 @@ import re
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app import usage
 from app.db import pool
 from app.deps import Identity, require_scope
 from app.embeddings import embed_texts, format_vector_literal
+
+
+# Ingest the document in the background. Failures don't bubble up — the
+# caller already has the saved document; auto-ingest is best-effort.
+# Notes + wiki_topic get chunks; smart_table / skill are JSON-shaped
+# and don't make sense to chunk.
+_AUTO_INGEST_KINDS = {"note", "wiki_topic"}
+
+
+def _schedule_auto_ingest(
+    bg: BackgroundTasks, workspace_id: str, doc_id: str, metadata: dict | None,
+) -> None:
+    md = metadata or {}
+    snt = md.get("smartnote_type") if isinstance(md, dict) else None
+    if snt not in _AUTO_INGEST_KINDS:
+        return
+    from app.services.ingest.pipeline import ingest_document as _ingest
+
+    async def _runner():
+        try:
+            await _ingest(workspace_id, doc_id)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning(
+                "auto-ingest failed for %s/%s", workspace_id, doc_id, exc_info=True,
+            )
+
+    bg.add_task(_runner)
 
 router = APIRouter(prefix="/v1/documents", tags=["documents"])
 
@@ -75,6 +103,7 @@ def _row_to_out(r) -> DocumentOut:
 )
 async def create_document(
     req: DocumentCreate,
+    background_tasks: BackgroundTasks,
     identity: Identity = Depends(require_scope("documents:write")),
 ) -> DocumentOut:
     byte_size = len(req.content.encode("utf-8"))
@@ -92,6 +121,11 @@ async def create_document(
             req.metadata or {},
             byte_size,
         )
+    # Auto-ingest after the doc lands so a sync push from device A
+    # makes the chunks immediately available to device B's search.
+    _schedule_auto_ingest(
+        background_tasks, identity.workspace_id, str(row["id"]), req.metadata,
+    )
     await usage.bump(identity.workspace_id, document_delta=1)
     return _row_to_out(row)
 
@@ -195,6 +229,7 @@ async def list_documents(
 async def patch_document(
     document_id: str,
     req: DocumentPatch,
+    background_tasks: BackgroundTasks,
     identity: Identity = Depends(require_scope("documents:write")),
 ) -> DocumentOut:
     updates = req.model_dump(exclude_unset=True)
@@ -230,6 +265,13 @@ async def patch_document(
         row = await conn.fetchrow(sql, *args)
     if not row:
         raise HTTPException(404, "document not found")
+    # Re-ingest only when the actual text changed; pure metadata
+    # patches (renames, scope tweaks) don't need it.
+    if "content" in updates and updates["content"] is not None:
+        _schedule_auto_ingest(
+            background_tasks, identity.workspace_id, str(row["id"]),
+            row.get("metadata"),
+        )
     return _row_to_out(row)
 
 
