@@ -448,31 +448,83 @@ async def queue_enrich_jobs(
 
 
 @mcp.tool()
+async def set_enrich_provider(
+    api_key: str,
+    base_url: str = "https://api.openai.com/v1",
+    model: str = "gpt-4o-mini",
+    timeout_sec: float = 60.0,
+    max_tokens: int = 4000,
+) -> str:
+    """Configure the workspace's LLM provider for cloud-side enrichment.
+
+    The cloud's `cloud_pool` executor reads this config to make
+    direct concurrent API calls to the LLM (16 parallel batches by
+    default — see services/enrich/classifier.py DEFAULT_MAX_CONCURRENCY).
+
+    After setting this once, `full_ingest(enrich_with_ai=True)` will
+    run real LLM tagging server-side instead of leaving jobs queued
+    for an MCP-connected agent to pick up.
+
+    Args:
+      api_key:    OpenAI-compatible bearer token
+      base_url:   provider endpoint, e.g. https://api.openai.com/v1
+                  or https://api.deepseek.com/v1
+      model:      chat model name (must be JSON-mode capable)
+      timeout_sec, max_tokens: per-call limits
+    """
+    body = {
+        "kind": "preference",
+        "scope": "global",
+        "content": "enrich_provider",
+        "structured": {
+            "api_key": api_key,
+            "base_url": base_url,
+            "model": model,
+            "timeout_sec": timeout_sec,
+            "max_tokens": max_tokens,
+        },
+        "pinned": True,
+    }
+    r = await _call("POST", "/v1/memories", json=body)
+    if r.status_code != 200:
+        return _fail(r, "set_enrich_provider")
+    return (
+        f"Stored enrich_provider for this workspace.\n"
+        f"  base_url: {base_url}\n  model: {model}\n"
+        "Now run: full_ingest(enrich_with_ai=True) to re-process every "
+        "doc with cloud-side concurrent LLM tagging."
+    )
+
+
+@mcp.tool()
 async def full_ingest(
     smartnote_type: Optional[str] = None,
     topic_prefix: Optional[str] = None,
+    enrich_with_ai: bool = False,
 ) -> str:
     """Re-ingest cloud documents into the chunks index in one shot.
 
-    "Ingest" here means: parse each document → split into 200-1500-char
-    paragraph chunks → embed via the workspace's embed pod → land in
-    the `chunks` table (pgvector + FTS5). Idempotent — re-running
-    deletes the prior chunks for each doc and rebuilds.
+    Pipeline:
+      1. parse each document → 200-1500-char paragraph chunks
+      2. embed via the workspace's embed pod → chunks table
+         (pgvector + FTS5)
+      3. (optional) trigger LLM tag classification + entity extraction
+         when enrich_with_ai=True. The cloud's `cloud_pool` executor
+         picks the workspace's stored provider (set via
+         set_enrich_provider) and fires concurrent batches —
+         max_concurrency from the config (default 64, ceiling 512).
 
-    Filters (combine as you like):
-      smartnote_type — restrict to one source type:
-                       'note', 'wiki_topic', 'smart_table', 'skill'.
-                       Omit to process BOTH `note` AND `wiki_topic`
-                       (smart_table / skill are JSON-shaped and skip
-                       chunking).
-      topic_prefix   — when smartnote_type='wiki_topic', only ingest
-                       wikis whose metadata.relative_path starts with
-                       this string (e.g. '回传/' or '技术阅读/').
+    Filters:
+      smartnote_type — 'note' | 'wiki_topic'; omit for both
+      topic_prefix   — for wiki, restrict to a path prefix
 
-    Cost: chunking + embed only. NO LLM tag classification — for that
-    use enrich tools (list_pending_enrichments → submit_enrichments).
+    Cost:
+      enrich_with_ai=False → embeddings only (cheap)
+      enrich_with_ai=True  → embeddings + LLM classification calls
+                              (~150 lines per batch, ~$0.0001-$0.001
+                              per doc depending on model)
 
-    Returns a one-line summary plus per-failure detail.
+    Returns a summary block.
     """
     body: dict[str, Any] = {}
     if smartnote_type:
@@ -493,6 +545,41 @@ async def full_ingest(
             out.append(f"  - {f['document_id'][:8]}: {f['error'][:80]}")
         if len(d["failures"]) > 5:
             out.append(f"  + {len(d['failures']) - 5} more")
+
+    # Optional: chain LLM tag classification on the same docs.
+    # We pass executor_prefs=['cloud_pool'] so the dispatcher skips
+    # mcp_pull (which would queue jobs for the agent to drain) and
+    # goes straight to the cloud's concurrent classifier.
+    if enrich_with_ai and d.get("ingested", 0) > 0:
+        out.append("")
+        out.append("Running cloud-side LLM classification…")
+        types = [smartnote_type] if smartnote_type else ["note", "wiki_topic"]
+        enriched = enrich_failed = 0
+        for t in types:
+            list_r = await _call("GET", "/v1/documents",
+                                params={"smartnote_type": t, "limit": 500})
+            if list_r.status_code != 200:
+                continue
+            for doc in list_r.json().get("documents") or []:
+                er = await _call(
+                    "POST", "/v1/enrich/run",
+                    json={"document_id": doc["id"],
+                          "executor_prefs": ["cloud_pool"]},
+                )
+                if er.status_code != 200:
+                    enrich_failed += 1
+                    continue
+                status = (er.json() or {}).get("status")
+                if status == "done":
+                    enriched += 1
+                elif status == "failed":
+                    enrich_failed += 1
+                # 'queued' means cloud_pool isn't configured —
+                # set_enrich_provider() first.
+        out.append(
+            f"  → enriched: {enriched}, failed: {enrich_failed}. "
+            "If both are 0, run set_enrich_provider() first."
+        )
     return "\n".join(out)
 
 

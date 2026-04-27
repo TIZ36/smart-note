@@ -54,6 +54,10 @@ async def _load_provider(workspace_id: str) -> ProviderConfig | None:
         model=raw.get("model", "gpt-4o-mini"),
         timeout_sec=float(raw.get("timeout_sec", 60.0)),
         max_tokens=int(raw.get("max_tokens", 4000)),
+        # User-tunable. 64 default; deepseek users routinely run 256+,
+        # OpenAI tier-1 caps lower (~16). Hard ceiling at 512 so a
+        # typo can't melt the provider.
+        max_concurrency=min(int(raw.get("max_concurrency", 64)), 512),
     )
 
 
@@ -70,6 +74,7 @@ async def run(job: EnrichJob) -> EnrichOutcome:
     # don't block the event loop.
     out = await asyncio.to_thread(
         run_classify, lines, cfg, job.tags or DEFAULT_TAGS,
+        cfg.max_concurrency,
     )
     return EnrichOutcome(
         job_id=job.job_id,

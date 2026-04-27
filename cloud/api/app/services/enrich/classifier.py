@@ -49,6 +49,12 @@ class ProviderConfig:
     model: str
     timeout_sec: float = 60.0
     max_tokens: int = 4000
+    # How many batch calls to fire in parallel. Old default was 16
+    # (sized for OpenAI tier-1 RPM); deepseek + most self-hosted
+    # gateways tolerate ~256 comfortably and the user reports good
+    # results at 500 with deepseek. Keep an explicit ceiling here so
+    # a typo doesn't DDoS the provider.
+    max_concurrency: int = 64
 
 
 @dataclass

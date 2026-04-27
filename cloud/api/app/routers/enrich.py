@@ -58,6 +58,12 @@ class EnrichRunRequest(BaseModel):
     # path before the dispatcher exists). When omitted, the job is
     # queued for Phase 2's worker.
     provider: ProviderIn | None = None
+    # Override the dispatcher's default executor priority. Useful when
+    # the caller wants cloud to do the work directly instead of letting
+    # mcp_pull intercept (e.g. full_ingest with AI on, where the user
+    # explicitly asked for concurrent server-side LLM calls). Pass
+    # ['cloud_pool'] to skip mcp_pull and ws_relay.
+    executor_prefs: list[str] | None = None
 
 
 class EnrichJobOut(BaseModel):
@@ -209,6 +215,7 @@ async def run_enrich(
         document_id=str(doc_uuid),
         content=doc["content"] or "",
         tags=req.tags or list(DEFAULT_TAGS),
+        executor_prefs=list(req.executor_prefs) if req.executor_prefs else [],
     )
     outcome = await dispatcher.dispatch(ej)
     async with pool().acquire() as conn:

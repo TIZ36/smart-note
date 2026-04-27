@@ -281,6 +281,35 @@ export const deleteTag = (name: string) =>
 export const reorderTags = (order: string[]) =>
   call<{ ok: boolean; reordered: number }>("POST", "/v1/tags/reorder", { order });
 
+// ── Enrich provider config ───────────────────────────────────────
+
+export type EnrichProviderConfig = {
+  base_url: string;
+  model: string;
+  timeout_sec: number;
+  max_tokens: number;
+  max_concurrency: number;
+  has_api_key: boolean;
+};
+
+export type EnrichProviderUpdate = {
+  api_key?: string | null;
+  base_url?: string;
+  model?: string;
+  timeout_sec?: number;
+  max_tokens?: number;
+  max_concurrency?: number;
+};
+
+export const fetchEnrichProvider = () =>
+  call<EnrichProviderConfig>("GET", "/v1/enrich/provider");
+
+export const saveEnrichProvider = (cfg: EnrichProviderUpdate) =>
+  call<EnrichProviderConfig>("PUT", "/v1/enrich/provider", cfg);
+
+export const deleteEnrichProvider = () =>
+  call<{ ok: boolean; archived: number }>("DELETE", "/v1/enrich/provider");
+
 
 // ── Proposals (agent-submitted draft memories awaiting user review) ───
 //
