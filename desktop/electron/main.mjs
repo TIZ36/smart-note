@@ -528,6 +528,37 @@ ipcMain.handle("read_file_full", async (_, { path: filePath }) => {
   return { ok: true, output: content };
 });
 
+/* ── Native services (Phase 3 / decision L) ─────────────────────────
+   Single-binary mode: the renderer can call these IPC handlers
+   instead of the Python gateway. Handlers stay best-effort: an error
+   surfaces as { ok: false, error } so the renderer can fall back. */
+
+import * as nativeSettings from "./services/settings.mjs";
+import * as nativeNotes from "./services/notes.mjs";
+import * as nativeSearch from "./services/local-search.mjs";
+import * as nativeSync from "./services/sync.mjs";
+
+function _wrap(fn) {
+  return async (...args) => {
+    try { return { ok: true, value: await fn(...args) }; }
+    catch (e) { return { ok: false, error: String(e?.message || e) }; }
+  };
+}
+
+ipcMain.handle("native:settings:read",  _wrap(() => nativeSettings.read()));
+ipcMain.handle("native:settings:write", _wrap((_, p) => nativeSettings.write(p ?? {})));
+
+ipcMain.handle("native:notes:read",  _wrap((_, p) => nativeNotes.read(p?.path ?? p)));
+ipcMain.handle("native:notes:write", _wrap((_, p) => nativeNotes.write(p?.path, p?.content)));
+ipcMain.handle("native:notes:list",  _wrap(() => nativeNotes.list()));
+
+ipcMain.handle("native:search:query",   _wrap((_, p) => nativeSearch.search(p?.query ?? "", p?.limit ?? 20)));
+ipcMain.handle("native:search:reindex", _wrap((_, p) => nativeSearch.indexFile(p?.rel_path, p?.content)));
+
+ipcMain.handle("native:sync:start",  _wrap(() => nativeSync.start()));
+ipcMain.handle("native:sync:stop",   _wrap(() => nativeSync.stop()));
+ipcMain.handle("native:sync:status", _wrap(() => nativeSync.status()));
+
 ipcMain.handle("get_mvp_status", async () => ({
   gateway_online: await isGatewayOnline(),
   embedding_mode: readEmbeddingMode(),

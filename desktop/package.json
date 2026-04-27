@@ -22,6 +22,8 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^4.7.0",
+    "better-sqlite3": "^11.10.0",
+    "chokidar": "^3.6.0",
     "clsx": "^2.1.1",
     "codemirror": "^6.0.2",
     "framer-motion": "^12.38.0",
@@ -30,7 +32,8 @@
     "react-dom": "^19.2.5",
     "react-markdown": "^10.1.0",
     "tailwind-merge": "^3.5.0",
-    "tailwindcss": "^4.2.2"
+    "tailwindcss": "^4.2.2",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",
@@ -51,6 +54,9 @@
       "dist/**/*",
       "electron/**/*",
       "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**/*"
     ],
     "mac": {
       "category": "public.app-category.productivity",
