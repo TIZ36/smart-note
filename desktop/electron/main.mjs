@@ -1041,9 +1041,19 @@ function buildMcpEntry(agent, url, apiKey) {
         headers,
         enabled: true,
       };
+    case "claude-code":
+      // Claude Code's MCP schema requires an explicit `type`. Without
+      // it the runtime emits "Does not adhere to MCP server
+      // configuration schema" and refuses to load the server. Use
+      // `http` for streamable-HTTP endpoints (the cloud's transport).
+      return { type: "http", url: endpoint, headers };
+    case "cursor":
+      // Cursor accepts the bare {url, headers} form but `type: "http"`
+      // is also valid and self-documents. Match Claude Code for
+      // consistency across agents.
+      return { type: "http", url: endpoint, headers };
     default:
-      // Claude Code & Cursor share the same shape.
-      return { url: endpoint, headers };
+      return { type: "http", url: endpoint, headers };
   }
 }
 

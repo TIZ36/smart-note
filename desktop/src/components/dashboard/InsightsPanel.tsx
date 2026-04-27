@@ -15,6 +15,9 @@ import {
 } from "lucide-react";
 import * as api from "@/lib/api";
 import * as cloud from "@/lib/cloud-api";
+import {
+  bumpProposalsCount, refreshProposalsCount, useProposalsCount,
+} from "@/lib/proposals-count";
 import { cn } from "@/lib/cn";
 
 type Props = {
@@ -346,10 +349,13 @@ function ActionGroup({
 function ProposalsCard({ onChanged }: { onChanged: () => void }) {
   const [enabled, setEnabled] = useState(false);
   const [items, setItems] = useState<cloud.Proposal[]>([]);
-  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+
+  // Total comes from the app-wide singleton so the sidebar badge and
+  // this card never disagree, even mid-poll.
+  const total = useProposalsCount();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -360,7 +366,6 @@ function ProposalsCard({ onChanged }: { onChanged: () => void }) {
       if (!ok) return;
       const r = await cloud.listProposals(20);
       setItems(r.proposals);
-      setTotal(r.total);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -386,10 +391,14 @@ function ProposalsCard({ onChanged }: { onChanged: () => void }) {
       if (accept) await cloud.acceptProposal(id);
       else        await cloud.rejectProposal(id);
       setItems((prev) => prev.filter((p) => p.id !== id));
-      setTotal((t) => Math.max(0, t - 1));
+      bumpProposalsCount(-1);  // optimistic; next 30s poll reconciles
       onChanged();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
+      // On failure, force the singleton to re-fetch so the badge
+      // doesn't stay wrong if the server actually accepted but
+      // reported a network error on the way back.
+      refreshProposalsCount();
     } finally {
       setBusyId(null);
     }
@@ -399,12 +408,15 @@ function ProposalsCard({ onChanged }: { onChanged: () => void }) {
     if (items.length === 0) return;
     setBusyId("__batch__");
     try {
+      const n = items.length;
       const ids = items.map((p) => p.id);
       await cloud.batchAcceptProposals(ids);
-      setItems([]); setTotal(0);
+      setItems([]);
+      bumpProposalsCount(-n);
       onChanged();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
+      refreshProposalsCount();
     } finally {
       setBusyId(null);
     }

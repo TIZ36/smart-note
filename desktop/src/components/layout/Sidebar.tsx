@@ -3,6 +3,7 @@ import { Search, Settings, Loader2, FileEdit, BookOpen, Files, Inbox, Zap, Table
 import { cn } from "@/lib/cn";
 import type { ChannelId } from "@/lib/types";
 import { fetchSmartTables, type SmartTableSummary } from "@/lib/api";
+import { useProposalsCount } from "@/lib/proposals-count";
 import { CloudIconAnimated } from "../cloud-sync/CloudIconAnimated";
 import { useCloudSyncUpload, progressOf, isAnimating } from "../cloud-sync/upload-state";
 
@@ -50,6 +51,7 @@ function NavItem({
 
 export function Sidebar({ activeChannel, onSelect, ingestBusy, wikiTopicCount = 0 }: Props) {
   const [tables, setTables] = useState<SmartTableSummary[]>([]);
+  const proposalsCount = useProposalsCount();
 
   // Subscribe to the app-wide cloud-sync upload singleton — the Sidebar
   // stays mounted across page navigation, so it tracks the cloud icon
@@ -151,7 +153,13 @@ export function Sidebar({ activeChannel, onSelect, ingestBusy, wikiTopicCount = 
           active={activeChannel === "cloud-sync"}
           onClick={() => onSelect("cloud-sync")}
         />
-        <NavItem label="Insights" icon={<Inbox size={15} strokeWidth={2} />} active={activeChannel === "insights" || activeChannel === "dashboard" || activeChannel === "meta-memory"} onClick={() => onSelect("insights")} />
+        <NavItem
+          label="Insights"
+          icon={<Inbox size={15} strokeWidth={2} />}
+          active={activeChannel === "insights" || activeChannel === "dashboard" || activeChannel === "meta-memory"}
+          onClick={() => onSelect("insights")}
+          trailing={proposalsCount > 0 ? <span className="proto-nav-badge">{proposalsCount}</span> : undefined}
+        />
         <NavItem label="Settings" icon={<Settings size={15} strokeWidth={2} />} active={activeChannel === "settings"} onClick={() => onSelect("settings")} />
       </div>
     </div>
