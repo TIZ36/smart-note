@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { BookOpen, FolderOpen, FileText, Loader2, Plus, X, Trash2, Code, FileSearch, Archive, GitBranch, Link, Server } from "lucide-react";
+import { BookOpen, FolderOpen, FileText, Loader2, Plus, X, Trash2, Code, FileSearch, Archive, GitBranch, Link, Server, Sparkles } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { specialIngestAsync, mcpImportAsync, pickFolder, pickPdf } from "@/lib/electron";
 import { WikiGraph } from "./WikiGraph";
@@ -29,12 +29,14 @@ export function SpecialKnowledgePanel({ ingestBusy, ingestSteps, ingestResult, o
   const [topics, setTopics] = useState<api.SpecialKnowledgeTopic[]>([]);
   const [showDialog, setShowDialog] = useState(false);
   const [viewTab, setViewTab] = useState<ViewTab>("topics");
+  const [ingestPending, setIngestPending] = useState(0);
 
   useEffect(() => { loadTopics(); }, [ingestResult]);
 
   function loadTopics() {
     api.fetchSpecialKnowledge().then((d) => {
       setTopics(d.topics);
+      setIngestPending(d.ingest_pending ?? d.topics.filter(t => t.ingested === false).length);
       onTopicsChanged?.(d.topics.length);
     }).catch(() => {});
   }
@@ -90,6 +92,18 @@ export function SpecialKnowledgePanel({ ingestBusy, ingestSteps, ingestResult, o
       </div>
 
       <div className="flex-1 overflow-y-auto">
+        {ingestPending > 0 && (
+          <div className="proto-ingest-banner">
+            <Sparkles size={14} className="proto-ingest-banner-icon" />
+            <div className="proto-ingest-banner-body">
+              <strong>{ingestPending}</strong>{" "}
+              {ingestPending === 1 ? "topic" : "topics"} synced from cloud, not yet
+              indexed. Run <em>Ingest</em> on each to populate keywords, summaries,
+              and the knowledge graph. Files are readable now; AI features stay
+              dark until ingest finishes.
+            </div>
+          </div>
+        )}
         {viewTab === "graph" ? (
           <WikiGraph onSelectSource={onSelectSource} />
         ) : topics.length > 0 ? (
@@ -114,7 +128,7 @@ export function SpecialKnowledgePanel({ ingestBusy, ingestSteps, ingestResult, o
                           {t.summary && <div className="proto-wiki-topic-summary">{t.summary}</div>}
                           <div className="proto-wiki-topic-meta">
                             <span>{t.folder}</span>
-                            <span>{new Date(t.created_at).toLocaleDateString()}</span>
+                            <span>{t.created_at ? new Date(t.created_at).toLocaleDateString() : ""}</span>
                           </div>
                         </div>
                         <button

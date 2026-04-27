@@ -7,6 +7,7 @@ import {
   FileSearch,
   Code,
   Archive,
+  Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import * as api from "@/lib/api";
@@ -84,6 +85,7 @@ export function WikiSourcesPanel({ onSelectSource }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => loadCollapsed());
+  const [ingestPending, setIngestPending] = useState(0);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -91,6 +93,7 @@ export function WikiSourcesPanel({ onSelectSource }: Props) {
     api.fetchWikiSources()
       .then((d) => {
         setSources(d.sources);
+        setIngestPending(d.ingest_pending ?? d.sources.filter(s => s.ingested === false).length);
         setLoading(false);
       })
       .catch((e) => {
@@ -143,6 +146,18 @@ export function WikiSourcesPanel({ onSelectSource }: Props) {
       )}
 
       {error && <p className="proto-dashboard-error">Failed to load: {error}</p>}
+
+      {ingestPending > 0 && (
+        <div className="proto-ingest-banner">
+          <Sparkles size={14} className="proto-ingest-banner-icon" />
+          <div className="proto-ingest-banner-body">
+            <strong>{ingestPending}</strong>{" "}
+            {ingestPending === 1 ? "file" : "files"} synced from cloud, not yet indexed.
+            Open one and click <em>Ingest</em> to enable search, AI summaries, and
+            knowledge graph for it. The file content is already readable in the meantime.
+          </div>
+        </div>
+      )}
 
       {!loading && sources.length === 0 && !error && (
         <p className="proto-dashboard-empty">

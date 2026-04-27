@@ -136,3 +136,56 @@ export const listEnrichJobs = (status?: string) =>
   call<EnrichJob[]>("GET", `/v1/enrich/jobs${status ? `?status_filter=${status}` : ""}`);
 export const runEnrich = (documentId: string) =>
   call<EnrichJob>("POST", "/v1/enrich/run", { document_id: documentId });
+
+// ── Proposals (agent-submitted draft memories awaiting user review) ───
+//
+// Backed by /v1/memories/proposals on the cloud (router/proposals.py).
+// Surfaced in Insights as the primary daily-use action queue. Each row
+// is a draft memory an agent (Claude Code / Cursor / etc.) thought was
+// worth remembering but flagged low-confidence. User accepts → it
+// becomes a real memory; rejects → archived (kept for lineage).
+
+export type Proposal = {
+  id: string;
+  workspace_id: string;
+  author_agent: string;
+  kind: string;
+  scope: string;
+  content: string;
+  tags: string[];
+  confidence: number;
+  proposal_reason: string | null;
+  created_at: string;
+};
+
+export type ProposalsList = { proposals: Proposal[]; total: number };
+
+export const listProposals = (limit = 20) =>
+  call<ProposalsList>("GET", `/v1/memories/proposals?limit=${limit}`);
+
+export const acceptProposal = (id: string) =>
+  call<{ ok: boolean; id: string }>(
+    "POST", `/v1/memories/proposals/${id}/accept`, {},
+  );
+
+export const rejectProposal = (id: string, reason?: string) =>
+  call<{ ok: boolean; id: string }>(
+    "POST", `/v1/memories/proposals/${id}/reject`,
+    reason ? { reason } : {},
+  );
+
+export const batchAcceptProposals = (ids: string[]) =>
+  call<{ ok: boolean; accepted: number; requested: number }>(
+    "POST", "/v1/memories/proposals/batch-accept", { ids },
+  );
+
+// Returns whether cloud is configured AT ALL — Insights uses this to
+// decide whether to render the proposals card or hide it silently.
+export async function isCloudConfigured(): Promise<boolean> {
+  try {
+    const s = await readSettings();
+    return Boolean(s.cloud_sync_url && s.cloud_sync_api_key);
+  } catch {
+    return false;
+  }
+}

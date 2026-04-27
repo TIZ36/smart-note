@@ -163,6 +163,24 @@ async def claim_device(req: ClaimRequest) -> ClaimResponse:
                 raise HTTPException(
                     status.HTTP_404_NOT_FOUND, "invalid or expired code",
                 )
+            # Auto-promote: if this workspace has no primary yet, make
+            # the freshly-claimed device the primary. Otherwise the
+            # first device of any workspace stays non-primary forever
+            # and the Overview "WS relay" executor never lights up
+            # without a manual click on Promote.
+            has_primary = await conn.fetchval(
+                "SELECT EXISTS(SELECT 1 FROM devices "
+                "WHERE workspace_id = $1 AND is_primary = true AND id <> $2)",
+                device_row["workspace_id"], device_row["id"],
+            )
+            if not has_primary:
+                await conn.execute(
+                    "UPDATE devices SET is_primary = true WHERE id = $1",
+                    device_row["id"],
+                )
+                device_row = await conn.fetchrow(
+                    "SELECT * FROM devices WHERE id = $1", device_row["id"],
+                )
             # Mint the api_key under the same workspace.
             await conn.execute(
                 """

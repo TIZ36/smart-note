@@ -243,9 +243,20 @@ export async function fetchTagSegments(tag: string): Promise<{ tag: string; segm
 
 // Special Knowledge
 export type WikiCategory = "research" | "codebase" | "docs" | "reference";
-export type SpecialKnowledgeTopic = { id: number; topic: string; summary: string; folder: string; category: WikiCategory; created_at: string };
+export type SpecialKnowledgeTopic = {
+  id: number | null;
+  topic: string;
+  summary: string;
+  folder: string;
+  category: WikiCategory;
+  created_at: string | null;
+  /** false when the topic was discovered from disk (cloud-pulled but
+   *  not yet ingested). Drives the "run ingest to enable search/AI"
+   *  prompt. */
+  ingested?: boolean;
+};
 
-export async function fetchSpecialKnowledge(): Promise<{ topics: SpecialKnowledgeTopic[] }> {
+export async function fetchSpecialKnowledge(): Promise<{ topics: SpecialKnowledgeTopic[]; ingest_pending?: number }> {
   const res = await fetch(`${BASE}/special-knowledge`);
   return res.json();
 }
@@ -255,9 +266,18 @@ export async function deleteSpecialKnowledge(topic: string): Promise<{ deleted: 
   return res.json();
 }
 
-export type WikiSource = { path: string; rel_path?: string; name: string; topic: string; category: WikiCategory };
+export type WikiSource = {
+  path: string;
+  rel_path?: string;
+  name: string;
+  topic: string;
+  category: WikiCategory;
+  /** false when the source was found on disk but has no chunks/
+   *  tag_segments yet (cloud-pulled but not ingested). */
+  ingested?: boolean;
+};
 
-export async function fetchWikiSources(): Promise<{ sources: WikiSource[]; base_dir: string }> {
+export async function fetchWikiSources(): Promise<{ sources: WikiSource[]; base_dir: string; ingest_pending?: number }> {
   const res = await fetch(`${BASE}/wiki-sources`);
   return res.json();
 }

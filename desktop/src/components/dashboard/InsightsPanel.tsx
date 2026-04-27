@@ -14,6 +14,7 @@ import {
   Info,
 } from "lucide-react";
 import * as api from "@/lib/api";
+import * as cloud from "@/lib/cloud-api";
 import { cn } from "@/lib/cn";
 
 type Props = {
@@ -22,12 +23,20 @@ type Props = {
 };
 
 /**
- * Insights — one page that answers "what's going on in my knowledge base,
- * and what should I do about it?"
+ * Insights — daily-use dashboard.
  *
- * Top: compressed status line.
- * Middle: action queue (conflicts resolve inline; others explain why).
- * Bottom: meta-memory (Claude's cross-session rules) + collapsible stats.
+ * Order is value-density descending:
+ *   1. Compressed status line (one-liner: am I on, are agents talking).
+ *   2. **Proposals queue** (cloud) — agents asking "should I remember
+ *      this?" Most-clicked surface; user actually has to decide. Only
+ *      renders when cloud is configured.
+ *   3. Meta-memory — Claude's cross-session rules. The user's only
+ *      "I'm in control" surface; promoted from the bottom of the old
+ *      layout.
+ *   4. Maintenance (collapsed) — conflicts/splits/gaps/enrich. These
+ *      are housekeeping items that read "non-urgent" and are usually
+ *      empty; folded so they don't dominate the page.
+ *   5. Stats footer (collapsible) — counts.
  */
 export function InsightsPanel({ gatewayOnline, embeddingMode }: Props) {
   const [overview, setOverview] = useState<api.DashboardOverview | null>(null);
@@ -96,20 +105,15 @@ export function InsightsPanel({ gatewayOnline, embeddingMode }: Props) {
         embeddingMode={embeddingMode}
       />
 
-      <section className="proto-dashboard-section">
-        <h2 className="proto-section-label">
-          Needs your attention
-          {totalActions > 0 && (
-            <span className="proto-section-label-count">{totalActions}</span>
-          )}
-        </h2>
+      <ProposalsCard onChanged={load} />
 
-        {totalActions === 0 && !loading && (
-          <p className="proto-dashboard-empty">
-            All clear — nothing waiting on you.
-          </p>
-        )}
+      <MetaMemorySection />
 
+      <MaintenanceGroup
+        totalActions={totalActions}
+        loading={loading}
+        empty={totalActions === 0}
+      >
         {conflicts.length > 0 && (
           <ActionGroup
             id="conflicts"
@@ -241,9 +245,7 @@ export function InsightsPanel({ gatewayOnline, embeddingMode }: Props) {
             </ul>
           </ActionGroup>
         )}
-      </section>
-
-      <MetaMemorySection />
+      </MaintenanceGroup>
 
       <StatsFooter overview={overview} />
     </div>
@@ -331,6 +333,212 @@ function ActionGroup({
 }
 
 // ── Conflict row — resolves inline ────────────────────────────────
+
+// ── Proposals (cloud-only) ───────────────────────────────────────
+//
+// Hidden entirely when cloud isn't configured — no point teasing a
+// feature that requires server config the user hasn't done yet.
+//
+// Each proposal is one card row: kind chip, agent that proposed it,
+// content preview, optional "why" line from the proposer, accept /
+// reject buttons inline. Accepting flips status='draft' → 'active'
+// in one round-trip; rejecting archives.
+function ProposalsCard({ onChanged }: { onChanged: () => void }) {
+  const [enabled, setEnabled] = useState(false);
+  const [items, setItems] = useState<cloud.Proposal[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const ok = await cloud.isCloudConfigured();
+      setEnabled(ok);
+      if (!ok) return;
+      const r = await cloud.listProposals(20);
+      setItems(r.proposals);
+      setTotal(r.total);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (!enabled) return null;
+  if (!loading && items.length === 0 && !err) {
+    // Don't render an empty card forever — keeps Insights tight when
+    // there's nothing pending. We still keep it rendered for ~one
+    // load cycle so the user sees "no proposals" if they explicitly
+    // open after dismissing some — but on subsequent loads it's
+    // hidden. Simpler: just hide whenever empty.
+    return null;
+  }
+
+  async function decide(id: string, accept: boolean) {
+    setBusyId(id);
+    try {
+      if (accept) await cloud.acceptProposal(id);
+      else        await cloud.rejectProposal(id);
+      setItems((prev) => prev.filter((p) => p.id !== id));
+      setTotal((t) => Math.max(0, t - 1));
+      onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function acceptAll() {
+    if (items.length === 0) return;
+    setBusyId("__batch__");
+    try {
+      const ids = items.map((p) => p.id);
+      await cloud.batchAcceptProposals(ids);
+      setItems([]); setTotal(0);
+      onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <section className="proto-dashboard-section">
+      <h2 className="proto-section-label">
+        Proposals
+        {total > 0 && <span className="proto-section-label-count">{total}</span>}
+        {items.length > 1 && (
+          <button
+            type="button"
+            onClick={acceptAll}
+            disabled={busyId !== null}
+            className="proto-btn proto-btn-secondary"
+            style={{ marginLeft: "auto", fontSize: 11 }}
+          >
+            {busyId === "__batch__" ? <Loader2 size={11} className="animate-spin" /> : null}
+            Accept all
+          </button>
+        )}
+      </h2>
+      {err && <p className="proto-dashboard-error">Proposals: {err}</p>}
+      {loading && items.length === 0 && (
+        <p className="proto-dashboard-empty">Loading…</p>
+      )}
+      <ul className="proto-insight-items">
+        {items.map((p) => (
+          <li key={p.id} className="proto-insight-row-compact">
+            <span className="proto-insight-row-primary" style={{ flex: 1 }}>
+              <span style={{ opacity: 0.6, marginRight: 6 }}>
+                [{p.kind}·{p.author_agent}]
+              </span>
+              {p.content.length > 140 ? p.content.slice(0, 138) + "…" : p.content}
+              {p.proposal_reason && (
+                <span style={{ display: "block", fontSize: 11, opacity: 0.6, marginTop: 2 }}>
+                  why: {p.proposal_reason}
+                </span>
+              )}
+            </span>
+            <span className="proto-insight-row-trailing" style={{ display: "inline-flex", gap: 6 }}>
+              <button
+                type="button"
+                onClick={() => decide(p.id, true)}
+                disabled={busyId !== null}
+                className="proto-btn proto-btn-primary"
+                style={{ padding: "2px 8px", fontSize: 11 }}
+              >
+                {busyId === p.id ? <Loader2 size={11} className="animate-spin" /> : null}
+                Accept
+              </button>
+              <button
+                type="button"
+                onClick={() => decide(p.id, false)}
+                disabled={busyId !== null}
+                className="proto-btn proto-btn-secondary"
+                style={{ padding: "2px 8px", fontSize: 11 }}
+              >
+                Reject
+              </button>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+
+// ── Maintenance group (folds the legacy housekeeping queue) ──────
+//
+// The four legacy action types (conflicts/pending/splits/gaps) are
+// real but rarely-actionable; folding them keeps Insights focused on
+// the 80% case (proposals + meta-memory) while still surfacing the
+// 20% if there's something to do. Auto-opens when there's actual
+// content; otherwise stays collapsed with a count hint.
+function MaintenanceGroup({
+  totalActions,
+  loading,
+  empty,
+  children,
+}: {
+  totalActions: number;
+  loading: boolean;
+  empty: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+
+  // First open while data is loading? Auto-expand once items arrive
+  // so users don't have to chase the click. Manual close still wins.
+  const [autoExpanded, setAutoExpanded] = useState(false);
+  useEffect(() => {
+    if (!autoExpanded && totalActions > 0) {
+      setOpen(true);
+      setAutoExpanded(true);
+    }
+  }, [totalActions, autoExpanded]);
+
+  return (
+    <section className="proto-dashboard-section">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="proto-section-label"
+        style={{
+          background: "none", border: "none", padding: 0, width: "100%",
+          textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center",
+        }}
+        aria-expanded={open}
+      >
+        Maintenance
+        {totalActions > 0 && (
+          <span className="proto-section-label-count">{totalActions}</span>
+        )}
+        <span style={{ marginLeft: "auto", opacity: 0.6 }}>
+          {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        </span>
+      </button>
+      {open && (
+        <>
+          {empty && !loading && (
+            <p className="proto-dashboard-empty">
+              All clear — no conflicts, splits, or recurring empty searches.
+            </p>
+          )}
+          {children}
+        </>
+      )}
+    </section>
+  );
+}
+
 
 function ConflictRow({
   conflict,

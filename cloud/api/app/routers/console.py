@@ -7,6 +7,7 @@ Without this the page would fan out into 6+ requests on tab focus.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -15,6 +16,7 @@ from pydantic import BaseModel
 from app.common import ws_registry
 from app.common.db import pool
 from app.deps import Identity, require_scope
+from app.routers.devices import DEVICE_ONLINE_WINDOW_SEC
 from app.services.enrich.executors import cloud_pool, mcp_pull
 
 router = APIRouter(prefix="/v1/console", tags=["console"])
@@ -84,6 +86,13 @@ async def overview(
             """,
             ws,
         )
+        # Primary-device heartbeat — same definition as devices.list_devices
+        # so the Devices table and the Overview status dot can't disagree.
+        primary_last_seen = await conn.fetchval(
+            "SELECT last_seen_at FROM devices "
+            "WHERE workspace_id = $1 AND is_primary = true",
+            ws,
+        )
 
     activity = [
         ActivityItem(
@@ -95,14 +104,25 @@ async def overview(
         for r in recent_jobs
     ]
 
+    primary_online = bool(
+        primary_last_seen
+        and (datetime.now(timezone.utc) - primary_last_seen).total_seconds()
+            < DEVICE_ONLINE_WINDOW_SEC
+    )
+
     return OverviewResponse(
         workspace_id=identity.workspace_id,
         counts=Counts(**dict(counts_row)),
         executors=ExecutorStatus(
             mcp_pull=await mcp_pull.is_available(identity.workspace_id),
+            # ws_relay executor capability is genuinely WebSocket-bound
+            # (it dispatches enrich jobs to a live WS) — leave it on the
+            # ws_registry signal. Overview's "WS relay · primary device"
+            # dot is asking "is anyone serving enrich jobs?", not "is
+            # the primary device on?" — those are different questions.
             ws_relay=ws_registry.has_primary(identity.workspace_id),
             cloud_pool=await cloud_pool.is_available(identity.workspace_id),
         ),
-        primary_device_online=ws_registry.has_primary(identity.workspace_id),
+        primary_device_online=primary_online,
         activity=activity,
     )

@@ -2732,7 +2732,8 @@ def api_special_knowledge() -> dict:
                     "created_at": None,
                     "ingested": False,
                 })
-    return {"topics": topics}
+    pending = sum(1 for t in topics if not t.get("ingested"))
+    return {"topics": topics, "ingest_pending": pending}
 
 
 @app.delete("/special-knowledge/{topic_name}")
@@ -3708,9 +3709,14 @@ def api_wiki_sources() -> dict:
                 })
 
     sources.sort(key=lambda s: s["rel_path"])
+    pending = sum(1 for s in sources if not s.get("ingested"))
     return {
         "sources": sources,
         "base_dir": base_dir_str,
+        # Surfaced at the top level so the panel can render a single
+        # "N files synced from cloud — run ingest to enable search /
+        # AI features" banner instead of repeating the hint per row.
+        "ingest_pending": pending,
     }
 
 

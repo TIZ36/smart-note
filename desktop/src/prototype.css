@@ -9270,3 +9270,39 @@ button.proto-toggle-switch-on .proto-toggle-knob {
 .proto-force-pull-footer .proto-btn[data-tone="danger"]:hover:not(:disabled) {
   background: color-mix(in oklab, var(--color-danger) 80%, #000);
 }
+
+/* ── Ingest pending banner — shown after cloud-sync pull when files
+      reached disk but no ingest has run yet so derived indexes are
+      empty. Friendly nudge, not an error. */
+
+.proto-ingest-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 12px 16px 0;
+  padding: 10px 12px;
+  background: color-mix(in oklab, var(--color-accent) 6%, var(--color-bg-elevated));
+  border: 1px solid color-mix(in oklab, var(--color-accent) 25%, var(--color-border));
+  border-radius: var(--radius-proto);
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--color-text-primary);
+}
+.proto-ingest-banner-icon {
+  color: var(--color-accent);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.proto-ingest-banner-body { flex: 1; min-width: 0; }
+.proto-ingest-banner-body strong {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+.proto-ingest-banner-body em {
+  font-style: normal;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  background: color-mix(in oklab, var(--color-text-primary) 7%, transparent);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
