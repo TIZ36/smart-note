@@ -396,3 +396,53 @@ async def list_jobs(
     async with pool().acquire() as conn:
         rows = await conn.fetch(sql, *args)
     return [_row_to_out(r) for r in rows]
+
+
+@router.delete(
+    "/jobs/{job_id}",
+    dependencies=[Depends(require_scope("documents:write"))],
+)
+async def delete_job(
+    job_id: str,
+    identity: Identity = Depends(require_scope("documents:write")),
+) -> dict:
+    """Delete one enrich job (typically used to clear a stuck-queued
+    row). Doesn't touch tag_segments / entities written by a prior
+    successful run on the same document — those persist independently."""
+    async with pool().acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM enrich_jobs WHERE id = $1 AND workspace_id = $2",
+            UUID(job_id), UUID(identity.workspace_id),
+        )
+    return {"ok": True, "deleted": int(result.rsplit(" ", 1)[-1])}
+
+
+@router.delete(
+    "/jobs",
+    dependencies=[Depends(require_scope("documents:write"))],
+)
+async def bulk_delete_jobs(
+    identity: Identity = Depends(require_scope("documents:write")),
+    status_filter: str | None = None,
+) -> dict:
+    """Bulk-delete jobs, optionally filtered by status. Common cases:
+
+      DELETE /v1/enrich/jobs?status_filter=queued
+        → drains the pending queue (e.g. when the executor's been
+          deconfigured and you want to restart cleanly)
+
+      DELETE /v1/enrich/jobs?status_filter=failed
+        → clears errored rows after auditing
+
+      DELETE /v1/enrich/jobs                                (no filter)
+        → blow away every job for this workspace. Use with care.
+    """
+    ws_uuid = UUID(identity.workspace_id)
+    args: list[Any] = [ws_uuid]
+    sql = "DELETE FROM enrich_jobs WHERE workspace_id = $1"
+    if status_filter:
+        args.append(status_filter)
+        sql += f" AND status = ${len(args)}"
+    async with pool().acquire() as conn:
+        result = await conn.execute(sql, *args)
+    return {"ok": True, "deleted": int(result.rsplit(" ", 1)[-1])}

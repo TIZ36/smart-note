@@ -136,6 +136,13 @@ export const listEnrichJobs = (status?: string) =>
   call<EnrichJob[]>("GET", `/v1/enrich/jobs${status ? `?status_filter=${status}` : ""}`);
 export const runEnrich = (documentId: string) =>
   call<EnrichJob>("POST", "/v1/enrich/run", { document_id: documentId });
+export const deleteEnrichJob = (id: string) =>
+  call<{ ok: boolean; deleted: number }>("DELETE", `/v1/enrich/jobs/${id}`);
+export const bulkDeleteEnrichJobs = (status?: string) =>
+  call<{ ok: boolean; deleted: number }>(
+    "DELETE",
+    status ? `/v1/enrich/jobs?status_filter=${status}` : "/v1/enrich/jobs",
+  );
 
 // ── Cloud-side ingest + chunk search (Stage B) ──────────────────────
 //
@@ -301,6 +308,7 @@ export type EnrichProviderConfig = {
   max_tokens: number;
   max_concurrency: number;
   has_api_key: boolean;
+  auto_enrich_on_ingest: boolean;
 };
 
 export type EnrichProviderUpdate = {
@@ -310,6 +318,7 @@ export type EnrichProviderUpdate = {
   timeout_sec?: number;
   max_tokens?: number;
   max_concurrency?: number;
+  auto_enrich_on_ingest?: boolean;
 };
 
 export const fetchEnrichProvider = () =>

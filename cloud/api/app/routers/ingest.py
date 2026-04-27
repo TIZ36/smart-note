@@ -68,10 +68,9 @@ class BulkIngestRequest(BaseModel):
     document_ids: list[str] = Field(default_factory=list)
     smartnote_type: str | None = None  # filter by metadata.smartnote_type
     topic_prefix: str | None = None    # filter wiki by relative_path prefix
-    # When true, fire /v1/enrich/run with executor_prefs=['cloud_pool']
-    # for each successfully chunked doc. Requires the workspace's
-    # provider config to be set (PUT /v1/enrich/provider).
-    enrich_with_ai: bool = False
+    # Tri-state: True forces enrich, False disables, None reads the
+    # workspace's auto_enrich_on_ingest setting (default off).
+    enrich_with_ai: bool | None = None
 
 
 class BulkIngestResponse(BaseModel):
@@ -164,7 +163,16 @@ async def ingest_bulk(
 
     enrich_skipped_no_provider = False
     enrich_scheduled = 0
-    if req.enrich_with_ai and successfully_ingested:
+    # Resolve tri-state: explicit param wins; otherwise read workspace
+    # setting (auto_enrich_on_ingest, default false).
+    if req.enrich_with_ai is None:
+        from app.services.enrich.executors.cloud_pool import _load_provider
+        cfg = await _load_provider(identity.workspace_id)
+        do_enrich = bool(cfg and getattr(cfg, "auto_enrich_on_ingest", False))
+    else:
+        do_enrich = bool(req.enrich_with_ai)
+
+    if do_enrich and successfully_ingested:
         # Pre-check provider config — if missing, surface a clear flag
         # so the UI can prompt "configure provider first" instead of
         # firing 18 jobs that all immediately fail.

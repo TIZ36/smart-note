@@ -55,6 +55,10 @@ class ProviderConfig:
     # results at 500 with deepseek. Keep an explicit ceiling here so
     # a typo doesn't DDoS the provider.
     max_concurrency: int = 64
+    # Workspace-level toggle: when True, /v1/ingest/bulk fires LLM
+    # tagging automatically after chunking. Defaults to False so a
+    # stray click doesn't burn tokens.
+    auto_enrich_on_ingest: bool = False
 
 
 @dataclass

@@ -28,15 +28,23 @@ class ProviderConfigOut(BaseModel):
     max_tokens: int
     max_concurrency: int
     has_api_key: bool  # never expose the key itself; just whether it's set
+    # When true, /v1/ingest/bulk fires LLM enrich automatically after
+    # chunking — same behavior as enrich_with_ai=true on the request.
+    # Off by default so accidental "Ingest" clicks don't burn tokens.
+    auto_enrich_on_ingest: bool = False
 
 
 class ProviderConfigUpdate(BaseModel):
+    """Partial update — every field optional. Unset fields keep their
+    existing value (or fall back to defaults on first save). Lets the
+    UI toggle one checkbox without re-submitting model/concurrency."""
     api_key: str | None = None
-    base_url: str = "https://api.openai.com/v1"
-    model: str = "gpt-4o-mini"
-    timeout_sec: float = 60.0
-    max_tokens: int = 4000
-    max_concurrency: int = Field(default=64, ge=1, le=512)
+    base_url: str | None = None
+    model: str | None = None
+    timeout_sec: float | None = None
+    max_tokens: int | None = None
+    max_concurrency: int | None = Field(default=None, ge=1, le=512)
+    auto_enrich_on_ingest: bool | None = None
 
 
 @router.get(
@@ -67,6 +75,7 @@ async def get_provider(
             max_tokens=4000,
             max_concurrency=64,
             has_api_key=False,
+            auto_enrich_on_ingest=False,
         )
     raw = row["structured"]
     if isinstance(raw, str):
@@ -82,6 +91,7 @@ async def get_provider(
         max_tokens=int(raw.get("max_tokens", 4000)),
         max_concurrency=int(raw.get("max_concurrency", 64)),
         has_api_key=bool(raw.get("api_key")),
+        auto_enrich_on_ingest=bool(raw.get("auto_enrich_on_ingest", False)),
     )
 
 
@@ -126,13 +136,21 @@ async def put_provider(
                 status.HTTP_400_BAD_REQUEST,
                 "api_key is required on first save",
             )
+        # Partial update: each field falls back to prior value, then
+        # to a typed default. Fresh saves with partial bodies (e.g.
+        # toggling auto_enrich_on_ingest only) preserve the rest.
+        def _merge(field, default):
+            v = getattr(req, field)
+            return v if v is not None else prior_data.get(field, default)
+
         new_payload = {
             "api_key": api_key,
-            "base_url": req.base_url,
-            "model": req.model,
-            "timeout_sec": req.timeout_sec,
-            "max_tokens": req.max_tokens,
-            "max_concurrency": req.max_concurrency,
+            "base_url": _merge("base_url", "https://api.openai.com/v1"),
+            "model": _merge("model", "gpt-4o-mini"),
+            "timeout_sec": _merge("timeout_sec", 60.0),
+            "max_tokens": _merge("max_tokens", 4000),
+            "max_concurrency": _merge("max_concurrency", 64),
+            "auto_enrich_on_ingest": _merge("auto_enrich_on_ingest", False),
         }
         # Insert a new memory row (so old config is in the supersede
         # chain for audit). Mark prior as superseded.
@@ -163,6 +181,7 @@ async def put_provider(
         max_tokens=new_payload["max_tokens"],
         max_concurrency=new_payload["max_concurrency"],
         has_api_key=True,
+        auto_enrich_on_ingest=new_payload["auto_enrich_on_ingest"],
     )
 
 

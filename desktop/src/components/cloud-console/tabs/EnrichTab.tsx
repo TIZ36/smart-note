@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { Save, Loader2, Check } from "lucide-react";
+import { Save, Loader2, Check, Trash2 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import {
   listEnrichJobs, type EnrichJob,
   fetchEnrichProvider, saveEnrichProvider, deleteEnrichProvider,
+  deleteEnrichJob, bulkDeleteEnrichJobs,
   type EnrichProviderConfig,
 } from "@/lib/cloud-api";
 
@@ -37,18 +38,36 @@ export function EnrichTab() {
       <section className="proto-form-section">
         <div className="proto-cc-section-head">
           <h2 className="proto-form-section-title">Enrich jobs</h2>
-          <div style={{ display: "flex", gap: 2 }}>
-            {STATUSES.map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setFilter(s)}
-                className={cn("proto-cc-tab", filter === s && "proto-cc-tab-active")}
-                style={{ height: 26, padding: "0 10px", fontSize: 12 }}
-              >
-                {s}
-              </button>
-            ))}
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <button
+              type="button"
+              className="proto-btn proto-btn-secondary"
+              onClick={async () => {
+                if (!confirm("Delete every queued job for this workspace? Use this when jobs are stuck in the queue (e.g. provider was deconfigured).")) return;
+                try {
+                  await bulkDeleteEnrichJobs("queued");
+                  refresh();
+                } catch (e) { setErr(String(e)); }
+              }}
+              disabled={tally("queued") === 0}
+              title="Drain stuck-queued jobs"
+              style={{ fontSize: 12, padding: "4px 10px" }}
+            >
+              <Trash2 size={12} /> Clear queued
+            </button>
+            <div style={{ display: "flex", gap: 2 }}>
+              {STATUSES.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setFilter(s)}
+                  className={cn("proto-cc-tab", filter === s && "proto-cc-tab-active")}
+                  style={{ height: 26, padding: "0 10px", fontSize: 12 }}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -74,6 +93,7 @@ export function EnrichTab() {
                 <th>Executor</th>
                 <th>Created</th>
                 <th>Finished</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -89,6 +109,19 @@ export function EnrichTab() {
                   <td className="proto-cc-cell-muted">{new Date(j.created_at).toLocaleString()}</td>
                   <td className="proto-cc-cell-muted">
                     {j.finished_at ? new Date(j.finished_at).toLocaleString() : "—"}
+                  </td>
+                  <td className="proto-cc-cell-actions">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try { await deleteEnrichJob(j.id); refresh(); }
+                        catch (e) { setErr(String(e)); }
+                      }}
+                      className="proto-btn proto-btn-secondary"
+                      title="Delete this enrich job"
+                    >
+                      <Trash2 size={12} />
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -113,6 +146,7 @@ function ProviderSection() {
   const [maxConcurrency, setMaxConcurrency] = useState(64);
   const [maxTokens, setMaxTokens] = useState(4000);
   const [timeoutSec, setTimeoutSec] = useState(60);
+  const [autoEnrich, setAutoEnrich] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [err, setErr] = useState("");
@@ -126,6 +160,7 @@ function ProviderSection() {
       setMaxConcurrency(c.max_concurrency);
       setMaxTokens(c.max_tokens);
       setTimeoutSec(c.timeout_sec);
+      setAutoEnrich(c.auto_enrich_on_ingest);
     } catch (e) { setErr(String(e)); }
   }, []);
 
@@ -141,6 +176,7 @@ function ProviderSection() {
         max_concurrency: maxConcurrency,
         max_tokens: maxTokens,
         timeout_sec: timeoutSec,
+        auto_enrich_on_ingest: autoEnrich,
       });
       setCfg(c);
       setApiKey("");
@@ -219,6 +255,23 @@ function ProviderSection() {
           <input type="number" value={timeoutSec} onChange={(e) => setTimeoutSec(Number(e.target.value))}
             className="proto-form-input proto-form-input-mono" />
         </div>
+      </div>
+
+      <div className="proto-form-field" style={{ marginTop: 12 }}>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={autoEnrich}
+            onChange={(e) => setAutoEnrich(e.target.checked)}
+          />
+          <span><strong>Auto-enrich on ingest</strong></span>
+        </label>
+        <p className="proto-form-hint" style={{ marginTop: 4 }}>
+          When on, every <code>/v1/ingest/bulk</code> call (including the
+          desktop's "Ingest all" button) automatically fires LLM tag
+          classification + entity extraction after chunking. Off by
+          default — saves tokens when you only want chunks/embeddings.
+        </p>
       </div>
 
       {err && <div className="proto-cc-error" style={{ marginTop: 8 }}>{err}</div>}

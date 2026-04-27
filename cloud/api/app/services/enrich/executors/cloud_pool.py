@@ -58,6 +58,7 @@ async def _load_provider(workspace_id: str) -> ProviderConfig | None:
         # OpenAI tier-1 caps lower (~16). Hard ceiling at 512 so a
         # typo can't melt the provider.
         max_concurrency=min(int(raw.get("max_concurrency", 64)), 512),
+        auto_enrich_on_ingest=bool(raw.get("auto_enrich_on_ingest", False)),
     )
 
 
