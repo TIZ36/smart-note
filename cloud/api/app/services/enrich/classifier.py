@@ -27,7 +27,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Callable
 
-import requests
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -102,25 +102,25 @@ def _call_llm(cfg: ProviderConfig, system: str, user: str) -> tuple[str | None, 
         return None, {}
     base = cfg.base_url.rstrip("/")
     try:
-        resp = requests.post(
-            f"{base}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {cfg.api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": cfg.model,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                "temperature": 0.0,
-                "max_tokens": cfg.max_tokens,
-            },
-            timeout=cfg.timeout_sec,
-        )
-        resp.raise_for_status()
-        data = resp.json()
+        with httpx.Client(timeout=cfg.timeout_sec) as client:
+            resp = client.post(
+                f"{base}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {cfg.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": cfg.model,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    "temperature": 0.0,
+                    "max_tokens": cfg.max_tokens,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
         return data["choices"][0]["message"]["content"], data.get("usage", {}) or {}
     except Exception as e:
         logger.warning("AI classify call failed: %s", e)
