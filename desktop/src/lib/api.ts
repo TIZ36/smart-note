@@ -301,7 +301,32 @@ async function _fetchLocalTags(): Promise<{ tags: TagInfo[] }> {
   return res.json();
 }
 
+// All four tag write APIs share the cloud-first guard. The cloud
+// /v1/tags surface returns just the touched tag; the UI expects the
+// full refreshed list, so each helper does a follow-up fetchTags()
+// to keep TagInfo[] in sync.
+
+async function _cloudWriteTagsResult(): Promise<{ tags: TagInfo[] } | null> {
+  try {
+    const cloudApi = await import("./cloud-api");
+    if (!(await cloudApi.isCloudConfigured())) return null;
+    return await fetchTags();  // already cloud-aware
+  } catch {
+    return null;
+  }
+}
+
 export async function addTag(name: string, desc = ""): Promise<{ tags: TagInfo[] }> {
+  try {
+    const cloudApi = await import("./cloud-api");
+    if (await cloudApi.isCloudConfigured()) {
+      await cloudApi.upsertTag({ name, description: desc });
+      const refreshed = await _cloudWriteTagsResult();
+      if (refreshed) return refreshed;
+    }
+  } catch (e) {
+    console.warn("cloud addTag failed, falling back to local:", e);
+  }
   const res = await fetch(`${BASE}/tags/add`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -311,11 +336,39 @@ export async function addTag(name: string, desc = ""): Promise<{ tags: TagInfo[]
 }
 
 export async function deleteTag(name: string): Promise<{ tags: TagInfo[] }> {
+  try {
+    const cloudApi = await import("./cloud-api");
+    if (await cloudApi.isCloudConfigured()) {
+      await cloudApi.deleteTag(name);
+      const refreshed = await _cloudWriteTagsResult();
+      if (refreshed) return refreshed;
+    }
+  } catch (e) {
+    console.warn("cloud deleteTag failed, falling back to local:", e);
+  }
   const res = await fetch(`${BASE}/tags/${encodeURIComponent(name)}`, { method: "DELETE" });
   return res.json();
 }
 
 export async function setTagColor(name: string, color: string): Promise<{ tags: TagInfo[] }> {
+  try {
+    const cloudApi = await import("./cloud-api");
+    if (await cloudApi.isCloudConfigured()) {
+      // cloud upsert is idempotent on (workspace, name) — pass the
+      // existing description so we don't accidentally clear it.
+      const existing = (await fetchTags()).tags.find(t => t.name === name);
+      await cloudApi.upsertTag({
+        name,
+        color,
+        description: existing?.desc ?? "",
+        sort_order: 0,
+      });
+      const refreshed = await _cloudWriteTagsResult();
+      if (refreshed) return refreshed;
+    }
+  } catch (e) {
+    console.warn("cloud setTagColor failed, falling back to local:", e);
+  }
   const res = await fetch(`${BASE}/tags/color`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -325,6 +378,16 @@ export async function setTagColor(name: string, color: string): Promise<{ tags: 
 }
 
 export async function reorderTags(order: string[]): Promise<{ tags: TagInfo[] }> {
+  try {
+    const cloudApi = await import("./cloud-api");
+    if (await cloudApi.isCloudConfigured()) {
+      await cloudApi.reorderTags(order);
+      const refreshed = await _cloudWriteTagsResult();
+      if (refreshed) return refreshed;
+    }
+  } catch (e) {
+    console.warn("cloud reorderTags failed, falling back to local:", e);
+  }
   const res = await fetch(`${BASE}/tags/reorder`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
