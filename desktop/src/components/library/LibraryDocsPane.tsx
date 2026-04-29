@@ -1,7 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Upload, Trash2 } from "lucide-react";
+import { Upload, Trash2, Tag } from "lucide-react";
 import * as cloudApi from "@/lib/cloud-api";
 import type { ChannelId } from "@/lib/types";
+
+// 3-tier kind: note (synced personal) · wiki_topic (topical
+// reference) · doc (untyped — user can re-classify via Set type).
+type DocKind = "note" | "wiki_topic" | "doc";
+
+function kindOf(d: cloudApi.CloudDocument): DocKind {
+  const md = (d.metadata && typeof d.metadata === "object" ? d.metadata : {}) as Record<string, unknown>;
+  const snt = String(md.smartnote_type || "");
+  if (snt === "wiki_topic") return "wiki_topic";
+  if (snt === "note") return "note";
+  return "doc";
+}
+
+function kindLabel(k: DocKind): string {
+  if (k === "wiki_topic") return "Wiki topic";
+  if (k === "note") return "Note";
+  return "Doc";
+}
 
 /* Library · Docs pane — wiki documents grouped by AI topic.
  *
@@ -104,16 +122,52 @@ export function LibraryDocsPane({ onOpenSource }: Props) {
     const map = new Map<string, cloudApi.CloudDocument[]>();
     for (const d of filtered) {
       const key = mode === "ai"
-        ? (typeof d.metadata?.smartnote_type === "string"
-            ? d.metadata.smartnote_type
-            : d.kind || "Other")
+        // Friendly label per 3-tier kind. Uncategorized goes to
+        // "Docs" so user sees them as a separate bucket and can
+        // re-classify via the Set type action.
+        ? (kindOf(d) === "wiki_topic" ? "Wiki topics"
+          : kindOf(d) === "note"      ? "Notes"
+          :                              "Docs · uncategorized")
         : "All files";
       const list = map.get(key) || [];
       list.push(d);
       map.set(key, list);
     }
-    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+    // Stable sort: Notes → Wiki → Docs → other when in AI mode.
+    const order = ["Notes", "Wiki topics", "Docs · uncategorized"];
+    return Array.from(map.entries()).sort((a, b) => {
+      const ai = order.indexOf(a[0]);
+      const bi = order.indexOf(b[0]);
+      if (ai !== -1 || bi !== -1) {
+        return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+      }
+      return a[0].localeCompare(b[0]);
+    });
   }, [filtered, mode]);
+
+  // Re-classify the active document by setting metadata.smartnote_type.
+  // Existing metadata is merged so we don't drop other fields like
+  // ai_tags, relative_path, imported_at, etc.
+  async function setKind(target: DocKind) {
+    if (!active) return;
+    setBusy("retype");
+    try {
+      const md = (active.metadata && typeof active.metadata === "object"
+        ? { ...active.metadata }
+        : {}) as Record<string, unknown>;
+      if (target === "doc") {
+        delete md.smartnote_type;
+      } else {
+        md.smartnote_type = target;
+      }
+      await cloudApi.patchDocument(active.id, { metadata: md });
+      await reload();
+    } catch (e) {
+      window.alert(`Re-classify failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(null);
+    }
+  }
 
   const active = filtered.find((d) => d.id === activeId) || filtered[0];
 
@@ -214,7 +268,7 @@ export function LibraryDocsPane({ onOpenSource }: Props) {
             <div className="proto-library-content-bar">
               <div className="proto-library-content-title">{active.name}</div>
               <div className="proto-library-content-meta">
-                {Math.round(active.byte_size / 1024)} KB · {active.kind}
+                {kindLabel(kindOf(active))} · {Math.round(active.byte_size / 1024)} KB
                 {active.ingested_at && " · ingested"}
               </div>
               <div className="proto-library-content-actions">
@@ -228,6 +282,24 @@ export function LibraryDocsPane({ onOpenSource }: Props) {
                 </button>
                 <button type="button" className="proto-library-btn">Re-enrich</button>
                 <button type="button" className="proto-library-btn">Copy as MCP</button>
+                {/* Re-classify dropdown — reads current kind, lets
+                    user set note / wiki / doc. Persists by patching
+                    metadata.smartnote_type. */}
+                <span className="proto-library-set-type">
+                  <Tag size={11} strokeWidth={2} />
+                  <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>Type:</span>
+                  <select
+                    className="proto-library-set-type-select"
+                    value={kindOf(active)}
+                    disabled={busy === "retype"}
+                    onChange={(e) => setKind(e.target.value as DocKind)}
+                    title="Re-classify this document"
+                  >
+                    <option value="note">Note</option>
+                    <option value="wiki_topic">Wiki topic</option>
+                    <option value="doc">Doc (uncategorized)</option>
+                  </select>
+                </span>
                 <button
                   type="button"
                   className="proto-library-btn"

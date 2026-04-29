@@ -1274,6 +1274,33 @@
 }
 .proto-library-btn-primary:hover { color: var(--color-bg-primary); opacity: 0.92; }
 
+/* Inline kind picker — sits in the Library Docs actions row.
+ * Native select kept (consistent OS chrome on macOS) but styled to
+ * match the rest of the action chips. */
+.proto-library-set-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  background: var(--color-bg-primary);
+  color: var(--color-text-secondary);
+}
+.proto-library-set-type-select {
+  font-size: 11.5px;
+  font-family: inherit;
+  color: var(--color-text-primary);
+  background: transparent;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.proto-library-set-type-select:hover { color: var(--color-accent); }
+.proto-library-set-type-select:disabled { color: var(--color-text-muted); cursor: not-allowed; }
+
 /* Action mini-buttons inside cards */
 .proto-row-action {
   height: 22px;

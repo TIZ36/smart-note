@@ -25,7 +25,7 @@ import { RAGProcessingPanel } from "./RAGProcessingPanel";
  * here so editing tags + processing knowledge is one place).
  */
 
-type SourceKind = "note" | "wiki";
+type SourceKind = "note" | "wiki" | "doc";
 
 type Source = {
   id: string;
@@ -107,14 +107,16 @@ export function RAGPage() {
         const mapped: Source[] = docs.documents.map((d) => {
           const md = (d.metadata && typeof d.metadata === "object" ? d.metadata : {}) as Record<string, unknown>;
           const snt = String(md.smartnote_type || "");
-          // Kind heuristic. Wiki only when explicitly classified
-          // (smartnote_type === "wiki_topic"). Everything else —
-          // including MCP add_document ad-hoc uploads, untyped legacy
-          // docs, anything without explicit metadata — defaults to
-          // note. Notes is the inclusive home; wiki is the explicit
-          // taxonomy bucket. Earlier heuristic (default wiki) caused
-          // ad-hoc docs to never appear under Notes group.
-          const kind: SourceKind = snt === "wiki_topic" ? "wiki" : "note";
+          // 3-tier kind:
+          //   note  — explicit smartnote_type=note (desktop-synced personal notes)
+          //   wiki  — explicit smartnote_type=wiki_topic (imported topical references)
+          //   doc   — everything else (untyped uploads — user can re-classify
+          //           via the Library Docs "Set type" action)
+          const kind: SourceKind = snt === "wiki_topic"
+            ? "wiki"
+            : snt === "note"
+              ? "note"
+              : "doc";
 
           // For note kind, prefer the basename so the tree shows the
           // file name, not a full relative path. For wiki, the title
@@ -179,7 +181,8 @@ export function RAGPage() {
     const all = sources?.length ?? 0;
     const notes = sources?.filter((s) => s.kind === "note").length ?? 0;
     const wiki = sources?.filter((s) => s.kind === "wiki").length ?? 0;
-    return { all, notes, wiki };
+    const docs = sources?.filter((s) => s.kind === "doc").length ?? 0;
+    return { all, notes, wiki, docs };
   }, [sources]);
 
   function toggle(id: string) {
@@ -427,6 +430,14 @@ export function RAGPage() {
             </button>
             <button
               type="button"
+              onClick={() => selectKind("doc")}
+              className="proto-atelier-rag-quick-btn"
+              disabled={!sources}
+            >
+              Docs only ({counts.docs})
+            </button>
+            <button
+              type="button"
               onClick={selectNone}
               className="proto-atelier-rag-quick-btn"
               disabled={selected.size === 0}
@@ -445,13 +456,16 @@ export function RAGPage() {
               </div>
             )}
 
-            {(["note", "wiki"] as SourceKind[]).map((kind) => {
+            {(["note", "wiki", "doc"] as SourceKind[]).map((kind) => {
               const items = filtered.filter((s) => s.kind === kind);
               if (items.length === 0) return null;
+              const groupLabel = kind === "note" ? "Notes"
+                : kind === "wiki" ? "Wiki topics"
+                : "Docs · uncategorized";
               return (
                 <div key={kind}>
                   <div className="proto-atelier-rag-tree-group">
-                    <span>{kind === "note" ? "Notes" : "Wiki topics"}</span>
+                    <span>{groupLabel}</span>
                     <span className="proto-atelier-rag-tree-group-count">{items.length}</span>
                   </div>
                   {items.map((s) => {

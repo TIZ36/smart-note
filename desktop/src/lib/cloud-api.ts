@@ -128,6 +128,11 @@ export const getDocument = (id: string) =>
 export const deleteDocument = (id: string) =>
   call<{ deleted: boolean; id: string }>("DELETE", `/v1/documents/${id}`);
 
+export const patchDocument = (
+  id: string,
+  patch: { name?: string; kind?: string; metadata?: Record<string, unknown> },
+) => call<CloudDocument>("PATCH", `/v1/documents/${id}`, patch);
+
 export const createDocument = (req: {
   name: string;
   content: string;
