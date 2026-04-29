@@ -46,17 +46,43 @@ async function _jwt(cloudUrl, apiKey) {
   return d.jwt;
 }
 
+function _stampFilename(name) {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  const stamp = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+  const slash = name.lastIndexOf("/");
+  const dot = name.lastIndexOf(".");
+  if (dot > slash && dot > 0) {
+    return `${name.slice(0, dot)}__${stamp}${name.slice(dot)}`;
+  }
+  return `${name}__${stamp}`;
+}
+
 async function _pushFile(relPath, absPath, jwt, cloudUrl) {
   const content = await fs.readFile(absPath, "utf8");
   await localSearch.indexFile(relPath, content);
-  // Upsert as a document by name = rel_path.
+  // Each push creates a uniquely-named snapshot — every save adds a
+  // second-level timestamped name so duplicates are visible in
+  // Library and the user can decide which to keep / delete.
+  const stampedName = _stampFilename(relPath);
+  const nowIso = new Date().toISOString();
   const r = await fetch(`${cloudUrl}/v1/documents`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${jwt}`,
     },
-    body: JSON.stringify({ name: relPath, content, kind: "markdown" }),
+    body: JSON.stringify({
+      name: stampedName,
+      content,
+      kind: "markdown",
+      metadata: {
+        smartnote_type: "note",
+        original_name: relPath,
+        synced_at: nowIso,
+        source: "auto-sync",
+      },
+    }),
   });
   if (!r.ok) throw new Error(`push ${relPath}: ${r.status}`);
   return await r.json();

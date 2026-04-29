@@ -555,14 +555,21 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
       const result = await readFileFull(rawPath);
       const content = result.output || "";
       const filename = rawPath.split("/").pop() || "note.md";
+      // Suffix the cloud-side name with a second-level timestamp so
+      // every Sync-to-KP creates a clearly-distinguishable snapshot.
+      // User can later filter/delete duplicates by date in Library.
+      // Original filename + ISO timestamp also preserved in metadata.
+      const stampedName = stampFilename(filename);
+      const nowIso = new Date().toISOString();
       await cloudApi.createDocument({
-        name: filename,
+        name: stampedName,
         content,
         kind: "markdown",
         metadata: {
           smartnote_type: "note",
           local_path: rawPath,
-          synced_at: new Date().toISOString(),
+          original_name: filename,
+          synced_at: nowIso,
           line_count: content.split("\n").length,
           byte_size: new Blob([content]).size,
         },
@@ -847,4 +854,20 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
       />
     </div>
   );
+}
+
+/* Insert a second-level timestamp before the file extension so every
+ * upload creates a uniquely-named snapshot in the cloud workspace.
+ * Users can later see "note__2026-04-29_173045.md" alongside
+ * "note__2026-04-30_091200.md" and choose which to keep. */
+function stampFilename(name: string): string {
+  const d = new Date();
+  const p = (n: number) => n.toString().padStart(2, "0");
+  const stamp = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+  const slash = name.lastIndexOf("/");
+  const dot = name.lastIndexOf(".");
+  if (dot > slash && dot > 0) {
+    return `${name.slice(0, dot)}__${stamp}${name.slice(dot)}`;
+  }
+  return `${name}__${stamp}`;
 }
