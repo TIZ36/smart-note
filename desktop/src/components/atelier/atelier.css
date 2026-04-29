@@ -2641,6 +2641,51 @@
   color: var(--color-text-primary);
   background: var(--color-bg-hover);
 }
+
+/* Drain queue button — for ENRICH·BG jobs that no executor will
+ * pick up. Auto-shows when staleQueued > 0. */
+.proto-atelier-rag-progress-drain {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 10.5px;
+  border: 1px solid color-mix(in oklab, var(--color-danger) 30%, var(--color-border));
+  background: var(--color-bg-primary);
+  color: var(--color-danger);
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+}
+.proto-atelier-rag-progress-drain:hover {
+  background: color-mix(in oklab, var(--color-danger) 10%, transparent);
+}
+/* Per-row × delete (only on cloud-side enrich jobs) */
+.proto-atelier-rag-progress-row-del {
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  border-radius: 3px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  align-self: center;
+  opacity: 0;
+  transition: opacity 160ms ease-out;
+}
+.proto-atelier-rag-progress-row:hover .proto-atelier-rag-progress-row-del {
+  opacity: 1;
+}
+.proto-atelier-rag-progress-row-del:hover {
+  color: var(--color-danger);
+  background: color-mix(in oklab, var(--color-danger) 10%, transparent);
+}
 .proto-atelier-rag-progress-more {
   padding: 6px 14px 10px;
   font-size: 10.5px;

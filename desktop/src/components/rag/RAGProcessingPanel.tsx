@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, AlertTriangle, Loader2, Clock, X } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Loader2, Clock, X, Trash2 } from "lucide-react";
 import * as cloudApi from "@/lib/cloud-api";
 import { cn } from "@/lib/cn";
 import type { RunStatus, RunKind } from "./RAGPage";
@@ -27,6 +27,10 @@ type Row = {
   finishedAt?: number;
   detail: string;
   pct: number;
+  /** Cloud-side enrich job id — set only for cloud-polled rows so the
+   *  per-row X button can hit DELETE /v1/enrich/jobs/{id}. Client-side
+   *  RunStatus rows have no cloud counterpart and don't show delete. */
+  cloudJobId?: string;
 };
 
 type Props = {
@@ -87,6 +91,7 @@ export function RAGProcessingPanel({ clientRuns, onClearDone }: Props) {
         finishedAt: j.finished_at ? new Date(j.finished_at).getTime() : undefined,
         detail: cloudDetail(j),
         pct: cloudPct(j),
+        cloudJobId: j.id,
       });
     }
     // Sort: running first, then queued, then by recency for done/failed
@@ -104,6 +109,34 @@ export function RAGProcessingPanel({ clientRuns, onClearDone }: Props) {
   const done    = rows.filter((r) => r.status === "done").length;
   const failed  = rows.filter((r) => r.status === "failed").length;
   const allDone = running === 0 && (done > 0 || failed > 0);
+  // Stale-queue detector: cloud-side ENRICH·BG jobs stuck in queued.
+  // They sit there forever if no executor is available to claim them
+  // (mcp_pull idle / no ws_relay primary / cloud_pool not configured).
+  // Surfacing the count + a "Drain queue" action lets users recover
+  // without shelling into psql.
+  const staleQueued = rows.filter(
+    (r) => r.kind === "enrich-bg" && r.status === "queued",
+  ).length;
+
+  async function handleDrainQueue() {
+    if (!window.confirm(`Drop all ${staleQueued} queued enrich job${staleQueued === 1 ? "" : "s"}? They'll be removed from the queue. Done/failed history rows are preserved.`)) return;
+    try {
+      await cloudApi.bulkDeleteEnrichJobs("queued");
+      // Optimistic: clear them from the local view immediately.
+      setCloudJobs((prev) => prev.filter((j) => j.status !== "queued"));
+    } catch (e) {
+      window.alert(`Drain failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  async function handleDeleteRow(jobId: string) {
+    try {
+      await cloudApi.deleteEnrichJob(jobId);
+      setCloudJobs((prev) => prev.filter((j) => j.id !== jobId));
+    } catch (e) {
+      window.alert(`Delete failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
 
   return (
     <div className="proto-atelier-rag-progress">
@@ -114,6 +147,16 @@ export function RAGProcessingPanel({ clientRuns, onClearDone }: Props) {
           {done    > 0 && <span className="proto-atelier-rag-progress-stat proto-atelier-rag-progress-stat-done">{done} done</span>}
           {failed  > 0 && <span className="proto-atelier-rag-progress-stat proto-atelier-rag-progress-stat-failed">{failed} failed</span>}
         </span>
+        {staleQueued > 0 && (
+          <button
+            type="button"
+            onClick={handleDrainQueue}
+            className="proto-atelier-rag-progress-drain"
+            title="Drop all queued enrich jobs that no executor will pick up (e.g. mcp_pull idle / cloud_pool unconfigured)"
+          >
+            <Trash2 size={10} strokeWidth={2} /> Drain {staleQueued}
+          </button>
+        )}
         {allDone && (
           <button
             type="button"
@@ -127,7 +170,9 @@ export function RAGProcessingPanel({ clientRuns, onClearDone }: Props) {
         )}
       </div>
       <div className="proto-atelier-rag-progress-list">
-        {rows.slice(0, 30).map((r) => <RowEl key={r.id} r={r} />)}
+        {rows.slice(0, 30).map((r) => (
+          <RowEl key={r.id} r={r} onDelete={r.cloudJobId ? () => handleDeleteRow(r.cloudJobId!) : undefined} />
+        ))}
         {rows.length > 30 && (
           <div className="proto-atelier-rag-progress-more">
             …{rows.length - 30} more
@@ -138,7 +183,7 @@ export function RAGProcessingPanel({ clientRuns, onClearDone }: Props) {
   );
 }
 
-function RowEl({ r }: { r: Row }) {
+function RowEl({ r, onDelete }: { r: Row; onDelete?: () => void }) {
   const isRunning = r.status === "running";
   const isQueued  = r.status === "queued";
   const isDone    = r.status === "done";
@@ -169,6 +214,17 @@ function RowEl({ r }: { r: Row }) {
           />
         </div>
       </div>
+      {onDelete && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          className="proto-atelier-rag-progress-row-del"
+          title="Drop this job from the queue"
+          aria-label="Delete job"
+        >
+          <X size={11} />
+        </button>
+      )}
     </div>
   );
 }
