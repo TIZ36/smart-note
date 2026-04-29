@@ -247,8 +247,15 @@ export default function App() {
       return <RAGPage />;
     }
     if (activeChannel.startsWith("source:")) {
-      const filePath = activeChannel.slice("source:".length);
-      return <WikiSourceViewer filePath={filePath} />;
+      // Channel format: source:<id-or-path>[#L<start>-<end>]
+      // Optional line-range hash drives the viewer's auto-scroll
+      // + highlight when the user clicks a chunk in Stream.
+      const rest = activeChannel.slice("source:".length);
+      const m = rest.match(/^([^#]+)(?:#L(\d+)-(\d+))?$/);
+      const filePath = m ? m[1] : rest;
+      const lineStart = m && m[2] ? parseInt(m[2], 10) : undefined;
+      const lineEnd = m && m[3] ? parseInt(m[3], 10) : undefined;
+      return <WikiSourceViewer filePath={filePath} lineStart={lineStart} lineEnd={lineEnd} />;
     }
     return (
       <div className="flex items-center justify-center h-full text-text-muted text-[13px]">

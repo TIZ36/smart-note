@@ -764,6 +764,14 @@
 .proto-atelier-stream-answer-section-doc .proto-atelier-stream-answer-section-head {
   border-left: 3px solid var(--color-text-muted);
 }
+
+/* Source viewer: highlight backdrop for the line range that the
+ * user clicked through to from a stream search result. */
+.proto-source-highlight {
+  background: color-mix(in oklab, var(--color-accent) 16%, transparent);
+  box-shadow: -2px 0 0 0 var(--color-accent) inset;
+  border-radius: 2px;
+}
 .proto-atelier-stream-answer-chunk {
   display: flex;
   align-items: flex-start;

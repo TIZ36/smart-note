@@ -445,7 +445,15 @@ export function StreamHome({ onSelect, onOpenPalette }: Props) {
           state={answer}
           docKinds={docKinds}
           onClose={clearAnswer}
-          onChunkClick={(hit) => onSelect(`source:${hit.document_id}` as ChannelId)}
+          onChunkClick={(hit) => {
+            // Carry line range so the source viewer can scroll +
+            // highlight that span. Channel format documented in
+            // App.tsx's source: route.
+            const range = (hit.line_start && hit.line_end && hit.line_start > 0)
+              ? `#L${hit.line_start}-${hit.line_end}`
+              : "";
+            onSelect(`source:${hit.document_id}${range}` as ChannelId);
+          }}
         />
       )}
 
@@ -721,6 +729,11 @@ function InlineAnswer({
                           <span className="proto-atelier-stream-answer-chunk-meta">
                             <span>{hit.document_name}</span>
                             {hit.dimension && <span>· {hit.dimension}</span>}
+                            {hit.line_start > 0 && (
+                              <span title="Line range — click chunk to jump + highlight">
+                                · L{hit.line_start}–{hit.line_end}
+                              </span>
+                            )}
                             <span className="proto-atelier-stream-answer-chunk-score">
                               fused {hit.score.toFixed(2)}
                             </span>

@@ -9,7 +9,43 @@ import { readFileFull } from "@/lib/electron";
 
 type Props = {
   filePath: string;
+  /** Optional line range to highlight + scroll to on mount.
+   *  Wired by the stream search "open chunk" flow so the user
+   *  lands on the most-relevant span, not the file top. */
+  lineStart?: number;
+  lineEnd?: number;
 };
+
+// Highlight effect / state field — paints a range of lines with a
+// soft accent backdrop + left border so the chunk that the user
+// clicked through to stands out without competing with body text.
+const setHighlightRange = StateEffect.define<{ start: number; end: number } | null>();
+
+const highlightField = StateField.define<DecorationSet>({
+  create() { return Decoration.none; },
+  update(deco, tr) {
+    deco = deco.map(tr.changes);
+    for (const e of tr.effects) {
+      if (e.is(setHighlightRange)) {
+        if (e.value === null) {
+          deco = Decoration.none;
+        } else {
+          const { start, end } = e.value;
+          const doc = tr.state.doc;
+          const total = doc.lines;
+          const fromLine = doc.line(Math.max(1, Math.min(start, total)));
+          const toLine   = doc.line(Math.max(1, Math.min(end, total)));
+          deco = Decoration.set([
+            Decoration.mark({ class: "proto-source-highlight" })
+              .range(fromLine.from, toLine.to),
+          ]);
+        }
+      }
+    }
+    return deco;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
 
 const editorTheme = EditorView.theme({
   "&": {
@@ -49,7 +85,7 @@ const editorTheme = EditorView.theme({
   },
 });
 
-export function WikiSourceViewer({ filePath }: Props) {
+export function WikiSourceViewer({ filePath, lineStart, lineEnd }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [loading, setLoading] = useState(true);
@@ -86,6 +122,7 @@ export function WikiSourceViewer({ filePath }: Props) {
           EditorView.lineWrapping,
           EditorState.readOnly.of(true),
           EditorView.editable.of(false),
+          highlightField,
         ],
       });
 
@@ -93,6 +130,26 @@ export function WikiSourceViewer({ filePath }: Props) {
         state,
         parent: containerRef.current!,
       });
+
+      // If a line range was passed, dispatch the highlight + scroll
+      // it into view. Done in a follow-up dispatch so the editor
+      // measurement is settled (line metrics need to be ready).
+      if (lineStart && lineEnd && lineStart > 0) {
+        const view = viewRef.current;
+        requestAnimationFrame(() => {
+          if (!view || view !== viewRef.current) return;
+          const total = view.state.doc.lines;
+          const a = Math.max(1, Math.min(lineStart, total));
+          const b = Math.max(a, Math.min(lineEnd, total));
+          const targetLine = view.state.doc.line(a);
+          view.dispatch({
+            effects: [
+              setHighlightRange.of({ start: a, end: b }),
+              EditorView.scrollIntoView(targetLine.from, { y: "center" }),
+            ],
+          });
+        });
+      }
 
       setLoading(false);
     }).catch(() => {
@@ -103,7 +160,33 @@ export function WikiSourceViewer({ filePath }: Props) {
       viewRef.current?.destroy();
       viewRef.current = null;
     };
+    // Intentionally omit lineStart/lineEnd from deps — content
+    // re-fetch is expensive. A separate effect dispatches the
+    // highlight when only the range changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filePath]);
+
+  // Keep highlight in sync when only the line range prop changes
+  // (e.g., user clicks a different chunk in Stream answer for the
+  // same doc — content is already loaded, just re-target).
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    if (!lineStart || !lineEnd) {
+      view.dispatch({ effects: setHighlightRange.of(null) });
+      return;
+    }
+    const total = view.state.doc.lines;
+    const a = Math.max(1, Math.min(lineStart, total));
+    const b = Math.max(a, Math.min(lineEnd, total));
+    const targetLine = view.state.doc.line(a);
+    view.dispatch({
+      effects: [
+        setHighlightRange.of({ start: a, end: b }),
+        EditorView.scrollIntoView(targetLine.from, { y: "center" }),
+      ],
+    });
+  }, [lineStart, lineEnd]);
 
   const fileName = docName || filePath.split("/").pop() || filePath;
 
