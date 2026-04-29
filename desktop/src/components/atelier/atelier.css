@@ -41,10 +41,9 @@
   cursor: pointer;
   user-select: none;
   transition: background 160ms ease-out, transform 160ms ease-out;
-  /* subtle inner highlight + outer ring keeps the mark from feeling
-     like a flat sticker. */
+  /* subtle inner highlight + outer ring so the mark isn't a flat sticker */
   box-shadow:
-    inset 0 1px 0 color-mix(in oklab, var(--color-bg-primary) 12%, transparent),
+    inset 0 1px 0 color-mix(in oklab, var(--color-bg-primary) 14%, transparent),
     0 1px 0 color-mix(in oklab, var(--color-text-primary) 14%, transparent);
 }
 .proto-atelier-rail-logo:hover {
@@ -52,7 +51,37 @@
   transform: scale(1.04);
 }
 .proto-atelier-rail-logo:active { transform: scale(0.96); }
-.proto-atelier-rail-logo svg { display: block; }
+
+/* SN wordmark — S dominant + N subdued. The size + weight contrast
+ * + tight kerning is the design; both letters share the baseline so
+ * they read as one tight monogram, not two random characters. */
+.proto-atelier-rail-logo-mark {
+  display: inline-flex;
+  align-items: baseline;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+  letter-spacing: -0.06em;
+  line-height: 1;
+  /* Optical centering: SF baseline sits below geometric center, so
+     nudge the whole mark down a touch so the visible mass is centered. */
+  transform: translateY(0.5px);
+}
+.proto-atelier-rail-logo-s {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-bg-primary);
+  letter-spacing: -0.04em;
+}
+.proto-atelier-rail-logo-n {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--color-bg-primary);
+  opacity: 0.62;
+  margin-left: -0.5px;
+  letter-spacing: -0.02em;
+}
+.proto-atelier-rail-logo:hover .proto-atelier-rail-logo-n {
+  opacity: 0.85;
+}
 
 .proto-atelier-rail-btn {
   width: 32px; height: 32px;
