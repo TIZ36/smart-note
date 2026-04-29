@@ -107,23 +107,47 @@ export function RAGPage() {
         const mapped: Source[] = docs.documents.map((d) => {
           const md = (d.metadata && typeof d.metadata === "object" ? d.metadata : {}) as Record<string, unknown>;
           const snt = String(md.smartnote_type || "");
-          const kind: SourceKind = snt === "wiki_topic" ? "wiki" : "note";
+          // Kind heuristic — explicit smartnote_type wins; else infer
+          // from name (path-like or .md → note from desktop sync;
+          // bare title → wiki topic). Desktop sync uses
+          // `name = relPath` (e.g., "2026-04-29.md"), wiki upload
+          // uses `name = topic title`.
+          const kind: SourceKind = snt === "wiki_topic"
+            ? "wiki"
+            : snt === "note"
+              ? "note"
+              : (d.name.endsWith(".md") || d.name.includes("/")) ? "note" : "wiki";
+
+          // For note kind, prefer the basename so the tree shows the
+          // file name, not a full relative path. For wiki, the title
+          // already reads naturally.
+          const displayName = kind === "note"
+            ? d.name.split("/").pop() || d.name
+            : d.name;
+
           const docJobs = byDoc.get(d.id) || [];
           const lastDone = docJobs.find((j) => j.status === "done");
-          // Tag/classify markers from cloud metadata. Adjust as the
-          // backend exposes more granular signals.
-          const tagsApplied = Array.isArray((md as Record<string, unknown>).ai_tags)
+          const tagsApplied = Array.isArray(md.ai_tags)
             && (md as { ai_tags: unknown[] }).ai_tags.length > 0;
+
+          // Tag-meta retrieval path is populated as soon as wiki
+          // ingestion runs (chapter splitter sets chunk.dimension +
+          // structural keywords). So for wiki, T lights with E. For
+          // notes, real AI tagging requires LLM enrich.
+          const tagged = kind === "wiki"
+            ? d.ingested_at != null
+            : (tagsApplied || !!lastDone);
+
           return {
             id: d.id,
-            name: d.name,
+            name: displayName,
             kind,
             byteSize: d.byte_size,
             ingestedAt: d.ingested_at,
             updatedAt: d.updated_at,
             embedded: d.ingested_at != null,
             enriched: !!lastDone,
-            tagged:   tagsApplied || !!lastDone,
+            tagged,
           };
         });
         setSources(mapped);

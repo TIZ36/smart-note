@@ -629,6 +629,15 @@
 .proto-atelier-stream-answer-path-val {
   min-width: 22px;
 }
+/* Inactive (zero-score) path — kept in layout so the 6-path lineup
+ * is always visible; user can see which paths have signal vs which
+ * need enrich to populate (kw + tag_meta). */
+.proto-atelier-stream-answer-path-zero {
+  opacity: 0.32;
+}
+.proto-atelier-stream-answer-path-zero .proto-atelier-stream-answer-path-bar-fill {
+  background: var(--color-text-muted);
+}
 
 /* Inline composed answer (B1) — pushes feed down on Enter */
 .proto-atelier-stream-answer {

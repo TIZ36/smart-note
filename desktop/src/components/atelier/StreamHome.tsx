@@ -35,8 +35,11 @@ function saveRetrieval(s: RetrievalSettings) {
   try { localStorage.setItem(RETRIEVAL_KEY, JSON.stringify(s)); } catch { /* silent */ }
 }
 
-// Friendly labels for the 6 retrieval paths the cloud surfaces in
-// path_scores. The keys come from `ChunkSearchHit.path_scores`.
+// 6 retrieval paths in canonical display order. Always rendered so
+// the user can see which dimensions hit and which were 0 (often
+// because the chunks haven't been enriched yet — kw and tag_meta
+// only populate after AI enrichment).
+const PATH_KEYS = ["vec", "fts", "ngram", "sub", "kw", "tag_meta"] as const;
 const PATH_LABELS: Record<string, string> = {
   fts: "fts",
   vec: "vec",
@@ -44,6 +47,14 @@ const PATH_LABELS: Record<string, string> = {
   sub: "sub",
   kw: "kw",
   tag_meta: "tag",
+};
+const PATH_HELP: Record<string, string> = {
+  fts:      "Postgres FTS token match — needs raw text",
+  vec:      "Cosine similarity on chunk embedding — needs embed",
+  ngram:    "Char-bigram overlap — needs raw text (typo-tolerant)",
+  sub:      "Substring LIKE match — needs raw text",
+  kw:       "Keyword overlap on chunk.keywords — needs Enrich",
+  tag_meta: "Tag-segment dimension match — needs Enrich",
 };
 
 /* StreamHome — v3 home surface.
@@ -573,28 +584,38 @@ function RetrievalSettingsPopover({
 }
 
 function PathScores({ scores }: { scores: Record<string, number> }) {
-  const entries = Object.entries(scores).filter(([, v]) => v > 0);
-  if (entries.length === 0) return null;
-  // Sort by contribution descending so the strongest signal reads first.
-  entries.sort((a, b) => b[1] - a[1]);
+  // Always render all 6 paths in fixed order. Zero-scoring paths
+  // gray out so user sees WHICH paths returned signal vs which
+  // are dormant (e.g. kw / tag_meta until enrich runs).
   return (
     <span className="proto-atelier-stream-answer-paths">
-      {entries.map(([k, v]) => (
-        <span key={k} className="proto-atelier-stream-answer-path">
-          <span className="proto-atelier-stream-answer-path-name">
-            {PATH_LABELS[k] || k}
+      {PATH_KEYS.map((k) => {
+        const v = scores[k] ?? 0;
+        const inactive = v <= 0;
+        return (
+          <span
+            key={k}
+            className={cn(
+              "proto-atelier-stream-answer-path",
+              inactive && "proto-atelier-stream-answer-path-zero",
+            )}
+            title={`${PATH_LABELS[k] || k} = ${v.toFixed(2)} · ${PATH_HELP[k] || ""}`}
+          >
+            <span className="proto-atelier-stream-answer-path-name">
+              {PATH_LABELS[k] || k}
+            </span>
+            <span className="proto-atelier-stream-answer-path-bar">
+              <span
+                className="proto-atelier-stream-answer-path-bar-fill"
+                style={{ width: `${Math.min(100, Math.round(v * 100))}%` }}
+              />
+            </span>
+            <span className="proto-atelier-stream-answer-path-val">
+              {v.toFixed(2)}
+            </span>
           </span>
-          <span className="proto-atelier-stream-answer-path-bar">
-            <span
-              className="proto-atelier-stream-answer-path-bar-fill"
-              style={{ width: `${Math.min(100, Math.round(v * 100))}%` }}
-            />
-          </span>
-          <span className="proto-atelier-stream-answer-path-val">
-            {v.toFixed(2)}
-          </span>
-        </span>
-      ))}
+        );
+      })}
     </span>
   );
 }
