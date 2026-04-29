@@ -270,3 +270,39 @@ async def unpair(
                 dev, ws,
             )
     return {"deleted": int(result.rsplit(" ", 1)[-1])}
+
+
+@router.post("/heartbeat")
+async def heartbeat(
+    identity: Identity = Depends(require_scope("retrieve")),
+) -> dict:
+    """Bump this device's last_seen_at so the workspace registry can
+    show it as online. Light-weight (one UPDATE) so the desktop can
+    poll every ~30s while running without measurably loading cloud.
+
+    The previous "online" signal piggy-backed on /v1/auth/token
+    exchanges — fine when the JWT TTL was short, but with the cached
+    ~hour-long JWT a sitting desktop would go "offline" within 60s of
+    the last refresh. This endpoint gives the SDK an explicit, cheap
+    way to keep the indicator live without ageing JWT.
+
+    Scoped to the lowest-privilege scope ("retrieve") so even read-
+    only paired devices can heartbeat. The device id is derived from
+    the calling api_key — caller doesn't need to send it.
+    """
+    try:
+        async with pool().acquire() as conn:
+            row = await conn.fetchrow(
+                "UPDATE devices SET last_seen_at = now() "
+                "WHERE id = (SELECT device_id FROM api_keys WHERE id = $1) "
+                "  AND id IS NOT NULL "
+                "RETURNING id",
+                UUID(identity.api_key_id),
+            )
+        return {
+            "ok": True,
+            "device_id": str(row["id"]) if row else None,
+            "at": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as e:
+        raise HTTPException(500, f"heartbeat failed: {e}")

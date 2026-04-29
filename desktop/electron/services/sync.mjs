@@ -163,3 +163,61 @@ export async function stop() {
 }
 
 export function status() { return { ..._state }; }
+
+// ── Device heartbeat ─────────────────────────────────────────────
+// Independent of the file watcher: the desktop pings cloud every
+// 30s so devices.last_seen_at stays fresh. Used by the workspace
+// registry to render an honest online indicator. Without this the
+// JWT cache (hour-long TTL) would let a sitting desktop go "offline"
+// within 60s of last token exchange.
+const HEARTBEAT_MS = 30_000;
+let _heartbeatTimer = null;
+let _heartbeatJwt = null;  // { jwt, expiresAt, key } cache
+
+async function _heartbeatJwtFor(cloudUrl, apiKey) {
+  const now = Math.floor(Date.now() / 1000);
+  if (_heartbeatJwt && _heartbeatJwt.key === apiKey && _heartbeatJwt.expiresAt - 60 > now) {
+    return _heartbeatJwt.jwt;
+  }
+  const r = await fetch(`${cloudUrl}/v1/auth/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ api_key: apiKey }),
+  });
+  if (!r.ok) throw new Error(`auth: ${r.status}`);
+  const d = await r.json();
+  _heartbeatJwt = { jwt: d.jwt, expiresAt: d.expires_at, key: apiKey };
+  return d.jwt;
+}
+
+async function _tickHeartbeat() {
+  try {
+    const s = await settings.read();
+    if (!s.cloud_sync_url || !s.cloud_sync_api_key) return;
+    const cloudUrl = s.cloud_sync_url.replace(/\/+$/, "");
+    const jwt = await _heartbeatJwtFor(cloudUrl, s.cloud_sync_api_key);
+    await fetch(`${cloudUrl}/v1/devices/heartbeat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${jwt}`,
+      },
+    }).catch(() => {});
+  } catch {
+    /* heartbeat is best-effort — never error-flash the UI */
+  }
+}
+
+export function startHeartbeat() {
+  if (_heartbeatTimer) return;
+  // First ping immediately so a freshly-started desktop appears
+  // online without waiting 30s for the first interval tick.
+  _tickHeartbeat();
+  _heartbeatTimer = setInterval(_tickHeartbeat, HEARTBEAT_MS);
+}
+
+export function stopHeartbeat() {
+  if (_heartbeatTimer) clearInterval(_heartbeatTimer);
+  _heartbeatTimer = null;
+  _heartbeatJwt = null;
+}

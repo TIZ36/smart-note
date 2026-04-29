@@ -362,9 +362,21 @@ app.whenReady().then(() => {
   loadHotkeyConfig();
   registerHotkey();
   connectIngestSse();
+  // Start cloud heartbeat (no-op if cloud not configured). Pings
+  // /v1/devices/heartbeat every 30s so the workspace registry can
+  // honestly reflect this device as online while the desktop runs.
+  // Lazy-imported to avoid the module-init order dance with the
+  // service file declared further down.
+  import("./services/sync.mjs").then((m) => m.startHeartbeat()).catch(() => {});
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+});
+
+app.on("before-quit", () => {
+  // Stop heartbeat cleanly so the device shows offline within the
+  // 60s window after the user quits, not after JWT cache TTL.
+  import("./services/sync.mjs").then((m) => m.stopHeartbeat()).catch(() => {});
 });
 
 app.on("window-all-closed", () => {
