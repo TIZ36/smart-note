@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { X, Upload, Zap, Search, Calendar, Cpu, Bot } from "lucide-react";
+import { X, Calendar, Cpu, Bot } from "lucide-react";
 import * as cloudApi from "@/lib/cloud-api";
 import { readSettings } from "@/lib/electron";
 
@@ -252,31 +252,13 @@ export function CloudModal({ open, onClose }: Props) {
                 })()}
           </div>
 
-          {/* Quick actions */}
+          {/* Workspace-level action — only Run today's digest lives
+              here. Per-document processing (Upload to wiki, enrich,
+              tag, smartsheet) belongs on KP, not buried in this
+              modal. */}
           <div className="proto-modal-section">
-            <div className="proto-modal-section-title">Actions</div>
+            <div className="proto-modal-section-title">Workspace action</div>
             <div className="proto-modal-actions-stack">
-              <ActionButton
-                icon={<Upload size={14} />}
-                title="Upload note → wiki"
-                help="Pick a note, classify into an AI topic, embed."
-                state={actionState["upload"] || "idle"}
-                onClick={() => runAction("upload")}
-              />
-              <ActionButton
-                icon={<Zap size={14} />}
-                title="Trigger enrich now"
-                help="Re-classify everything pending · ~¥0.04 / 1k tokens."
-                state={actionState["enrich"] || "idle"}
-                onClick={() => runAction("enrich")}
-              />
-              <ActionButton
-                icon={<Search size={14} />}
-                title="Run AI tag pass"
-                help="Generate / refresh tags across all chunks."
-                state={actionState["tag"] || "idle"}
-                onClick={() => runAction("tag")}
-              />
               <ActionButton
                 icon={<Calendar size={14} />}
                 title="Run today's digest"

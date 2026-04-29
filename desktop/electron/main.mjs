@@ -625,48 +625,71 @@ async function fetchLiveSettings() {
   });
 }
 
-ipcMain.handle("read_settings", async () => {
-  // Per-user credential storage lives in userData/cloud-creds.json.
-  // We keep cloud_sync_url + api_key OUT of the .env fallback path
-  // (.env is shared with the dev's local stack and would auto-bind
-  // each user to whatever credentials the developer happened to have).
-  // User must enter them via Settings → SmartNote Cloud, where they
-  // get persisted to userData (per-user, not shipped with the app).
-  let userCreds = { cloud_sync_url: "", cloud_sync_api_key: "", cloud_sync_enabled: false };
+// Per-user credential file. Contains BOTH the SmartNote Cloud
+// connection (URL + workspace API key) AND any LLM provider keys
+// (deepseek / openai for chat + embedding). All sensitive secrets
+// live here so a dev's .env never leaks into a fresh user's app.
+function _readUserCreds() {
+  const empty = {
+    cloud_sync_url: "",
+    cloud_sync_api_key: "",
+    cloud_sync_enabled: false,
+    provider_base_url: "",
+    provider_api_key: "",
+    provider_chat_model: "",
+    embed_base_url: "",
+    embed_api_key: "",
+    provider_embed_model: "",
+  };
   try {
     const credsPath = path.join(app.getPath("userData"), "cloud-creds.json");
-    if (fs.existsSync(credsPath)) {
-      const raw = JSON.parse(fs.readFileSync(credsPath, "utf8"));
-      userCreds = {
-        cloud_sync_url: typeof raw.cloud_sync_url === "string" ? raw.cloud_sync_url : "",
-        cloud_sync_api_key: typeof raw.cloud_sync_api_key === "string" ? raw.cloud_sync_api_key : "",
-        cloud_sync_enabled: !!raw.cloud_sync_enabled,
-      };
-    }
-  } catch { /* corrupt creds file → behave as if blank */ }
+    if (!fs.existsSync(credsPath)) return empty;
+    const raw = JSON.parse(fs.readFileSync(credsPath, "utf8"));
+    return {
+      cloud_sync_url: typeof raw.cloud_sync_url === "string" ? raw.cloud_sync_url : "",
+      cloud_sync_api_key: typeof raw.cloud_sync_api_key === "string" ? raw.cloud_sync_api_key : "",
+      cloud_sync_enabled: !!raw.cloud_sync_enabled,
+      provider_base_url: typeof raw.provider_base_url === "string" ? raw.provider_base_url : "",
+      provider_api_key: typeof raw.provider_api_key === "string" ? raw.provider_api_key : "",
+      provider_chat_model: typeof raw.provider_chat_model === "string" ? raw.provider_chat_model : "",
+      embed_base_url: typeof raw.embed_base_url === "string" ? raw.embed_base_url : "",
+      embed_api_key: typeof raw.embed_api_key === "string" ? raw.embed_api_key : "",
+      provider_embed_model: typeof raw.provider_embed_model === "string" ? raw.provider_embed_model : "",
+    };
+  } catch {
+    return empty;
+  }
+}
+
+ipcMain.handle("read_settings", async () => {
+  // ALL credential fields (cloud_sync_*, provider_*, embed_*) come
+  // exclusively from per-user storage. Non-cred settings (embedding
+  // mode, hotkey, model name preferences) still flow through the
+  // backend live-settings or .env fallback as before.
+  const userCreds = _readUserCreds();
 
   const live = await fetchLiveSettings();
   if (live && typeof live === "object") {
     return {
       embedding_mode: live.embedding_mode ?? "local",
       ai_features_enabled: live.ai_features_enabled !== false,
-      provider_base_url: live.provider_base_url ?? "https://api.openai.com/v1",
-      provider_api_key: live.provider_api_key ?? "",
-      provider_chat_model: live.provider_chat_model ?? "gpt-4o-mini",
-      embed_base_url: live.embed_base_url ?? "",
-      embed_api_key: live.embed_api_key ?? "",
-      provider_embed_model: live.provider_embed_model ?? "text-embedding-3-small",
+      // Provider creds: per-user only. Default URL is the OpenAI
+      // base — user must add their own key. Models default if user
+      // hasn't picked one.
+      provider_base_url: userCreds.provider_base_url || "https://api.openai.com/v1",
+      provider_api_key: userCreds.provider_api_key,
+      provider_chat_model: userCreds.provider_chat_model || "gpt-4o-mini",
+      embed_base_url: userCreds.embed_base_url,
+      embed_api_key: userCreds.embed_api_key,
+      provider_embed_model: userCreds.provider_embed_model || "text-embedding-3-small",
       ingest_ai_enabled: !!live.ingest_ai_enabled,
       ingest_ai_model: live.ingest_ai_model ?? "",
-      // Cloud creds: ALWAYS from userData (per-user). Never from .env
-      // or backend live-settings — those would auto-bind a fresh user
-      // to dev/shared credentials.
       cloud_sync_enabled: userCreds.cloud_sync_enabled,
       cloud_sync_url: userCreds.cloud_sync_url,
       cloud_sync_api_key: userCreds.cloud_sync_api_key,
     };
   }
-  // Backend offline — fall back to .env for non-cloud settings only.
+  // Backend offline — fall back to .env for non-cred settings.
   const envPath = path.join(serverRoot(), ".env");
   const content = fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf8") : "";
   const map = parseEnvFile(content);
@@ -675,15 +698,14 @@ ipcMain.handle("read_settings", async () => {
   return {
     embedding_mode: map.get("EMBEDDING_MODE") ?? "local",
     ai_features_enabled: !["false", "0", "no"].includes(aiFeatures),
-    provider_base_url: map.get("PROVIDER_BASE_URL") ?? "https://api.openai.com/v1",
-    provider_api_key: map.get("PROVIDER_API_KEY") ?? "",
-    provider_chat_model: map.get("PROVIDER_CHAT_MODEL") ?? "gpt-4o-mini",
-    embed_base_url: map.get("EMBED_BASE_URL") ?? "",
-    embed_api_key: map.get("EMBED_API_KEY") ?? "",
-    provider_embed_model: map.get("PROVIDER_EMBED_MODEL") ?? "text-embedding-3-small",
+    provider_base_url: userCreds.provider_base_url || "https://api.openai.com/v1",
+    provider_api_key: userCreds.provider_api_key,
+    provider_chat_model: userCreds.provider_chat_model || "gpt-4o-mini",
+    embed_base_url: userCreds.embed_base_url,
+    embed_api_key: userCreds.embed_api_key,
+    provider_embed_model: userCreds.provider_embed_model || "text-embedding-3-small",
     ingest_ai_enabled: ["true", "1", "yes"].includes(ingestAi),
     ingest_ai_model: map.get("INGEST_AI_MODEL") ?? "",
-    // Cloud creds always from per-user file, never from .env.
     cloud_sync_enabled: userCreds.cloud_sync_enabled,
     cloud_sync_url: userCreds.cloud_sync_url,
     cloud_sync_api_key: userCreds.cloud_sync_api_key,
@@ -695,37 +717,39 @@ ipcMain.handle("write_settings", async (_, { newSettings }) => {
   const existing = fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf8") : "";
   const aiEnabledStr = newSettings.ingest_ai_enabled ? "true" : "false";
   const aiFeaturesStr = newSettings.ai_features_enabled === false ? "false" : "true";
-  // Cloud creds get persisted PER-USER in userData, NOT to .env, so
-  // a fresh install never inherits dev/shared credentials. Each
-  // user must enter their own URL + API key via Settings →
-  // SmartNote Cloud the first time they want to connect.
+  // ALL credentials persist PER-USER in userData/cloud-creds.json,
+  // NOT to .env. A fresh install never inherits dev / shared
+  // credentials — every user enters their own SmartNote Cloud URL +
+  // workspace key AND their own LLM provider keys (deepseek / openai)
+  // via Settings.
   try {
     const credsPath = path.join(app.getPath("userData"), "cloud-creds.json");
     fs.writeFileSync(credsPath, JSON.stringify({
       cloud_sync_enabled: !!newSettings.cloud_sync_enabled,
       cloud_sync_url: newSettings.cloud_sync_url ?? "",
       cloud_sync_api_key: newSettings.cloud_sync_api_key ?? "",
+      provider_base_url: newSettings.provider_base_url ?? "",
+      provider_api_key: newSettings.provider_api_key ?? "",
+      provider_chat_model: newSettings.provider_chat_model ?? "",
+      embed_base_url: newSettings.embed_base_url ?? "",
+      embed_api_key: newSettings.embed_api_key ?? "",
+      provider_embed_model: newSettings.provider_embed_model ?? "",
       saved_at: new Date().toISOString(),
     }, null, 2), "utf8");
-    // chmod 600 so the API key isn't world-readable on multi-user machines
     try { fs.chmodSync(credsPath, 0o600); } catch { /* best-effort */ }
   } catch (e) {
-    console.warn("Failed to persist cloud creds:", e);
+    console.warn("Failed to persist user creds:", e);
   }
 
+  // .env now only carries non-cred prefs — feature flags, model
+  // selection. Sensitive values (provider keys, cloud sync key)
+  // never touch .env any more.
   const updates = new Map([
     ["EMBEDDING_MODE", newSettings.embedding_mode],
     ["AI_FEATURES_ENABLED", aiFeaturesStr],
-    ["PROVIDER_BASE_URL", newSettings.provider_base_url],
-    ["PROVIDER_API_KEY", newSettings.provider_api_key],
-    ["PROVIDER_CHAT_MODEL", newSettings.provider_chat_model],
-    ["EMBED_BASE_URL", newSettings.embed_base_url ?? ""],
-    ["EMBED_API_KEY", newSettings.embed_api_key ?? ""],
-    ["PROVIDER_EMBED_MODEL", newSettings.provider_embed_model],
     ["INGEST_AI_ENABLED", aiEnabledStr],
     ["INGEST_AI_MODEL", newSettings.ingest_ai_model],
-    // CLOUD_SYNC_* deliberately excluded from .env — they live only
-    // in per-user userData/cloud-creds.json.
+    // PROVIDER_* / EMBED_* / CLOUD_SYNC_* live in userData/cloud-creds.json
   ]);
   const writtenKeys = new Set();
   const lines = [];
