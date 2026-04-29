@@ -167,6 +167,64 @@ export function SettingsPanel() {
           <div className="proto-form-divider" />
 
           <section className="proto-form-section">
+            <h2 className="proto-form-section-title">SmartNote Cloud</h2>
+            <p className="proto-form-hint" style={{ marginBottom: 12 }}>
+              Connect to a SmartNote Cloud workspace to enable cross-device sync,
+              cloud-side enrichment, and the MCP endpoint that AI agents
+              (Claude Code · Cursor · Opencode) read your knowledge through.
+            </p>
+            <Field label="Cloud URL">
+              <input
+                type="text"
+                value={settings.cloud_sync_url || ""}
+                onChange={(e) => update("cloud_sync_url", e.target.value)}
+                placeholder="https://api.smartnote.cloud"
+                className="proto-form-input"
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+              />
+              <p className="proto-form-hint">
+                Base URL of your SmartNote Cloud instance. The MCP endpoint
+                Claude/Cursor connects to is automatically <code>{(settings.cloud_sync_url || "").replace(/\/+$/, "") + "/mcp" || "<URL>/mcp"}</code>.
+              </p>
+            </Field>
+            <Field label="Workspace API key">
+              <input
+                type="password"
+                value={settings.cloud_sync_api_key || ""}
+                onChange={(e) => update("cloud_sync_api_key", e.target.value)}
+                placeholder="wsk_…"
+                className="proto-form-input"
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+              />
+              <p className="proto-form-hint">
+                Bound to a single workspace. Generate one in the Cloud Console
+                under <em>Devices → Pair</em>. Same key powers both the desktop
+                sync and the MCP endpoint.
+              </p>
+            </Field>
+            <Field label="Sync enabled">
+              <label className="proto-form-toggle-label">
+                <input
+                  type="checkbox"
+                  checked={settings.cloud_sync_enabled !== false}
+                  onChange={(e) => update("cloud_sync_enabled", e.target.checked)}
+                />
+                <span>Push notes / wiki / smart tables to cloud on save</span>
+              </label>
+              <p className="proto-form-hint">
+                Off if you only want the local-first features. Empty URL or
+                key disables sync regardless of this toggle.
+              </p>
+            </Field>
+          </section>
+
+          <div className="proto-form-divider" />
+
+          <section className="proto-form-section">
             <h2 className="proto-form-section-title">Embedding</h2>
             <Field label="Mode">
               <select value={settings.embedding_mode} onChange={(e) => update("embedding_mode", e.target.value)} className="proto-form-input">

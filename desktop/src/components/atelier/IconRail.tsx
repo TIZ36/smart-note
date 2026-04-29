@@ -1,4 +1,4 @@
-import { FileEdit, BookOpen, Cloud, Settings, Loader2 } from "lucide-react";
+import { FileEdit, Library, Cloud, Settings, Loader2 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { ChannelId } from "@/lib/types";
 
@@ -52,8 +52,7 @@ export function IconRail({
           }
         }}
       >
-        <span className="proto-logo-s">S</span>
-        <span className="proto-logo-n">N</span>
+        <SmartNoteMark />
       </div>
 
       <RailButton
@@ -77,7 +76,7 @@ export function IconRail({
             : undefined
         }
       >
-        <BookOpen size={16} strokeWidth={1.7} />
+        <Library size={16} strokeWidth={1.7} />
       </RailButton>
 
       <div className="proto-atelier-rail-spacer" />
@@ -98,6 +97,31 @@ export function IconRail({
         <Settings size={16} strokeWidth={1.7} />
       </RailButton>
     </aside>
+  );
+}
+
+/* SmartNote logo mark — stylized note glyph with corner fold + two
+ * subtle text-line strokes + a small accent dot. Drawn in 24×24
+ * viewBox; rendered ~20px inside the 28×28 rail-logo container
+ * which provides the dark fill background. */
+function SmartNoteMark() {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M8.5 4h6l4.5 4.5V19a2 2 0 0 1-2 2H8.5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" />
+      <path d="M14.5 4v4.5H19" />
+      <line x1="10" y1="13.5" x2="15.5" y2="13.5" opacity="0.85" />
+      <line x1="10" y1="16.5" x2="13.5" y2="16.5" opacity="0.55" />
+    </svg>
   );
 }
 

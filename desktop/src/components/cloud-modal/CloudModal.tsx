@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { X, Upload, Zap, Search, Calendar } from "lucide-react";
 import * as cloudApi from "@/lib/cloud-api";
+import { readSettings } from "@/lib/electron";
 
 /* Cloud center modal (D3) — replaces v2's full-page CloudConsolePage.
  *
@@ -58,16 +59,22 @@ export function CloudModal({ open, onClose }: Props) {
     return () => { alive = false; clearInterval(id); };
   }, [open]);
 
-  // MCP endpoint = same base URL we call cloud-api with, exposed
-  // for agent CLIs to paste into Claude Code / Cursor settings.
+  // MCP endpoint = same base URL cloud-api uses, exposed so agent
+  // CLIs (Claude Code / Cursor / Opencode) can paste it into their
+  // MCP server config. Reads from persistent app settings — set in
+  // Settings → SmartNote Cloud.
   useEffect(() => {
     if (!open) return;
-    try {
-      const url = (window.localStorage.getItem("cloud_sync_url") || "").trim();
+    let alive = true;
+    readSettings().then((s) => {
+      if (!alive) return;
+      const url = (s.cloud_sync_url || "").trim();
       if (url) setMcpUrl(`${url.replace(/\/$/, "")}/mcp`);
-    } catch {
-      /* silent */
-    }
+      else setMcpUrl("—");
+    }).catch(() => {
+      if (alive) setMcpUrl("—");
+    });
+    return () => { alive = false; };
   }, [open]);
 
   if (!open) return null;
@@ -230,23 +237,43 @@ export function CloudModal({ open, onClose }: Props) {
             </div>
           </div>
 
-          {/* MCP endpoint */}
+          {/* MCP endpoint — what AI CLIs (Claude / Cursor / Opencode)
+              connect to via MCP to read + write your workspace. */}
           <div className="proto-modal-section">
-            <div className="proto-modal-section-title">Agent endpoint (MCP)</div>
-            <div className="proto-modal-mcp">
-              <span className="proto-modal-mcp-text">{mcpUrl}</span>
-              <button
-                type="button"
-                className="proto-modal-mcp-copy"
-                onClick={copyMcp}
-                disabled={mcpUrl === "—"}
-              >
-                {copied ? "copied" : "copy"}
-              </button>
-            </div>
-            <div className="proto-modal-line-help" style={{ paddingLeft: 0 }}>
-              Paste into Claude Code / Cursor settings · read+write scoped to this workspace.
-            </div>
+            <div className="proto-modal-section-title">MCP endpoint for AI agents</div>
+            {mcpUrl === "—" ? (
+              <>
+                <div className="proto-modal-mcp" style={{ color: "var(--color-text-muted)", fontStyle: "italic" }}>
+                  <span className="proto-modal-mcp-text">
+                    Cloud not configured — set URL + API key first.
+                  </span>
+                </div>
+                <div className="proto-modal-line-help" style={{ paddingLeft: 0 }}>
+                  Open <strong>Settings → SmartNote Cloud</strong> to add your
+                  cloud URL and workspace API key. Once set, this endpoint
+                  becomes the URL Claude Code / Cursor reads + writes through.
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="proto-modal-mcp">
+                  <span className="proto-modal-mcp-text">{mcpUrl}</span>
+                  <button
+                    type="button"
+                    className="proto-modal-mcp-copy"
+                    onClick={copyMcp}
+                  >
+                    {copied ? "copied" : "copy"}
+                  </button>
+                </div>
+                <div className="proto-modal-line-help" style={{ paddingLeft: 0 }}>
+                  Paste this URL into Claude Code / Cursor MCP settings, then
+                  add your workspace API key as the bearer token. Agents will
+                  see the same memories, docs, and tags you do —
+                  read + write — scoped to this workspace.
+                </div>
+              </>
+            )}
           </div>
 
         </div>

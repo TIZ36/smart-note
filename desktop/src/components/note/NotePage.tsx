@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  FolderOpen, Shuffle, ArrowDownToLine, PanelLeft, Save, RotateCw, Copy,
-  Plus, Minus,
+  FolderOpen, Shuffle, ArrowDownToLine, PanelLeft, Save,
+  Database, Sparkles, Plus, Minus,
 } from "lucide-react";
 import { NoteEditor, type LineMeta } from "../editor/NoteEditor";
 import { IngestDialog } from "./IngestDialog";
@@ -13,7 +13,7 @@ import { QuickSearch } from "./QuickSearch";
 import { NoteViewDialog } from "./NoteViewDialog";
 import { NoteViewSidebar, type SidebarViewItem } from "./NoteViewSidebar";
 import { cn } from "@/lib/cn";
-import { pickRawFile, saveRawPathForHotkey, installSampleNote } from "@/lib/electron";
+import { pickRawFile, saveRawPathForHotkey, installSampleNote, ingestRawAsync } from "@/lib/electron";
 import * as api from "@/lib/api";
 import type { IngestStep } from "@/App";
 
@@ -51,7 +51,6 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
   const [showQuickSearch, setShowQuickSearch] = useState(false);
   // v3: sidebar collapses by default — Views toggle reveals it
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [copiedMcp, setCopiedMcp] = useState(false);
 
   // ── View state ──
   // `views` is the list of persisted custom lenses for the current file.
@@ -496,20 +495,25 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
     }
   }
 
-  // Copy the current note content as MCP-flavored context so it can
-  // paste straight into Claude Code / Cursor without manual wrapping.
-  async function handleCopyAsMcp() {
+  // ── Ingest pipeline triggers ──────────────────────────────────
+  // Embedding (non-LLM): re-chunks the raw file and regenerates
+  // embeddings. No AI calls — cheap to run after every save. Fires
+  // ingestRawAsync directly; toast surfaces progress, no dialog.
+  async function handleEmbedding() {
+    if (!rawPath) return;
     try {
-      const filename = rawPath.split("/").pop() || "note.md";
-      const cm = document.querySelector<HTMLElement>(".cm-content");
-      const content = cm?.innerText || "";
-      const wrapped = `<smartnote:note path="${rawPath}" name="${filename}">\n${content}\n</smartnote:note>`;
-      await navigator.clipboard.writeText(wrapped);
-      setCopiedMcp(true);
-      setTimeout(() => setCopiedMcp(false), 1400);
+      await ingestRawAsync(rawPath, notePath, false);
     } catch {
-      /* silent */
+      /* silent — toast subscriber emits errors */
     }
+  }
+
+  // Enrich (LLM): opens the IngestDialog where the user can scope
+  // a full re-classification (full reset + AI tag generation +
+  // segment summary). Distinct entry because LLM costs $$ and
+  // usually wants a confirmation surface.
+  function handleEnrich() {
+    setShowIngest(true);
   }
 
   // Trigger the editor's native ⌘S save by synthesizing a keydown.
@@ -611,21 +615,21 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
 
           <button
             type="button"
-            onClick={() => setShowIngest(true)}
+            onClick={handleEmbedding}
             className="proto-note-v3-btn"
-            title="Re-ingest this note"
+            disabled={ingestBusy}
+            title="Re-chunk + re-embed this note (no LLM, cheap to run)"
           >
-            <RotateCw size={12} strokeWidth={2} /> Re-ingest
+            <Database size={12} strokeWidth={2} /> Embedding
           </button>
 
           <button
             type="button"
-            onClick={handleCopyAsMcp}
+            onClick={handleEnrich}
             className="proto-note-v3-btn"
-            title="Copy note as MCP-context for Claude / Cursor"
+            title="Run AI classifier + tag generation + segment summaries (LLM)"
           >
-            <Copy size={12} strokeWidth={2} />
-            {copiedMcp ? "Copied" : "Copy as MCP"}
+            <Sparkles size={12} strokeWidth={2} /> Enrich
           </button>
 
           <button
