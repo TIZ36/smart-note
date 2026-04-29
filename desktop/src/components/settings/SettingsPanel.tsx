@@ -220,6 +220,11 @@ export function SettingsPanel() {
                 key disables sync regardless of this toggle.
               </p>
             </Field>
+
+            {/* Auto-enrich — directly hits the cloud's enrich provider
+                config so it actually takes effect. Default is OFF
+                (cloud schema's default) — LLM cost should be opt-in. */}
+            <AutoEnrichToggle />
           </section>
 
           <div className="proto-form-divider" />
@@ -228,14 +233,15 @@ export function SettingsPanel() {
             <h2 className="proto-form-section-title">Embedding</h2>
             <Field label="Mode">
               <select value={settings.embedding_mode} onChange={(e) => update("embedding_mode", e.target.value)} className="proto-form-input">
-                <option value="mock">mock — hash-based, no network (dev only)</option>
+                <option value="sn-cloud">sn-cloud — embed via your SmartNote Cloud</option>
                 <option value="local">local — Docker embedding service (:8009)</option>
-                <option value="api">api — OpenAI-compatible endpoint</option>
+                <option value="mock">mock — hash-based, no network (dev only)</option>
               </select>
               <p className="proto-form-hint">
-                {settings.embedding_mode === "mock" && "No real embeddings — search uses keyword matching only."}
-                {settings.embedding_mode === "local" && "Requires Docker. Run ./restart-docker.sh to start the service."}
-                {settings.embedding_mode === "api" && "Uses the provider API below for both embedding and chat."}
+                {settings.embedding_mode === "sn-cloud" && "Default. Vectors are computed by your SmartNote Cloud's embedding provider — no per-device GPU needed."}
+                {settings.embedding_mode === "local" && "Local Docker container at :8009. Useful for offline / air-gapped setups. Run ./restart-docker.sh to start it."}
+                {settings.embedding_mode === "mock" && "No real embeddings — fallback to keyword-only search. Dev / no-cloud testing only."}
+                {(settings.embedding_mode === "api" || !["sn-cloud","local","mock"].includes(settings.embedding_mode)) && "Legacy 'api' mode — use 'sn-cloud' instead. Will be migrated automatically."}
               </p>
             </Field>
           </section>
@@ -495,5 +501,89 @@ function OcrSection() {
         </p>
       )}
     </section>
+  );
+}
+
+/* Auto-enrich toggle — reads + writes the cloud's enrich provider
+ * config (auto_enrich_on_ingest field). Pure UI affordance over the
+ * existing /v1/enrich/provider GET/PUT API. Default OFF: LLM cost
+ * should never be opt-OUT — explicit opt-in only. */
+function AutoEnrichToggle() {
+  const [loading, setLoading] = useState(true);
+  const [enabled, setEnabled] = useState(false);
+  const [savedFlash, setSavedFlash] = useState(false);
+  const [available, setAvailable] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    import("@/lib/cloud-api").then(async (m) => {
+      try {
+        if (!(await m.isCloudConfigured())) {
+          if (alive) { setAvailable(false); setLoading(false); }
+          return;
+        }
+        const cfg = await m.fetchEnrichProvider();
+        if (!alive) return;
+        setEnabled(!!cfg.auto_enrich_on_ingest);
+      } catch {
+        if (alive) setAvailable(false);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    });
+    return () => { alive = false; };
+  }, []);
+
+  async function toggle(next: boolean) {
+    setEnabled(next);  // optimistic
+    try {
+      const m = await import("@/lib/cloud-api");
+      await m.saveEnrichProvider({ auto_enrich_on_ingest: next });
+      setSavedFlash(true);
+      setTimeout(() => setSavedFlash(false), 1400);
+    } catch (e) {
+      setEnabled(!next);  // revert
+      window.alert(`Save failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="proto-form-field">
+        <p className="proto-form-hint">Loading auto-enrich state…</p>
+      </div>
+    );
+  }
+  if (!available) {
+    return (
+      <div className="proto-form-field">
+        <label className="proto-form-field-label">Auto-enrich on save</label>
+        <p className="proto-form-hint">
+          Configure cloud URL + API key above first — auto-enrich is a
+          cloud-side setting.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="proto-form-field">
+      <label className="proto-form-field-label">Auto-enrich on save</label>
+      <label className="proto-form-toggle-label">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => toggle(e.target.checked)}
+        />
+        <span>
+          Re-enrich (LLM classify + tag generation) every time a note is saved
+          {savedFlash && <span style={{ color: "var(--color-success)", marginLeft: 8 }}>✓ saved</span>}
+        </span>
+      </label>
+      <p className="proto-form-hint">
+        <strong style={{ color: "var(--color-warning)" }}>Off by default.</strong> Each
+        auto-enrich run consumes LLM tokens. Leave off and trigger Enrich
+        manually from the KP page when you want fresh AI tags.
+      </p>
+    </div>
   );
 }

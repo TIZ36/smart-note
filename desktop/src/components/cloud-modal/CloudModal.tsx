@@ -20,7 +20,6 @@ const REFRESH_MS = 6_000;
 export function CloudModal({ open, onClose }: Props) {
   const [overview, setOverview] = useState<cloudApi.ConsoleOverview | null>(null);
   const [devices, setDevices] = useState<cloudApi.Device[] | null>(null);
-  const [autoEnrich, setAutoEnrich] = useState(true);
   const [actionState, setActionState] = useState<Record<string, "idle" | "running" | "ok" | "err">>({});
   const [mcpUrl, setMcpUrl] = useState<string>("—");
   const [apiKey, setApiKey] = useState<string>("");
@@ -269,23 +268,9 @@ export function CloudModal({ open, onClose }: Props) {
             </div>
           </div>
 
-          {/* Auto-enrich toggle */}
-          <div className="proto-modal-section">
-            <div className="proto-modal-section-title">Auto-enrich</div>
-            <div className="proto-modal-line">
-              <button
-                type="button"
-                className="proto-toggle"
-                aria-checked={autoEnrich}
-                role="switch"
-                onClick={() => setAutoEnrich((v) => !v)}
-              />
-              <span>Re-enrich on note edit · classifier + AI tags</span>
-            </div>
-            <div className="proto-modal-line-help">
-              Runs in the background after every note save. Toggle off to throttle costs.
-            </div>
-          </div>
+          {/* Auto-enrich moved to Settings → SmartNote Cloud where it
+              actually persists (was previously a pure-UI toggle that
+              didn't touch the cloud's auto_enrich_on_ingest setting). */}
 
           {/* MCP endpoint — drop-in JSON config per AI CLI. Pre-fills
               URL + API key (key shown masked, copies as plaintext). */}

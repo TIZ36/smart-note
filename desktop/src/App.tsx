@@ -13,7 +13,7 @@ import { usePrefs } from "./hooks/usePrefs";
 import { useTags } from "./hooks/useTags";
 import { useTheme } from "./hooks/useTheme";
 import * as cloudApi from "./lib/cloud-api";
-import { onIngestStatus, onWikiIngestStatus, getIngestStatus } from "./lib/electron";
+import { onIngestStatus, onWikiIngestStatus, getIngestStatus, onWsEvent } from "./lib/electron";
 import type { IngestEvent } from "./lib/electron";
 import type { ChannelId } from "./lib/types";
 
@@ -202,6 +202,33 @@ export default function App() {
         setWikiIngestSteps(initialWikiSteps().map((s) => ({ ...s, status: "active", detail: "Recovering..." })));
       }
     }).catch(() => {});
+  }, []);
+
+  // Cloud-pushed events (enrich_done / memory_proposed) → toast.
+  // Closes "wiki_enrich 完成了用户没感知" feedback. agent_active is
+  // handled by useAgentActivity → BottomBar; we DON'T toast that one
+  // (would spam every time an agent calls a tool).
+  useEffect(() => {
+    const off = onWsEvent((e) => {
+      if (e.type === "enrich_done") {
+        const ev = e as { document_name?: string; segments_count?: number; tokens_total?: number };
+        const docName = ev.document_name || "a document";
+        const tokens = ev.tokens_total ? ` · ${(ev.tokens_total).toLocaleString()} tokens` : "";
+        setToast({
+          message: `Enriched ${docName} — ${ev.segments_count || 0} segments${tokens}`,
+          type: "success",
+        });
+        // Trigger Library / RAG re-fetch via build version bump.
+        setBuildVersion((v) => v + 1);
+      } else if (e.type === "memory_proposed") {
+        const ev = e as { agent?: string; kind?: string; preview?: string };
+        setToast({
+          message: `${ev.agent || "Agent"} proposed a ${ev.kind || "memory"}: "${(ev.preview || "").slice(0, 80)}…"`,
+          type: "info",
+        });
+      }
+    });
+    return off;
   }, []);
 
   const handleIngestComplete = useCallback(() => {

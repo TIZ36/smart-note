@@ -106,6 +106,10 @@ async def _write_segments_done(
     prompt_tokens=0, completion_tokens=0, total_tokens=0,
 ):
     from app.services.kb.entity_graph import upsert_entities_for_segments
+    from app.common import ws_registry
+    import asyncio as _asyncio
+    from datetime import datetime, timezone
+
     async with conn.transaction():
         await conn.execute("DELETE FROM tag_segments WHERE document_id=$1", doc_uuid)
         # Re-ingesting clears prior entity_links for this doc's segments
@@ -142,7 +146,7 @@ async def _write_segments_done(
             await upsert_entities_for_segments(conn, str(ws_uuid), segments)
         except Exception as e:
             log.warning("entity graph upsert failed for doc %s: %s", doc_uuid, e)
-        return await conn.fetchrow(
+        row = await conn.fetchrow(
             """
             UPDATE enrich_jobs
             SET status='done', executor=$2, finished_at=now(),
@@ -157,6 +161,29 @@ async def _write_segments_done(
                 "total_tokens": total_tokens,
             }),
         )
+
+    # Broadcast enrich_done so any open desktop renders a real-time
+    # banner/toast — addresses "wiki_enrich 完成了但是用户在 wiki 界面
+    # 没感受到" feedback. Fire-and-forget, never raises.
+    try:
+        # Lookup document name for nicer UI rendering.
+        name_row = await conn.fetchrow(
+            "SELECT name FROM documents WHERE id=$1", doc_uuid
+        )
+        payload = {
+            "type": "enrich_done",
+            "document_id": str(doc_uuid),
+            "document_name": name_row["name"] if name_row else None,
+            "segments_count": len(segments),
+            "tokens_total": total_tokens,
+            "executor": executor,
+            "at": datetime.now(timezone.utc).isoformat(),
+        }
+        _asyncio.create_task(ws_registry.broadcast(str(ws_uuid), payload))
+    except Exception:
+        pass
+
+    return row
 
 
 @router.post(

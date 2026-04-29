@@ -731,6 +731,29 @@ async def propose_memory(
     if r.status_code != 200:
         return _fail(r, "propose_memory")
     data = r.json()
+
+    # Broadcast memory_proposed so the desktop can flash a banner /
+    # increment the rail's pending-memories badge in real time.
+    try:
+        from app.security import verify_jwt as _vj
+        from app.common import ws_registry
+        import asyncio as _asyncio
+        from datetime import datetime, timezone
+        jwt = await _jwt_for(_api_key_ctx.get())
+        claims = _vj(jwt)
+        if claims:
+            payload = {
+                "type": "memory_proposed",
+                "proposal_id": data.get("id"),
+                "agent": _agent_name_ctx.get() or "AI agent",
+                "kind": kind,
+                "preview": (content or "")[:120],
+                "at": datetime.now(timezone.utc).isoformat(),
+            }
+            _asyncio.create_task(ws_registry.broadcast(claims.workspace_id, payload))
+    except Exception:
+        pass
+
     lines = [f"Proposed {kind} memory id={data['id']} (status=draft)"]
     similar = data.get("similar_existing") or []
     if similar:
