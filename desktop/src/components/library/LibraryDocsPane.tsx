@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Upload, Trash2 } from "lucide-react";
 import * as cloudApi from "@/lib/cloud-api";
 import type { ChannelId } from "@/lib/types";
 
@@ -26,23 +27,71 @@ export function LibraryDocsPane({ onOpenSource }: Props) {
   const [mode, setMode] = useState<Mode>("ai");
   const [activeId, setActiveId] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    let alive = true;
-    async function load() {
+  async function reload() {
+    try {
+      if (!(await cloudApi.isCloudConfigured())) {
+        setDocs([]);
+        return;
+      }
+      const res = await cloudApi.listDocuments();
+      setDocs(res.documents);
+    } catch {
+      setDocs([]);
+    }
+  }
+
+  useEffect(() => { reload(); }, []);
+
+  // Import: pick one or more text/markdown files, upload each as a
+  // CloudDocument with smartnote_type=wiki_topic so it lands in the
+  // wiki tree (and the chapter splitter applies tag_meta on ingest).
+  async function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    setBusy("import");
+    let ok = 0;
+    let lastId: string | null = null;
+    for (const f of files) {
       try {
-        if (!(await cloudApi.isCloudConfigured())) {
-          if (alive) setDocs([]);
-          return;
-        }
-        const res = await cloudApi.listDocuments();
-        if (alive) setDocs(res.documents);
+        const content = await f.text();
+        const created = await cloudApi.createDocument({
+          name: f.name.replace(/\.(md|txt)$/i, ""),
+          content,
+          kind: "markdown",
+          metadata: { smartnote_type: "wiki_topic", imported_at: new Date().toISOString() },
+        });
+        lastId = created.id;
+        ok++;
       } catch {
-        if (alive) setDocs([]);
+        /* per-file tolerant */
       }
     }
-    load();
-  }, []);
+    setBusy(null);
+    if (fileRef.current) fileRef.current.value = "";
+    await reload();
+    if (lastId) setActiveId(lastId);
+    if (ok < files.length) {
+      window.alert(`Imported ${ok}/${files.length}. ${files.length - ok} failed (cloud unreachable?).`);
+    }
+  }
+
+  async function handleDelete() {
+    if (!active) return;
+    if (!window.confirm(`Delete "${active.name}"? Chunks + memories tied to this document are also dropped.`)) return;
+    setBusy("delete");
+    try {
+      await cloudApi.deleteDocument(active.id);
+      setActiveId(null);
+      await reload();
+    } catch (e) {
+      window.alert(`Delete failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(null);
+    }
+  }
 
   const filtered = useMemo(() => {
     if (!docs) return [];
@@ -97,6 +146,30 @@ export function LibraryDocsPane({ onOpenSource }: Props) {
               Files
             </button>
           </span>
+        </div>
+        {/* Import — pick one or more .md / .txt files and upload as
+            wiki_topic documents. Chapter splitter applies tag-meta
+            on ingest so they're query-ready immediately. */}
+        <div style={{ padding: "6px 10px", borderBottom: "1px solid var(--color-border)" }}>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".md,.txt,.markdown"
+            multiple
+            style={{ display: "none" }}
+            onChange={handleImport}
+          />
+          <button
+            type="button"
+            className="proto-library-btn"
+            disabled={busy === "import"}
+            onClick={() => fileRef.current?.click()}
+            style={{ width: "100%", justifyContent: "center" }}
+            title="Pick markdown / text files to import as wiki documents"
+          >
+            <Upload size={11} strokeWidth={2} />
+            {busy === "import" ? "Uploading…" : "Import files"}
+          </button>
         </div>
         <div className="proto-library-tree-scroll">
           {docs === null && (
@@ -155,6 +228,17 @@ export function LibraryDocsPane({ onOpenSource }: Props) {
                 </button>
                 <button type="button" className="proto-library-btn">Re-enrich</button>
                 <button type="button" className="proto-library-btn">Copy as MCP</button>
+                <button
+                  type="button"
+                  className="proto-library-btn"
+                  disabled={busy === "delete"}
+                  onClick={handleDelete}
+                  title={`Delete "${active.name}" from the workspace`}
+                  style={{ color: "var(--color-danger)", borderColor: "color-mix(in oklab, var(--color-danger) 30%, var(--color-border))" }}
+                >
+                  <Trash2 size={11} strokeWidth={2} />
+                  {busy === "delete" ? "Deleting…" : "Delete"}
+                </button>
               </div>
             </div>
             <div className="proto-library-content-scroll">

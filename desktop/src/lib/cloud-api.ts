@@ -120,6 +120,21 @@ export const listDocuments = (params?: { since?: string; smartnote_type?: string
   return call<{ documents: CloudDocument[] }>("GET", `/v1/documents${qs ? "?" + qs : ""}`);
 };
 
+export type CloudDocumentFull = CloudDocument & { content: string };
+
+export const getDocument = (id: string) =>
+  call<CloudDocumentFull>("GET", `/v1/documents/${id}`);
+
+export const deleteDocument = (id: string) =>
+  call<{ deleted: boolean; id: string }>("DELETE", `/v1/documents/${id}`);
+
+export const createDocument = (req: {
+  name: string;
+  content: string;
+  kind?: string;
+  metadata?: Record<string, unknown>;
+}) => call<CloudDocument>("POST", "/v1/documents", req);
+
 // ── Endpoints ──────────────────────────────────────────────────────
 
 export const fetchOverview = () => call<ConsoleOverview>("GET", "/v1/console/overview");

@@ -53,14 +53,23 @@ export function WikiSourceViewer({ filePath }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [loading, setLoading] = useState(true);
+  const [docName, setDocName] = useState<string | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
 
     setLoading(true);
-    readFileFull(filePath).then((result) => {
-      const content = result.output || "";
+    // Two source paths: cloud document (UUID v4) or local filesystem.
+    // Cloud docs come from Library Docs's "View raw" button which
+    // routes via channel `source:<doc-uuid>`. Local file paths come
+    // from the legacy WikiSources picker.
+    const isCloudId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(filePath);
+    const fetcher: Promise<{ content: string; name?: string }> = isCloudId
+      ? import("@/lib/cloud-api").then((m) => m.getDocument(filePath)).then((d) => ({ content: d.content, name: d.name }))
+      : readFileFull(filePath).then((result) => ({ content: result.output || "" }));
 
+    fetcher.then(({ content, name }) => {
+      if (name) setDocName(name);
       if (viewRef.current) {
         viewRef.current.destroy();
       }
@@ -96,7 +105,7 @@ export function WikiSourceViewer({ filePath }: Props) {
     };
   }, [filePath]);
 
-  const fileName = filePath.split("/").pop() || filePath;
+  const fileName = docName || filePath.split("/").pop() || filePath;
 
   return (
     <div className="proto-note-page">

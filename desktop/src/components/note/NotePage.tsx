@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  FolderOpen, Shuffle, ArrowDownToLine, Save,
+  FolderOpen, Shuffle, ArrowDownToLine, Save, CloudUpload,
   Plus, Minus,
 } from "lucide-react";
+import * as cloudApi from "@/lib/cloud-api";
 import { NoteEditor, type LineMeta } from "../editor/NoteEditor";
 import { IngestDialog } from "./IngestDialog";
 import { PackBadge } from "./PackBadge";
@@ -52,6 +53,7 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
   const [showQuickSearch, setShowQuickSearch] = useState(false);
   // v3: views + AI tags live inline as a chip strip below the
   // breadcrumb (no foldable sidebar). One coherent surface.
+  const [syncState, setSyncState] = useState<"idle" | "syncing" | "ok" | "err">("idle");
 
   // ── View state ──
   // `views` is the list of persisted custom lenses for the current file.
@@ -531,6 +533,36 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
     return () => window.removeEventListener("keydown", onKey);
   }, [rawPath]);
 
+  // Sync this local note to cloud as a CloudDocument so it appears
+  // on the KP (RAG) surface for embedding / enrich processing.
+  // Uses rawPath basename as the document name; cloud upserts by
+  // name so re-pushes update content rather than duplicating.
+  async function handleSyncToKp() {
+    if (!rawPath) return;
+    setSyncState("syncing");
+    try {
+      const cm = document.querySelector<HTMLElement>(".cm-content");
+      const content = cm?.innerText ?? "";
+      const filename = rawPath.split("/").pop() || "note.md";
+      await cloudApi.createDocument({
+        name: filename,
+        content,
+        kind: "markdown",
+        metadata: {
+          smartnote_type: "note",
+          local_path: rawPath,
+          synced_at: new Date().toISOString(),
+        },
+      });
+      setSyncState("ok");
+      setTimeout(() => setSyncState("idle"), 1800);
+    } catch (e) {
+      setSyncState("err");
+      window.alert(`Sync failed: ${e instanceof Error ? e.message : String(e)}`);
+      setTimeout(() => setSyncState("idle"), 2400);
+    }
+  }
+
   // Trigger the editor's native ⌘S save by synthesizing a keydown.
   // CodeMirror's keymap picks it up so save flows through the same
   // path as user-typed ⌘S (handleSave callback below).
@@ -628,6 +660,19 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
             )}
           </AnimatePresence>
 
+          <button
+            type="button"
+            onClick={handleSyncToKp}
+            className="proto-note-v3-btn"
+            disabled={syncState === "syncing"}
+            title="Push this note to SmartNote Cloud so it appears in KP (RAG) for embedding / enrich processing"
+          >
+            <CloudUpload size={12} strokeWidth={2} />
+            {syncState === "syncing" ? "Syncing…"
+              : syncState === "ok"   ? "Synced ✓"
+              : syncState === "err"  ? "Sync failed"
+              : "Sync to KP"}
+          </button>
           <button
             type="button"
             onClick={handleSaveClick}
