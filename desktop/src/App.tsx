@@ -1,27 +1,27 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { AnimatePresence } from "framer-motion";
-import { Sidebar } from "./components/layout/Sidebar";
+import { AtelierShell } from "./components/atelier/AtelierShell";
+import { StreamHome } from "./components/atelier/StreamHome";
+import { LibraryShell } from "./components/library/LibraryShell";
 import { NihoParticles } from "./components/layout/NihoParticles";
-import { SearchPage } from "./components/search/SearchPage";
 import { SettingsPanel } from "./components/settings/SettingsPanel";
-import { CloudConsolePage } from "./components/cloud-console/CloudConsolePage";
-import { InsightsPanel } from "./components/dashboard/InsightsPanel";
-import { SkillsPanel } from "./components/skills/SkillsPanel";
-import { WikiSourcesPanel } from "./components/wiki/WikiSourcesPanel";
 import { Toast } from "./components/layout/Toast";
 import { NotePage } from "./components/note/NotePage";
-import { SpecialKnowledgePanel } from "./components/special/SpecialKnowledgePanel";
 import { WikiSourceViewer } from "./components/wiki/WikiSourceViewer";
-import { SmartTablePanel } from "./components/smart-table/SmartTablePanel";
-import { SmartTablesHome } from "./components/smart-table/SmartTablesHome";
 import { usePrefs } from "./hooks/usePrefs";
-import { useHealth } from "./hooks/useHealth";
-import { useSearchState } from "./hooks/useSearchState";
 import { useTags } from "./hooks/useTags";
 import { useTheme } from "./hooks/useTheme";
+import * as cloudApi from "./lib/cloud-api";
 import { onIngestStatus, onWikiIngestStatus, getIngestStatus } from "./lib/electron";
 import type { IngestEvent } from "./lib/electron";
 import type { ChannelId } from "./lib/types";
+
+/* App — v3 stream-centric router.
+ *
+ * Closed channel union (lib/types.ts): stream | note | library:docs |
+ * library:memories | library:skills | settings | source:<path>.
+ * Cloud is a modal overlay, not a channel.
+ */
 
 export type IngestStep = {
   key: string;
@@ -31,7 +31,6 @@ export type IngestStep = {
   current: number;
   total: number;
   elapsedMs: number;
-  // Attribution ('mcp:delegate' | 'provider:<model>' | undefined)
   actor?: string;
   kind?: string;
 };
@@ -81,26 +80,25 @@ function initialWikiSteps(): IngestStep[] {
   }));
 }
 
+const PROPOSAL_POLL_MS = 30_000;
+
 export default function App() {
-  const [activeChannel, setActiveChannel] = useState<ChannelId>("search");
+  const [activeChannel, setActiveChannel] = useState<ChannelId>("stream");
   const [toast, setToast] = useState<{ message: string; type: "info" | "success" | "error" } | null>(null);
   const [ingestBusy, setIngestBusy] = useState(false);
   const [ingestSteps, setIngestSteps] = useState<IngestStep[]>([]);
   const [ingestResult, setIngestResult] = useState<{ message: string; type: "success" | "error" } | null>(null);
-  // Bumped on ingest completion AND build activation — downstream views
-  // (tag segments, etc.) key their re-fetch on this.
   const [buildVersion, setBuildVersion] = useState(0);
 
-  // Wiki ingest — separate from note ingest
   const [wikiIngestBusy, setWikiIngestBusy] = useState(false);
   const [wikiIngestSteps, setWikiIngestSteps] = useState<IngestStep[]>([]);
   const [wikiIngestResult, setWikiIngestResult] = useState<{ message: string; type: "success" | "error" } | null>(null);
-  const [wikiTopicCount, setWikiTopicCount] = useState(0);
+
+  // Pending-memory count drives the rail badge + Library tab "pending" accent.
+  const [pendingMemoryCount, setPendingMemoryCount] = useState(0);
 
   const prefs = usePrefs();
-  const health = useHealth();
   const { tags, refreshTags } = useTags();
-  const searchState = useSearchState();
   const { mode: themeMode } = useTheme();
   const activeChannelRef = useRef(activeChannel);
   activeChannelRef.current = activeChannel;
@@ -109,13 +107,35 @@ export default function App() {
     refreshTags();
   }, [refreshTags]);
 
+  // Poll pending memory proposals every 30s. Errors are silent — the
+  // rail badge is decorative, not critical, so a momentary cloud blip
+  // shouldn't error-flash the UI.
+  useEffect(() => {
+    let alive = true;
+    async function load() {
+      try {
+        if (!(await cloudApi.isCloudConfigured())) {
+          if (alive) setPendingMemoryCount(0);
+          return;
+        }
+        const res = await cloudApi.listProposals(50);
+        if (alive) setPendingMemoryCount(res.proposals.length);
+      } catch {
+        /* silent */
+      }
+    }
+    load();
+    const id = setInterval(load, PROPOSAL_POLL_MS);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+
   useEffect(() => {
     const unlisten = onIngestStatus((event: IngestEvent) => {
       if (event.status === "started") {
         setIngestBusy(true);
         setIngestResult(null);
         setIngestSteps(initialSteps());
-        if (activeChannelRef.current !== "raw-input") setToast({ message: event.message, type: "info" });
+        setToast({ message: event.message, type: "info" });
       } else if (event.status === "progress") {
         setIngestSteps((prev) => prev.map((s) => {
           if (s.key === event.step) return { ...s, status: "active", detail: event.message, current: event.current, total: event.total, elapsedMs: event.elapsed_ms, actor: event.actor, kind: event.kind };
@@ -124,8 +144,6 @@ export default function App() {
           if (thisIdx < eventIdx && s.status !== "done") return { ...s, status: "done" };
           return s;
         }));
-        // MCP-delegated enrich fires after initial ingest done — make sure
-        // spinner is visible and tag views refresh when it completes.
         if (event.actor === "mcp:delegate") setIngestBusy(true);
       } else if (event.status === "completed") {
         setIngestBusy(false);
@@ -142,7 +160,6 @@ export default function App() {
     return () => { unlisten.then((fn) => fn()); };
   }, []);
 
-  // Wiki ingest listener — isolated from note ingest
   useEffect(() => {
     const unlisten = onWikiIngestStatus((event: IngestEvent) => {
       if (event.status === "started") {
@@ -173,7 +190,6 @@ export default function App() {
     return () => { unlisten.then((fn) => fn()); };
   }, []);
 
-  // Recover ingest state after client reload
   useEffect(() => {
     getIngestStatus().then(({ noteIngestRunning: note, wikiIngestRunning: wiki }) => {
       if (note) {
@@ -192,28 +208,11 @@ export default function App() {
     setBuildVersion((v) => v + 1);
   }, [refreshTags]);
 
-  function handleWikiTopicsChanged(count: number) {
-    setWikiTopicCount(count);
-  }
-
-  function renderMainPanel() {
+  function renderMainPanel(ctx?: { openPalette: () => void; openCloud: () => void }) {
+    if (activeChannel === "stream") {
+      return <StreamHome onSelect={setActiveChannel} onOpenPalette={ctx?.openPalette} />;
+    }
     if (activeChannel === "settings") return <SettingsPanel />;
-    if (activeChannel === "cloud-sync") return <CloudConsolePage />;
-    if (activeChannel === "insights" || activeChannel === "dashboard" || activeChannel === "meta-memory") {
-      return <InsightsPanel gatewayOnline={health.gatewayOnline} embeddingMode={health.embeddingMode} />;
-    }
-    if (activeChannel === "skills") return <SkillsPanel />;
-    if (activeChannel === "source-list") {
-      return <WikiSourcesPanel onSelectSource={(path) => setActiveChannel(`source:${path}` as ChannelId)} />;
-    }
-    if (activeChannel === "search") return <SearchPage searchState={searchState} tags={tags} />;
-    if (activeChannel === "smart-table") {
-      return <SmartTablesHome onOpenTable={(name) => setActiveChannel(`smart-table:${name}` as ChannelId)} />;
-    }
-    if (activeChannel.startsWith("smart-table:")) {
-      const tableName = activeChannel.slice("smart-table:".length);
-      return <SmartTablePanel tableName={tableName} onDeleted={() => setActiveChannel("smart-table")} />;
-    }
     if (activeChannel === "note") {
       return (
         <NotePage
@@ -231,29 +230,49 @@ export default function App() {
         />
       );
     }
-    if (activeChannel === "special-knowledge") return <SpecialKnowledgePanel ingestBusy={wikiIngestBusy} ingestSteps={wikiIngestSteps} ingestResult={wikiIngestResult} onTopicsChanged={handleWikiTopicsChanged} onSelectSource={(path) => setActiveChannel(`source:${path}` as ChannelId)} />;
+    if (activeChannel === "library:docs"
+        || activeChannel === "library:memories"
+        || activeChannel === "library:skills") {
+      const sub = activeChannel.slice("library:".length) as "docs" | "memories" | "skills";
+      return (
+        <LibraryShell
+          active={sub}
+          onSelect={setActiveChannel}
+          pendingMemoryCount={pendingMemoryCount}
+        />
+      );
+    }
     if (activeChannel.startsWith("source:")) {
       const filePath = activeChannel.slice("source:".length);
       return <WikiSourceViewer filePath={filePath} />;
     }
-    return <div className="flex items-center justify-center h-full text-text-muted text-[13px]">Select a page</div>;
+    return (
+      <div className="flex items-center justify-center h-full text-text-muted text-[13px]">
+        Select a page
+      </div>
+    );
   }
 
+  // Quiet warning so wiki ingest progress doesn't get TS-flagged as
+  // unused; downstream Library Docs pane in Phase 3 will consume them.
+  void wikiIngestBusy;
+  void wikiIngestSteps;
+  void wikiIngestResult;
+
   return (
-    <div className="proto-app h-screen">
+    <>
       {themeMode === "niho" && <NihoParticles />}
-      <Sidebar
+      <AtelierShell
         activeChannel={activeChannel}
         onSelect={setActiveChannel}
         ingestBusy={ingestBusy}
-        wikiTopicCount={wikiTopicCount}
-      />
-      <main className="flex-1 min-w-0 overflow-hidden bg-[var(--color-bg-primary)]">
-        {renderMainPanel()}
-      </main>
+        pendingMemoryCount={pendingMemoryCount}
+      >
+        {(ctx) => renderMainPanel(ctx)}
+      </AtelierShell>
       <AnimatePresence>
         {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
       </AnimatePresence>
-    </div>
+    </>
   );
 }

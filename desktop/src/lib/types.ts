@@ -142,8 +142,23 @@ export type GraphData = {
 
 export type ActiveServer = "kb" | "settings";
 
+/* v3 stream-centric routes. Closed union so the router catches typos.
+ *
+ *   stream             default home — RAG召回 + 历史 + agent行为 (Stream surface)
+ *   note               full-canvas markdown editor
+ *   library:docs       Library tab — wiki documents (was "special-knowledge")
+ *   library:memories   Library tab — agent-proposed + daily-digest memories
+ *   library:skills     Library tab — claude/cursor/opencode skill files + workflows
+ *   settings           full-canvas settings (200px sub-nav inside)
+ *   source:<path>      raw markdown viewer for a single source file
+ *
+ * Cloud lives as a center modal toggle on AtelierShell, not a channel.
+ */
 export type ChannelId =
-  | "search"
-  | "raw-input"
+  | "stream"
+  | "note"
+  | "library:docs"
+  | "library:memories"
+  | "library:skills"
   | "settings"
-  | string; // dimension view channels like "todo", "requirements", "project-0"
+  | `source:${string}`;

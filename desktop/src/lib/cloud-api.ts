@@ -86,6 +86,38 @@ export type EnrichJob = {
   executor: string | null; attempts: number;
   result: Record<string, unknown> | null; error: string | null;
   created_at: string; dispatched_at: string | null; finished_at: string | null;
+  // Optional convenience fields. The minimal /v1/enrich/jobs response
+  // omits them; richer feeds (e.g. UI-side stream) populate when
+  // available. Kept optional for forward-compat.
+  document_name?: string | null;
+  smartnote_type?: string | null;
+  progress?: {
+    tokens?: { total?: number; in?: number; out?: number };
+    classify?: { total: number; done: number };
+    phase?: string;
+  } | null;
+};
+
+// ── Documents ─────────────────────────────────────────────────────
+
+export type CloudDocument = {
+  id: string;
+  workspace_id: string;
+  name: string;
+  kind: string;
+  byte_size: number;
+  ingested_at: string | null;
+  created_at: string;
+  updated_at: string | null;
+  metadata: Record<string, unknown> | null;
+};
+
+export const listDocuments = (params?: { since?: string; smartnote_type?: string }) => {
+  const q = new URLSearchParams();
+  if (params?.since) q.set("since", params.since);
+  if (params?.smartnote_type) q.set("smartnote_type", params.smartnote_type);
+  const qs = q.toString();
+  return call<{ documents: CloudDocument[] }>("GET", `/v1/documents${qs ? "?" + qs : ""}`);
 };
 
 // ── Endpoints ──────────────────────────────────────────────────────

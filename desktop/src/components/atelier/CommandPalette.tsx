@@ -87,7 +87,7 @@ export function CommandPalette({ open, onClose, onSelect }: Props) {
           const path = String(md.raw_path || md.path || "");
           if (kind === "note") onSelect("note");
           else if (path) onSelect(`source:${path}` as ChannelId);
-          else onSelect("special-knowledge");
+          else onSelect("library:docs");
           onClose();
         },
       });
@@ -100,7 +100,7 @@ export function CommandPalette({ open, onClose, onSelect }: Props) {
         title: p.content.slice(0, 80) || "Memory proposal",
         snippet: `${p.kind} · proposed by ${p.author_agent} · conf ${p.confidence.toFixed(2)}`,
         onActivate: () => {
-          onSelect("cloud-sync");  // memories live in cloud console
+          onSelect("library:memories");  // memories live in cloud console
           onClose();
         },
       });
@@ -111,7 +111,7 @@ export function CommandPalette({ open, onClose, onSelect }: Props) {
         ...a,
         onActivate: () => {
           if (a.id === "act:note") onSelect("note");
-          else if (a.id === "act:wiki") onSelect("special-knowledge");
+          else if (a.id === "act:wiki") onSelect("library:docs");
           else if (a.id === "act:settings") onSelect("settings");
           onClose();
         },

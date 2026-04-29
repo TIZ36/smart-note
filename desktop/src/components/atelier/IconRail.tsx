@@ -1,51 +1,60 @@
-import {
-  FileEdit, BookOpen, Search, Layers,
-  Loader2, Table, Activity, Cloud,
-} from "lucide-react";
+import { FileEdit, BookOpen, Cloud, Settings, Loader2 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { ChannelId } from "@/lib/types";
 
-/* 48px left icon rail. Six icons in two clusters separated by a
- * spacer:
+/* 48px left rail · v3 stream-centric.
  *
- *   Top cluster (canvas-content):
- *     Note · Wiki · Smart tables · Search (⌘K)
+ * Four buttons + a top-anchored SN logo that returns to Stream:
  *
- *   Bottom cluster (workspace-level):
- *     Workspace sheet · Settings
+ *   SN logo            ← onClick = setActiveChannel("stream")
+ *   ─────              ← Note (full-canvas markdown editor)
+ *   Library            ← Docs · Memories · Skills (3 sub-tabs)
+ *   <spacer>
+ *   Cloud              ← opens center modal (NOT a channel)
+ *   Settings           ← full-canvas settings
  *
- * Hover/keyboard focus surfaces the label via `title=` (browser
- * tooltip). Search opens the ⌘K palette directly — no separate
- * search page on the rail; the dedicated Search route is reachable
- * via the palette's "see all results" affordance (P3+).
+ * Stream is "home" — there is no rail icon for it; the logo doubles
+ * as a return affordance. Cloud doesn't change the channel either —
+ * it overlays a modal on whatever surface is showing.
  */
 
 type Props = {
   activeChannel: ChannelId;
   onSelect: (channel: ChannelId) => void;
+  onOpenCloud: () => void;
   ingestBusy: boolean;
-  wikiTopicCount: number;
-  onOpenPalette: () => void;
-  onOpenWorkspace: () => void;
+  /** Pending memory count (proposals awaiting review). 0 hides the badge. */
+  pendingMemoryCount: number;
 };
 
 export function IconRail({
-  activeChannel, onSelect, ingestBusy, wikiTopicCount,
-  onOpenPalette, onOpenWorkspace,
+  activeChannel,
+  onSelect,
+  onOpenCloud,
+  ingestBusy,
+  pendingMemoryCount,
 }: Props) {
+  const inLibrary = activeChannel.startsWith("library:") || activeChannel.startsWith("source:");
+
   return (
     <aside className="proto-atelier-rail" aria-label="Primary navigation">
-      <div className="proto-atelier-rail-logo" style={{ WebkitAppRegion: "drag" } as React.CSSProperties}>
-        <span className="proto-logo-s">S</span><span className="proto-logo-n">N</span>
-      </div>
-
-      <RailButton
-        active={activeChannel === "stream"}
+      <div
+        className="proto-atelier-rail-logo"
+        style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
         onClick={() => onSelect("stream")}
-        title="Stream — recent activity"
+        title="SmartNote — back to Stream"
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onSelect("stream");
+          }
+        }}
       >
-        <Activity size={16} strokeWidth={2} />
-      </RailButton>
+        <span className="proto-logo-s">S</span>
+        <span className="proto-logo-n">N</span>
+      </div>
 
       <RailButton
         active={activeChannel === "note"}
@@ -54,68 +63,57 @@ export function IconRail({
       >
         {ingestBusy
           ? <Loader2 size={16} className="animate-spin" style={{ color: "var(--color-accent)" }} />
-          : <FileEdit size={16} strokeWidth={2} />}
+          : <FileEdit size={16} strokeWidth={1.7} />}
       </RailButton>
 
       <RailButton
-        active={activeChannel === "special-knowledge" || activeChannel === "source-list" || activeChannel.startsWith("source:")}
-        onClick={() => onSelect("special-knowledge")}
-        title="Wiki"
-        badge={wikiTopicCount > 0 ? wikiTopicCount : undefined}
+        active={inLibrary}
+        onClick={() => onSelect("library:docs")}
+        title="Library — Docs · Memories · Skills"
+        badge={pendingMemoryCount > 0 ? pendingMemoryCount : undefined}
+        badgeTitle={
+          pendingMemoryCount > 0
+            ? `${pendingMemoryCount} memor${pendingMemoryCount === 1 ? "y" : "ies"} awaiting review`
+            : undefined
+        }
       >
-        <BookOpen size={16} strokeWidth={2} />
-      </RailButton>
-
-      <RailButton
-        active={activeChannel === "smart-table" || activeChannel.startsWith("smart-table:")}
-        onClick={() => onSelect("smart-table")}
-        title="Smart tables"
-      >
-        <Table size={16} strokeWidth={2} />
-      </RailButton>
-
-      <RailButton
-        active={activeChannel === "search"}
-        onClick={onOpenPalette}
-        title="Search (⌘K)"
-      >
-        <Search size={16} strokeWidth={2} />
+        <BookOpen size={16} strokeWidth={1.7} />
       </RailButton>
 
       <div className="proto-atelier-rail-spacer" />
 
-      {/* Cloud Console — first-class entry point. The sync console is
-          the user's window into agent reads, memory drafts, and
-          subscription state, so it deserves a primary rail slot
-          rather than living buried in the workspace sheet. */}
-      <RailButton
-        active={activeChannel === "cloud-sync"}
-        onClick={() => onSelect("cloud-sync")}
-        title="Cloud Console"
-      >
-        <Cloud size={16} strokeWidth={2} />
-      </RailButton>
-
-      {/* Workspace sheet — devices, plan, provider. Settings live
-          inside the sheet (no separate icon) to keep the rail at six. */}
       <RailButton
         active={false}
-        onClick={onOpenWorkspace}
-        title="Workspace"
+        onClick={onOpenCloud}
+        title="Workspace · Cloud"
       >
-        <Layers size={16} strokeWidth={2} />
+        <Cloud size={16} strokeWidth={1.7} />
+      </RailButton>
+
+      <RailButton
+        active={activeChannel === "settings"}
+        onClick={() => onSelect("settings")}
+        title="Settings"
+      >
+        <Settings size={16} strokeWidth={1.7} />
       </RailButton>
     </aside>
   );
 }
 
 function RailButton({
-  active, onClick, title, badge, children,
+  active,
+  onClick,
+  title,
+  badge,
+  badgeTitle,
+  children,
 }: {
   active: boolean;
   onClick: () => void;
   title: string;
   badge?: number;
+  badgeTitle?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -128,8 +126,8 @@ function RailButton({
       aria-pressed={active}
     >
       {children}
-      {badge !== undefined && (
-        <span className="proto-atelier-rail-badge">{badge}</span>
+      {badge !== undefined && badge > 0 && (
+        <span className="proto-atelier-rail-badge" title={badgeTitle}>{badge}</span>
       )}
     </button>
   );

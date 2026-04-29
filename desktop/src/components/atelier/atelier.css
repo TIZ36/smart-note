@@ -1,0 +1,380 @@
+/* ────────────────────────────────────────────────────────────────
+   atelier.css — v3 stream-centric shell
+   Ported from docs/design-mocks/v3-stream.html. Class prefix:
+   `proto-atelier-*`. Tokens come from index.css (--color-*) so light
+   and dark themes apply automatically.
+   ──────────────────────────────────────────────────────────────── */
+
+/* Root layout — 48px rail / 1fr canvas / 32px ambient */
+.proto-atelier {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  overflow: hidden;
+}
+
+/* ── Left rail (48px) ──────────────────────────────────────────── */
+.proto-atelier-rail {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 48px;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px 0;
+  gap: 4px;
+  z-index: 2;
+}
+
+.proto-atelier-rail-logo {
+  width: 28px; height: 28px;
+  border-radius: var(--radius-proto, 6px);
+  background: var(--color-text-primary);
+  color: var(--color-bg-primary);
+  display: grid;
+  place-items: center;
+  margin-bottom: 6px;
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: -0.02em;
+  cursor: pointer;
+  user-select: none;
+  transition: background 160ms ease-out;
+}
+.proto-atelier-rail-logo:hover { background: var(--color-accent); }
+.proto-atelier-rail-logo .proto-logo-s,
+.proto-atelier-rail-logo .proto-logo-n {
+  font-size: 11px;
+  line-height: 1;
+  opacity: 1;
+}
+.proto-atelier-rail-logo .proto-logo-s { color: var(--color-bg-primary); }
+.proto-atelier-rail-logo .proto-logo-n { color: var(--color-bg-primary); opacity: 0.7; }
+
+.proto-atelier-rail-btn {
+  width: 32px; height: 32px;
+  border-radius: var(--radius-proto, 6px);
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  position: relative;
+  transition: background 160ms ease-out, color 160ms ease-out;
+}
+.proto-atelier-rail-btn:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-secondary);
+}
+.proto-atelier-rail-btn-active {
+  background: color-mix(in oklab, var(--color-accent) 14%, transparent);
+  color: var(--color-accent);
+}
+.proto-atelier-rail-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.proto-atelier-rail-spacer { flex: 1; }
+
+.proto-atelier-rail-badge {
+  position: absolute;
+  top: -1px; right: -1px;
+  background: var(--color-accent);
+  color: var(--color-bg-primary);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  height: 13px; min-width: 13px;
+  border-radius: 7px;
+  padding: 0 3px;
+  display: grid;
+  place-items: center;
+  line-height: 1;
+}
+
+/* ── Canvas (right of rail, above ambient) ─────────────────────── */
+.proto-atelier-canvas {
+  position: absolute;
+  left: 48px; right: 0; top: 0; bottom: 32px;
+  overflow: hidden;
+  background: var(--color-bg-primary);
+}
+
+/* ── Ambient bar (32px, always visible) ────────────────────────── */
+.proto-atelier-bottom {
+  position: absolute;
+  left: 48px; right: 0; bottom: 0;
+  height: 32px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 16px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  z-index: 2;
+}
+
+.proto-atelier-bottom-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+.proto-atelier-bottom-cluster:hover { color: var(--color-text-secondary); }
+
+.proto-atelier-bottom-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+}
+.proto-atelier-bottom-dot[data-tone="ok"] {
+  background: var(--color-success);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-success) 18%, transparent);
+}
+.proto-atelier-bottom-dot[data-tone="warn"] {
+  background: var(--color-warning);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-warning) 18%, transparent);
+}
+.proto-atelier-bottom-dot[data-tone="muted"] {
+  background: var(--color-text-muted);
+  opacity: 0.4;
+}
+
+.proto-atelier-bottom-sep { color: var(--color-border); }
+.proto-atelier-bottom-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.proto-atelier-bottom-item strong {
+  color: var(--color-text-secondary);
+  font-weight: 500;
+}
+
+.proto-atelier-bottom-progress {
+  width: 60px; height: 2px;
+  background: var(--color-bg-hover);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-right: 4px;
+}
+.proto-atelier-bottom-progress-fill {
+  display: block;
+  height: 100%;
+  background: var(--color-accent);
+  transition: width 240ms ease-out;
+}
+
+.proto-atelier-bottom-cmd {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-secondary);
+  background: transparent;
+  border: none;
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+.proto-atelier-bottom-cmd:hover { color: var(--color-text-primary); }
+.proto-atelier-bottom-cmd kbd {
+  font-family: inherit;
+  font-size: 10.5px;
+  border: 1px solid var(--color-border);
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--color-bg-primary);
+  color: var(--color-text-secondary);
+}
+
+/* ── Modal (Cloud center modal · D3) ───────────────────────────── */
+.proto-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--color-scrim);
+  z-index: 4;
+  animation: proto-backdrop-in 200ms ease-out;
+}
+@keyframes proto-backdrop-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.proto-modal {
+  width: 100%;
+  max-width: 540px;
+  max-height: 100%;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: proto-modal-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes proto-modal-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.proto-modal-bar {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.proto-modal-title {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+.proto-modal-meta {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.proto-modal-close {
+  margin-left: auto;
+  width: 24px; height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  border-radius: 4px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  line-height: 1;
+}
+.proto-modal-close:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
+.proto-modal-body {
+  padding: 16px 18px 18px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.proto-modal-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.proto-modal-section-title {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
+/* ── Library top tabs (Docs / Memories / Skills) ───────────────── */
+.proto-library-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.proto-library-tabs {
+  display: flex;
+  padding: 12px 24px 0;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-primary);
+  flex-shrink: 0;
+}
+.proto-library-tab {
+  padding: 6px 4px 9px;
+  margin-right: 22px;
+  font-size: 12.5px;
+  color: var(--color-text-muted);
+  background: transparent;
+  border: none;
+  border-bottom: 1.5px solid transparent;
+  margin-bottom: -1px;
+  font-family: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  transition: color 160ms ease-out;
+}
+.proto-library-tab:hover { color: var(--color-text-secondary); }
+.proto-library-tab[aria-pressed="true"] {
+  color: var(--color-text-primary);
+  border-bottom-color: var(--color-text-primary);
+  font-weight: 500;
+}
+.proto-library-tab-count {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+}
+.proto-library-tab[aria-pressed="true"] .proto-library-tab-count {
+  color: var(--color-text-secondary);
+}
+.proto-library-tab-pending {
+  font-size: 10.5px;
+  color: var(--color-accent);
+  font-weight: 500;
+  margin-left: 4px;
+}
+.proto-library-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+.proto-library-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+  font-size: 12.5px;
+}
+
+/* ── Tag chip (used across Stream, Library, Memory) ────────────── */
+.proto-tag {
+  display: inline-flex;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+}
+.proto-tag-accent {
+  background: color-mix(in oklab, var(--color-accent) 14%, transparent);
+  color: var(--color-accent);
+  border-color: transparent;
+}
+
+/* Reduced-motion respect */
+@media (prefers-reduced-motion: reduce) {
+  .proto-modal-backdrop,
+  .proto-modal { animation: none; }
+  .proto-atelier-bottom-progress-fill { transition: none; }
+}

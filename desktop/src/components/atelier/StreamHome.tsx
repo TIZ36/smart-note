@@ -85,7 +85,7 @@ export function StreamHome({ onSelect, onOpenPalette }: Props) {
               ...(j.smartnote_type ? [{ label: j.smartnote_type === "wiki_topic" ? "wiki" : j.smartnote_type, accent: true }] : []),
               ...(j.executor ? [{ label: j.executor }] : []),
             ],
-            onClick: () => onSelect("cloud-sync"),
+            onClick: () => onSelect("library:memories"),
             iconAccent: true,
           });
         }
@@ -107,7 +107,7 @@ export function StreamHome({ onSelect, onOpenPalette }: Props) {
             ],
             onClick: () => {
               if (isWiki && path) onSelect(`source:${path}` as ChannelId);
-              else if (isWiki) onSelect("special-knowledge");
+              else if (isWiki) onSelect("library:docs");
               else onSelect("note");
             },
           });
@@ -125,7 +125,7 @@ export function StreamHome({ onSelect, onOpenPalette }: Props) {
               { label: "draft" },
               { label: p.kind },
             ],
-            onClick: () => onSelect("cloud-sync"),
+            onClick: () => onSelect("library:memories"),
           });
         }
 
@@ -273,7 +273,7 @@ function EmptyConfigured({ onSelect }: { onSelect: (c: ChannelId) => void }) {
         <button
           type="button"
           className="proto-atelier-stream-empty-btn proto-atelier-stream-empty-btn-strong"
-          onClick={() => onSelect("cloud-sync")}
+          onClick={() => onSelect("library:memories")}
         >
           Open Cloud Console
         </button>
