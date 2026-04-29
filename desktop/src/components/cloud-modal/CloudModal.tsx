@@ -23,7 +23,10 @@ export function CloudModal({ open, onClose }: Props) {
   const [autoEnrich, setAutoEnrich] = useState(true);
   const [actionState, setActionState] = useState<Record<string, "idle" | "running" | "ok" | "err">>({});
   const [mcpUrl, setMcpUrl] = useState<string>("—");
-  const [copied, setCopied] = useState(false);
+  const [apiKey, setApiKey] = useState<string>("");
+  const [agentChoice, setAgentChoice] = useState<"claude" | "cursor" | "opencode">("claude");
+  const [copiedConfig, setCopiedConfig] = useState(false);
+  const [copiedRaw, setCopiedRaw] = useState<"url" | "key" | null>(null);
 
   // Esc-to-close
   useEffect(() => {
@@ -59,10 +62,9 @@ export function CloudModal({ open, onClose }: Props) {
     return () => { alive = false; clearInterval(id); };
   }, [open]);
 
-  // MCP endpoint = same base URL cloud-api uses, exposed so agent
-  // CLIs (Claude Code / Cursor / Opencode) can paste it into their
-  // MCP server config. Reads from persistent app settings — set in
-  // Settings → SmartNote Cloud.
+  // MCP endpoint + API key from persistent app settings (Settings →
+  // SmartNote Cloud). Both are needed to render the per-agent JSON
+  // config snippets the user can paste into their CLI directly.
   useEffect(() => {
     if (!open) return;
     let alive = true;
@@ -71,8 +73,9 @@ export function CloudModal({ open, onClose }: Props) {
       const url = (s.cloud_sync_url || "").trim();
       if (url) setMcpUrl(`${url.replace(/\/$/, "")}/mcp`);
       else setMcpUrl("—");
+      setApiKey((s.cloud_sync_api_key || "").trim());
     }).catch(() => {
-      if (alive) setMcpUrl("—");
+      if (alive) { setMcpUrl("—"); setApiKey(""); }
     });
     return () => { alive = false; };
   }, [open]);
@@ -86,15 +89,79 @@ export function CloudModal({ open, onClose }: Props) {
     }
   }
 
-  async function copyMcp() {
-    if (mcpUrl === "—") return;
+  // Mask all but a leading prefix + trailing suffix so the key is
+  // visible enough to be recognizable (matches what the user pasted)
+  // but never exposed in screenshots / over-the-shoulder views.
+  function maskKey(k: string): string {
+    if (!k) return "—";
+    if (k.length <= 12) return "•".repeat(k.length);
+    return `${k.slice(0, 8)}${"•".repeat(8)}${k.slice(-4)}`;
+  }
+
+  async function copyRawValue(kind: "url" | "key") {
+    const value = kind === "url" ? mcpUrl : apiKey;
+    if (!value || value === "—") return;
     try {
-      await navigator.clipboard.writeText(mcpUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1400);
-    } catch {
-      /* silent */
+      await navigator.clipboard.writeText(value);
+      setCopiedRaw(kind);
+      setTimeout(() => setCopiedRaw(null), 1400);
+    } catch { /* silent */ }
+  }
+
+  // Per-agent MCP server JSON snippets. Each agent has its own
+  // config file path and slightly different schema; we generate
+  // ready-to-paste blocks pre-filled with the user's URL + API key.
+  function configFor(agent: "claude" | "cursor" | "opencode"): string {
+    if (mcpUrl === "—" || !apiKey) {
+      return "// Configure URL + API key in Settings → SmartNote Cloud first.";
     }
+    const auth = `Bearer ${apiKey}`;
+    if (agent === "claude") {
+      return JSON.stringify({
+        mcpServers: {
+          "smartnote-cloud": {
+            type: "http",
+            url: mcpUrl,
+            headers: { Authorization: auth },
+          },
+        },
+      }, null, 2);
+    }
+    if (agent === "cursor") {
+      return JSON.stringify({
+        mcpServers: {
+          "smartnote-cloud": {
+            url: mcpUrl,
+            headers: { Authorization: auth },
+          },
+        },
+      }, null, 2);
+    }
+    // opencode
+    return JSON.stringify({
+      mcp: {
+        "smartnote-cloud": {
+          type: "remote",
+          url: mcpUrl,
+          headers: { Authorization: auth },
+        },
+      },
+    }, null, 2);
+  }
+
+  function configPathFor(agent: "claude" | "cursor" | "opencode"): string {
+    if (agent === "claude")  return "~/.claude.json (mcpServers section) or per-project .mcp.json";
+    if (agent === "cursor")  return "~/.cursor/mcp.json or <project>/.cursor/mcp.json";
+    return "~/.config/opencode/opencode.json";
+  }
+
+  async function copyConfig() {
+    const text = configFor(agentChoice);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedConfig(true);
+      setTimeout(() => setCopiedConfig(false), 1600);
+    } catch { /* silent */ }
   }
 
   // Action stubs — Phase 4 wires real endpoints (digest router, etc.)
@@ -237,40 +304,83 @@ export function CloudModal({ open, onClose }: Props) {
             </div>
           </div>
 
-          {/* MCP endpoint — what AI CLIs (Claude / Cursor / Opencode)
-              connect to via MCP to read + write your workspace. */}
+          {/* MCP endpoint — drop-in JSON config per AI CLI. Pre-fills
+              URL + API key (key shown masked, copies as plaintext). */}
           <div className="proto-modal-section">
             <div className="proto-modal-section-title">MCP endpoint for AI agents</div>
-            {mcpUrl === "—" ? (
-              <>
-                <div className="proto-modal-mcp" style={{ color: "var(--color-text-muted)", fontStyle: "italic" }}>
-                  <span className="proto-modal-mcp-text">
-                    Cloud not configured — set URL + API key first.
-                  </span>
-                </div>
-                <div className="proto-modal-line-help" style={{ paddingLeft: 0 }}>
-                  Open <strong>Settings → SmartNote Cloud</strong> to add your
-                  cloud URL and workspace API key. Once set, this endpoint
-                  becomes the URL Claude Code / Cursor reads + writes through.
-                </div>
-              </>
+            {mcpUrl === "—" || !apiKey ? (
+              <div className="proto-modal-line-help" style={{ paddingLeft: 0 }}>
+                Open <strong>Settings → SmartNote Cloud</strong> to add your
+                cloud URL and workspace API key. Once set, ready-to-paste
+                JSON snippets for Claude Code / Cursor / Opencode will appear
+                here.
+              </div>
             ) : (
               <>
+                {/* URL + masked API key with individual copy buttons */}
                 <div className="proto-modal-mcp">
+                  <span style={{ fontSize: 10, color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginRight: 6 }}>URL</span>
                   <span className="proto-modal-mcp-text">{mcpUrl}</span>
                   <button
                     type="button"
                     className="proto-modal-mcp-copy"
-                    onClick={copyMcp}
+                    onClick={() => copyRawValue("url")}
                   >
-                    {copied ? "copied" : "copy"}
+                    {copiedRaw === "url" ? "copied" : "copy"}
                   </button>
                 </div>
-                <div className="proto-modal-line-help" style={{ paddingLeft: 0 }}>
-                  Paste this URL into Claude Code / Cursor MCP settings, then
-                  add your workspace API key as the bearer token. Agents will
-                  see the same memories, docs, and tags you do —
-                  read + write — scoped to this workspace.
+                <div className="proto-modal-mcp" style={{ marginTop: 6 }}>
+                  <span style={{ fontSize: 10, color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginRight: 6 }}>KEY</span>
+                  <span className="proto-modal-mcp-text">{maskKey(apiKey)}</span>
+                  <button
+                    type="button"
+                    className="proto-modal-mcp-copy"
+                    onClick={() => copyRawValue("key")}
+                    title="Copy plaintext API key (display is masked)"
+                  >
+                    {copiedRaw === "key" ? "copied" : "copy"}
+                  </button>
+                </div>
+
+                {/* Agent picker */}
+                <div className="proto-modal-mcp-agents">
+                  {([
+                    { id: "claude",   label: "Claude Code" },
+                    { id: "cursor",   label: "Cursor" },
+                    { id: "opencode", label: "Opencode" },
+                  ] as const).map((a) => (
+                    <button
+                      key={a.id}
+                      type="button"
+                      onClick={() => setAgentChoice(a.id)}
+                      className={cn(
+                        "proto-modal-mcp-agent",
+                        agentChoice === a.id && "proto-modal-mcp-agent-active",
+                      )}
+                    >
+                      {a.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* JSON config block (masked display, plaintext copy) */}
+                <pre className="proto-modal-mcp-json">
+                  <code>
+                    {configFor(agentChoice)
+                      .replace(`Bearer ${apiKey}`, `Bearer ${maskKey(apiKey)}`)}
+                  </code>
+                </pre>
+                <div className="proto-modal-mcp-actions">
+                  <button
+                    type="button"
+                    className="proto-modal-mcp-copy-btn"
+                    onClick={copyConfig}
+                  >
+                    {copiedConfig ? "✓ Copied with plaintext key" : "Copy config"}
+                  </button>
+                  <span className="proto-modal-mcp-hint">
+                    paste into <code>{configPathFor(agentChoice)}</code>
+                  </span>
                 </div>
               </>
             )}

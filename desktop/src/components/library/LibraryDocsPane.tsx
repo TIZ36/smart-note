@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Upload, Trash2, Tag, Copy, Sparkles, FileText, Layers } from "lucide-react";
+import { Upload, Trash2, Tag, Copy, FileText, Layers } from "lucide-react";
 import * as cloudApi from "@/lib/cloud-api";
 import { cn } from "@/lib/cn";
 import type { ChannelId } from "@/lib/types";
@@ -187,47 +187,6 @@ export function LibraryDocsPane({ onOpenSource }: Props) {
     }
   }
 
-  // Wiki smartsheet trigger (chapter-based concept extraction).
-  // Calls the cloud's /v1/wiki-smartsheet/{id}/build endpoint —
-  // distinct from generic enrich because it produces a structured
-  // table per chapter (entities × claims × refs) rather than line-
-  // level tag classifications. For now backend is a skeleton; the
-  // button surface is wired so users have a clear path.
-  async function handleBuildSmartsheet() {
-    if (!active) return;
-    setBusy("smartsheet");
-    try {
-      // Optimistic — the endpoint is being added in a parallel
-      // backend commit. Until it lands the call will 404; we surface
-      // a clear message rather than failing silently.
-      await cloudApi.buildWikiSmartsheet(active.id);
-      window.alert("Wiki smartsheet queued. Refresh to see chapters.");
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes("404") || msg.includes("not found")) {
-        window.alert("Wiki smartsheet endpoint not deployed yet — coming next cloud release.");
-      } else {
-        window.alert(`Smartsheet build failed: ${msg}`);
-      }
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  // Generic re-enrich (LLM classifier + tag generation per line).
-  async function handleReEnrich() {
-    if (!active) return;
-    setBusy("enrich");
-    try {
-      await cloudApi.runEnrich(active.id);
-      window.alert("Enrich job queued. Watch progress in KP / Library Memories.");
-    } catch (e) {
-      window.alert(`Enrich failed: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setBusy(null);
-    }
-  }
-
   // Re-classify the active document by setting metadata.smartnote_type.
   // Existing metadata is merged so we don't drop other fields like
   // ai_tags, relative_path, imported_at, etc.
@@ -379,33 +338,10 @@ export function LibraryDocsPane({ onOpenSource }: Props) {
                   </button>
                 </span>
 
-                {/* Enrich vs wiki-smartsheet — wiki kind gets the
-                    chapter-based concept extraction button instead
-                    of generic Re-enrich (which does line-level tags). */}
-                {kindOf(active) === "wiki_topic" ? (
-                  <button
-                    type="button"
-                    className="proto-library-btn"
-                    disabled={busy === "smartsheet"}
-                    onClick={handleBuildSmartsheet}
-                    title="Build chapter-based concept matrix (entities × claims × refs per chapter)"
-                  >
-                    <Sparkles size={11} strokeWidth={2} />
-                    {busy === "smartsheet" ? "Building…" : "Build wiki-smartsheet"}
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="proto-library-btn"
-                    disabled={busy === "enrich"}
-                    onClick={handleReEnrich}
-                    title="LLM classifier + tag generation per line"
-                  >
-                    <Sparkles size={11} strokeWidth={2} />
-                    {busy === "enrich" ? "Enriching…" : "Re-enrich"}
-                  </button>
-                )}
-
+                {/* Library is a viewer surface only — all KP/AI
+                    capabilities (Embedding, Enrich, Build wiki-smartsheet)
+                    live on the RAG (KP) page where bulk-selection
+                    semantics make sense. */}
                 <button
                   type="button"
                   className="proto-library-btn"

@@ -1748,6 +1748,80 @@
   background: var(--color-bg-primary);
 }
 
+/* Per-agent JSON config block + agent picker */
+.proto-modal-mcp-agents {
+  display: inline-flex;
+  gap: 4px;
+  margin-top: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  padding: 2px;
+  background: var(--color-bg-elevated);
+}
+.proto-modal-mcp-agent {
+  padding: 4px 10px;
+  font-size: 11px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  border-radius: 3px;
+  font-family: inherit;
+  transition: color 160ms ease-out, background 160ms ease-out;
+}
+.proto-modal-mcp-agent:hover { color: var(--color-text-primary); }
+.proto-modal-mcp-agent-active {
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  font-weight: 500;
+}
+.proto-modal-mcp-json {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--color-text-primary);
+  overflow-x: auto;
+  max-height: 220px;
+  overflow-y: auto;
+  white-space: pre;
+}
+.proto-modal-mcp-json code { font-family: inherit; }
+.proto-modal-mcp-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+.proto-modal-mcp-copy-btn {
+  padding: 5px 12px;
+  font-size: 11.5px;
+  border: 1px solid var(--color-accent);
+  background: var(--color-accent);
+  color: var(--color-bg-primary);
+  border-radius: 5px;
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 500;
+}
+.proto-modal-mcp-copy-btn:hover { opacity: 0.92; }
+.proto-modal-mcp-hint {
+  font-size: 10.5px;
+  color: var(--color-text-muted);
+}
+.proto-modal-mcp-hint code {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 10px;
+  padding: 1px 5px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+}
+
 /* Toggle switch — used in modal + (later) settings */
 .proto-toggle {
   width: 32px;

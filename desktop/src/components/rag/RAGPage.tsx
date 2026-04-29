@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   FileText, BookOpen, Sparkles, Database, Hash, Network as NetworkIcon,
-  CheckSquare, Square, RotateCw, Plus, X, Edit3,
+  CheckSquare, Square, RotateCw, Plus, X, Edit3, Layers,
 } from "lucide-react";
 import * as cloudApi from "@/lib/cloud-api";
 import { cn } from "@/lib/cn";
@@ -301,9 +301,34 @@ export function RAGPage() {
     await runBulk("enrich", [...selected], "Enrich-dispatched", (id) => cloudApi.runEnrich(id), 3);
   }
 
-  async function runTagPass() {
-    if (selected.size === 0) return;
-    flashSet("Tag pass — Phase 4 backend (using existing enrich pipeline for now)");
+  async function runWikiSmartsheet() {
+    // Filter selection to wiki-typed docs only — chapter-based
+    // concept extraction only makes sense on docs that have
+    // chapter structure (smartnote_type=wiki_topic).
+    const wikiIds = (sources ?? [])
+      .filter((s) => selected.has(s.id) && s.kind === "wiki")
+      .map((s) => s.id);
+    if (wikiIds.length === 0) {
+      flashSet("Select at least one Wiki topic to build a smartsheet.", "err");
+      return;
+    }
+    await runBulk(
+      "tag",  // re-using the tag run kind for this stage's progress slot
+      wikiIds,
+      "Smartsheet built for",
+      async (id) => {
+        try {
+          await cloudApi.buildWikiSmartsheet(id);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (msg.includes("404")) {
+            throw new Error("/v1/wiki-smartsheet endpoint not deployed yet (next cloud release).");
+          }
+          throw e;
+        }
+      },
+      2,
+    );
   }
 
   async function runGraphRebuild() {
@@ -613,16 +638,29 @@ export function RAGPage() {
                   onClick={runEnrich}
                 />
               ); })()}
-              {(() => { const e = actionLabel("tag"); return (
-                <ActionTile
-                  icon={<Hash size={14} />}
-                  title={e.title}
-                  tone="llm"
-                  desc={e.desc}
-                  disabled={selected.size === 0}
-                  onClick={runTagPass}
-                />
-              ); })()}
+              {/* Build wiki-smartsheet — chapter-based concept
+                  matrix. Distinct LLM action from generic enrich.
+                  Only applicable when selection includes wiki docs. */}
+              {(() => {
+                const wikiSelCount = (sources ?? [])
+                  .filter((s) => selected.has(s.id) && s.kind === "wiki").length;
+                return (
+                  <ActionTile
+                    icon={<Layers size={14} />}
+                    title="Build wiki-smartsheet"
+                    tone="llm"
+                    desc={
+                      wikiSelCount === 0
+                        ? "Per-chapter concept matrix (entities × claims × refs). Select Wiki docs first."
+                        : `${wikiSelCount} wiki doc${wikiSelCount === 1 ? "" : "s"} selected — extract chapter concepts.`
+                    }
+                    disabled={wikiSelCount === 0 || busyKinds.has("tag")}
+                    running={busyKinds.has("tag")}
+                    progress={runStats.tag.total > 0 ? { done: runStats.tag.done + runStats.tag.failed, total: runStats.tag.total } : undefined}
+                    onClick={runWikiSmartsheet}
+                  />
+                );
+              })()}
               <ActionTile
                 icon={<NetworkIcon size={14} />}
                 title="Rebuild entity graph"
