@@ -1,0 +1,56 @@
+name: cloud-api · lint + tests
+
+# Two gates for every cloud/api change:
+#
+# 1. import-linter — bounded-context + layered-architecture rules
+#    from `cloud/api/pyproject.toml`. Catches cross-context SQL,
+#    layer skips, infra reverse deps. Fix the violation, or add an
+#    `ignore_imports` line under the contract with a comment saying
+#    when it's expected to disappear. Don't relax the contract.
+#
+# 2. pytest — unit suites that don't need a live Postgres (canonical
+#    text dedup, domain helpers). Integration tests requiring the
+#    pgvector container live in a separate workflow.
+
+on:
+  pull_request:
+    paths:
+      - "cloud/api/**"
+      - "cloud/migrations/**"
+      - ".github/workflows/cloud-api-lint.yml"
+  push:
+    branches: [main]
+    paths:
+      - "cloud/api/**"
+      - "cloud/migrations/**"
+      - ".github/workflows/cloud-api-lint.yml"
+
+jobs:
+  lint-imports:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install runtime + lint + test tooling
+        # We need the actual project deps installed so import-linter can
+        # follow imports across the codebase (e.g. fastapi, asyncpg).
+        # pytest + pytest-asyncio for the unit suites.
+        working-directory: cloud/api
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install import-linter pytest pytest-asyncio
+
+      - name: Run import-linter
+        working-directory: cloud/api
+        run: lint-imports
+
+      - name: Run pytest
+        working-directory: cloud/api
+        env:
+          PYTHONPATH: .
+        run: pytest -v

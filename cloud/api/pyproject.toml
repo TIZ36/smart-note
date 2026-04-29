@@ -1,0 +1,188 @@
+# SmartNote Cloud API — tooling config
+#
+# Runtime deps stay in requirements.txt (Docker build reads it directly).
+# This file holds dev tooling configs only — no install info.
+
+[tool.pytest.ini_options]
+# Tests live under cloud/api/tests/. asyncio mode = 'auto' so async
+# test functions don't need a per-test decorator; matches FastAPI's
+# coroutine-heavy test ergonomics.
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = [
+  "ignore::DeprecationWarning:asyncpg.*",
+]
+
+[tool.importlinter]
+root_packages = ["app"]
+include_external_packages = true
+
+# ── 1. Layered architecture per context ─────────────────────────────
+# router → service → repository, no skipping or reverse imports.
+# When a context grows its files (currently only contexts/* skeletons
+# exist; storage/knowledge/enrichment), this contract starts catching
+# layer leaks automatically.
+
+[[tool.importlinter.contracts]]
+name = "Context layers (storage)"
+type = "layers"
+layers = [
+  "app.contexts.storage.router",
+  "app.contexts.storage.service",
+  "app.contexts.storage.repository",
+]
+
+[[tool.importlinter.contracts]]
+name = "Context layers (knowledge)"
+type = "layers"
+layers = [
+  "app.contexts.knowledge.router",
+  "app.contexts.knowledge.service",
+  "app.contexts.knowledge.repository",
+]
+
+[[tool.importlinter.contracts]]
+name = "Context layers (enrichment)"
+type = "layers"
+layers = [
+  "app.contexts.enrichment.router",
+  "app.contexts.enrichment.service",
+  "app.contexts.enrichment.repository",
+]
+
+[[tool.importlinter.contracts]]
+name = "Context layers (identity)"
+type = "layers"
+layers = [
+  "app.contexts.identity.router",
+  "app.contexts.identity.service",
+  "app.contexts.identity.repository",
+]
+
+[[tool.importlinter.contracts]]
+name = "Context layers (telemetry)"
+type = "layers"
+layers = [
+  "app.contexts.telemetry.router",
+  "app.contexts.telemetry.service",
+  "app.contexts.telemetry.repository",
+]
+
+# ── 2. Routers stay HTTP-pure ──────────────────────────────────────
+# Services and repositories cannot import FastAPI. Today most logic
+# still lives in app/routers/* and app/services/* (legacy paths); this
+# rule applies to the new contexts/ tree where boundaries should be
+# clean from day one.
+
+[[tool.importlinter.contracts]]
+name = "Services and repos must not import FastAPI"
+type = "forbidden"
+# Only check direct imports — repositories legitimately reach asyncpg
+# downstream, and we don't want the transitive scan to flag the layer
+# below as a violation of the layer above. The intent is "service.py
+# shouldn't say `import fastapi`", not "no edge from service ever
+# reaches fastapi".
+allow_indirect_imports = "true"
+source_modules = [
+  "app.contexts.*.service",
+  "app.contexts.*.repository",
+  "app.contexts.*.domain",
+]
+forbidden_modules = ["fastapi"]
+
+# ── 3. Repos own SQL access ────────────────────────────────────────
+# Only repositories (and the infra layer) may touch asyncpg directly.
+# Routers and services go through the repository function names.
+
+[[tool.importlinter.contracts]]
+name = "asyncpg only in repositories and infra"
+type = "forbidden"
+allow_indirect_imports = "true"
+source_modules = [
+  "app.contexts.*.router",
+  "app.contexts.*.service",
+  "app.contexts.*.domain",
+]
+forbidden_modules = ["asyncpg"]
+
+# ── 4. Cross-context imports go through service.py ─────────────────
+# Knowledge cannot reach into enrichment's repository; it must call
+# `enrichment.service.<fn>` instead. (And vice versa.) This is the
+# rule that pays off the most when smart-cloud splits — every cross-
+# context call is already a stable "API boundary".
+#
+# Events module is exempted (frozen dataclasses, no behavior).
+
+[[tool.importlinter.contracts]]
+name = "Knowledge cannot reach into enrichment internals"
+type = "forbidden"
+source_modules = ["app.contexts.knowledge"]
+forbidden_modules = [
+  "app.contexts.enrichment.repository",
+  "app.contexts.enrichment.domain",
+  "app.contexts.enrichment.router",
+]
+
+[[tool.importlinter.contracts]]
+name = "Enrichment cannot reach into knowledge internals"
+type = "forbidden"
+source_modules = ["app.contexts.enrichment"]
+forbidden_modules = [
+  "app.contexts.knowledge.repository",
+  "app.contexts.knowledge.domain",
+  "app.contexts.knowledge.router",
+]
+
+[[tool.importlinter.contracts]]
+name = "Storage cannot reach into smart-domain internals"
+type = "forbidden"
+source_modules = ["app.contexts.storage"]
+forbidden_modules = [
+  "app.contexts.knowledge.repository",
+  "app.contexts.knowledge.service",
+  "app.contexts.enrichment.repository",
+  "app.contexts.enrichment.service",
+]
+
+# Identity is api-domain and stays free of smart-domain dependencies
+# even via service.py — auth and device pairing don't need to know
+# what knowledge or enrichment do.
+[[tool.importlinter.contracts]]
+name = "Identity is independent of smart-domain"
+type = "forbidden"
+source_modules = ["app.contexts.identity"]
+forbidden_modules = [
+  "app.contexts.knowledge",
+  "app.contexts.enrichment",
+]
+
+# Telemetry aggregates everyone, but only through their service.py.
+# Reaching into a foreign repository directly would defeat the
+# point of the boundary. Direct-only — transitively going
+# `telemetry.service → other.service → other.repository` is fine,
+# the intent is "no `from app.contexts.X.repository import ...`
+# inside telemetry".
+[[tool.importlinter.contracts]]
+name = "Telemetry only crosses contexts via service.py"
+type = "forbidden"
+allow_indirect_imports = "true"
+source_modules = ["app.contexts.telemetry"]
+forbidden_modules = [
+  "app.contexts.identity.repository",
+  "app.contexts.identity.router",
+  "app.contexts.knowledge.repository",
+  "app.contexts.knowledge.router",
+  "app.contexts.enrichment.repository",
+  "app.contexts.enrichment.router",
+  "app.contexts.storage.repository",
+  "app.contexts.storage.router",
+]
+
+# ── 5. Infra must not depend on contexts ───────────────────────────
+# infra is for the inverse — it provides primitives contexts use.
+
+[[tool.importlinter.contracts]]
+name = "Infra cannot import contexts"
+type = "forbidden"
+source_modules = ["app.infra"]
+forbidden_modules = ["app.contexts"]
