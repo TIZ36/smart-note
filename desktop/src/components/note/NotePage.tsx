@@ -15,7 +15,7 @@ import { NoteViewDialog } from "./NoteViewDialog";
 import { type SidebarViewItem } from "./NoteViewSidebar";
 import { NoteViewStrip } from "./NoteViewStrip";
 import { cn } from "@/lib/cn";
-import { pickRawFile, saveRawPathForHotkey, installSampleNote } from "@/lib/electron";
+import { pickRawFile, saveRawPathForHotkey, installSampleNote, readFileFull } from "@/lib/electron";
 import * as api from "@/lib/api";
 import type { IngestStep } from "@/App";
 
@@ -535,14 +535,25 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
 
   // Sync this local note to cloud as a CloudDocument so it appears
   // on the KP (RAG) surface for embedding / enrich processing.
-  // Uses rawPath basename as the document name; cloud upserts by
-  // name so re-pushes update content rather than duplicating.
+  // Reads the FULL file from disk — NOT from .cm-content innerText,
+  // which only contains the virtually-rendered viewport (CodeMirror
+  // virtualizes large files — a 6000-line note would upload as
+  // ~30 visible lines if we scraped the DOM).
   async function handleSyncToKp() {
     if (!rawPath) return;
     setSyncState("syncing");
     try {
-      const cm = document.querySelector<HTMLElement>(".cm-content");
-      const content = cm?.innerText ?? "";
+      // Save first if dirty so the on-disk content reflects the
+      // user's latest edits — Sync = "build a snapshot of what's
+      // saved", as the user put it.
+      if (dirty) {
+        handleSaveClick();
+        // Tiny grace so CodeMirror's auto-save round-trip lands
+        // before we re-read the file.
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      const result = await readFileFull(rawPath);
+      const content = result.output || "";
       const filename = rawPath.split("/").pop() || "note.md";
       await cloudApi.createDocument({
         name: filename,
@@ -552,6 +563,8 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
           smartnote_type: "note",
           local_path: rawPath,
           synced_at: new Date().toISOString(),
+          line_count: content.split("\n").length,
+          byte_size: new Blob([content]).size,
         },
       });
       setSyncState("ok");

@@ -51,19 +51,38 @@ export type RunStatus = {
   name: string;
 };
 
-const RETRIEVAL_PATHS: {
+type RetrievalPath = {
   key: string;
   name: string;
   desc: string;
   icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
-}[] = [
-  { key: "fts",     name: "FTS",          desc: "Full-text search · sqlite FTS5 token match",          icon: FileText },
-  { key: "vec",     name: "Vector",       desc: "Cosine similarity on chunk embeddings",                 icon: Sparkles },
-  { key: "ngram",   name: "N-gram",       desc: "Char-level n-gram for typo + partial-word recall",      icon: Hash },
-  { key: "sub",     name: "Substring",    desc: "LIKE substring match · catches what FTS tokenizes out", icon: Database },
-  { key: "kw",      name: "Keyword",      desc: "Keyword overlap · weighted by importance",              icon: Hash },
-  { key: "tagmeta", name: "Tag metadata", desc: "Tag-segment topic / summary / keyword match",           icon: BookOpen },
+  /** When the index is built (drives the small status pill) */
+  built: "embed" | "auto" | "query" | "enrich";
+  /** Only show Rebuild button when re-indexing is actually meaningful.
+   *  fts is trigger-maintained; ngram/sub are query-time only — no
+   *  index to rebuild. vec/kw/tag_meta have rebuild surfaces because
+   *  they go stale when the upstream model/prompt/classifier changes. */
+  rebuild?: { label: string; rationale: string };
+};
+
+const RETRIEVAL_PATHS: RetrievalPath[] = [
+  { key: "vec",     name: "Vector",       desc: "Cosine similarity on chunk embedding.",                       icon: Sparkles, built: "embed",
+    rebuild: { label: "Re-embed all", rationale: "Run after switching embedding model — old vectors won't match the new dimensionality." } },
+  { key: "fts",     name: "FTS",          desc: "Postgres FTS token match. Auto-maintained by trigger; no manual rebuild needed.", icon: FileText, built: "auto" },
+  { key: "ngram",   name: "N-gram",       desc: "Char-bigram overlap, computed at query time. No index to rebuild.",            icon: Hash,     built: "query" },
+  { key: "sub",     name: "Substring",    desc: "LIKE substring match, computed at query time. No index to rebuild.",           icon: Database, built: "query" },
+  { key: "kw",      name: "Keyword",      desc: "Token overlap on chunk.keywords. Populated by Enrich.",                          icon: Hash,     built: "enrich",
+    rebuild: { label: "Re-extract", rationale: "Run after changing the Enrich prompt or model — keyword set will refresh across all chunks." } },
+  { key: "tagmeta", name: "Tag-meta",     desc: "Chunk dimension/scope match. Populated by chapter splitter (wiki) + Enrich (note).", icon: BookOpen, built: "enrich",
+    rebuild: { label: "Re-classify", rationale: "Run after changing classifier logic / tag schema — re-applies dimension+scope across all chunks." } },
 ];
+
+const PATH_BUILT_LABEL: Record<string, string> = {
+  embed:  "embed",
+  auto:   "auto",
+  query:  "query-time",
+  enrich: "enrich",
+};
 
 export function RAGPage() {
   const [sources, setSources] = useState<Source[] | null>(null);
@@ -130,13 +149,13 @@ export function RAGPage() {
           const tagsApplied = Array.isArray(md.ai_tags)
             && (md as { ai_tags: unknown[] }).ai_tags.length > 0;
 
-          // Tag-meta retrieval path is populated as soon as wiki
-          // ingestion runs (chapter splitter sets chunk.dimension +
-          // structural keywords). So for wiki, T lights with E. For
-          // notes, real AI tagging requires LLM enrich.
-          const tagged = kind === "wiki"
-            ? d.ingested_at != null
-            : (tagsApplied || !!lastDone);
+          // T = AI tags applied. Only Enrich (LLM classification +
+          // tag generation) sets real AI tags — wiki's chapter
+          // splitter writes structural tag_meta (chunk.dimension /
+          // scope), which is queryable but is NOT the same as user-
+          // facing AI tags. So T lights only when enrich has run,
+          // regardless of kind.
+          const tagged = tagsApplied || !!lastDone;
 
           return {
             id: d.id,
@@ -324,6 +343,61 @@ export function RAGPage() {
   const busyKinds = new Set<RunKind>();
   for (const k of Object.keys(runStats) as RunKind[]) {
     if (runStats[k].running > 0) busyKinds.add(k);
+  }
+
+  // For each action, count how many of the SELECTED sources are
+  // "fresh" (never had this stage) vs "already done" (need re-run
+  // semantics). The action tile uses these counts to:
+  //   - flip its label between "Embedding" and "Re-embed"
+  //   - show a "(N new · M refresh)" hint when the selection mixes
+  // Source.embedded / .enriched / .tagged are the truth markers.
+  const selectionAnalysis = useMemo(() => {
+    const sel = sources?.filter((s) => selected.has(s.id)) ?? [];
+    const total = sel.length;
+    const embFresh = sel.filter((s) => !s.embedded).length;
+    const embDone  = sel.filter((s) =>  s.embedded).length;
+    const enrFresh = sel.filter((s) => !s.enriched).length;
+    const enrDone  = sel.filter((s) =>  s.enriched).length;
+    const tagFresh = sel.filter((s) => !s.tagged).length;
+    const tagDone  = sel.filter((s) =>  s.tagged).length;
+    return { total, embFresh, embDone, enrFresh, enrDone, tagFresh, tagDone };
+  }, [sources, selected]);
+
+  function actionLabel(stage: "embed" | "enrich" | "tag"): { title: string; desc: string } {
+    const a = selectionAnalysis;
+    const fresh = stage === "embed" ? a.embFresh : stage === "enrich" ? a.enrFresh : a.tagFresh;
+    const done  = stage === "embed" ? a.embDone  : stage === "enrich" ? a.enrDone  : a.tagDone;
+    const baseTitle = stage === "embed" ? "Embedding" : stage === "enrich" ? "Enrich" : "Tag pass";
+    if (a.total === 0) {
+      const baseDesc =
+        stage === "embed"  ? "Re-chunk + re-embed selected sources. No LLM calls."
+        : stage === "enrich" ? "LLM classifier + tag generation + segment summaries."
+        :                       "Refresh AI tags on selected (subset of full enrich).";
+      return { title: baseTitle, desc: baseDesc };
+    }
+    if (fresh === 0 && done > 0) {
+      // All selected are already done → re-run semantics
+      const verb = stage === "embed" ? "Re-embed" : stage === "enrich" ? "Re-enrich" : "Re-tag";
+      return {
+        title: verb,
+        desc: `All ${done} already complete. Click to re-run from scratch (idempotent — replaces existing).`,
+      };
+    }
+    if (fresh > 0 && done > 0) {
+      // Mixed selection
+      return {
+        title: baseTitle,
+        desc: `${fresh} new · ${done} refresh. Click to process all selected.`,
+      };
+    }
+    // All fresh
+    return {
+      title: baseTitle,
+      desc:
+        stage === "embed"  ? `${fresh} source${fresh === 1 ? "" : "s"} not yet embedded — chunk + embed (no LLM).`
+        : stage === "enrich" ? `${fresh} source${fresh === 1 ? "" : "s"} not yet enriched — LLM classifier + tag generation.`
+        :                       `${fresh} source${fresh === 1 ? "" : "s"} not yet tagged — AI tag pass.`,
+    };
   }
 
   // ── Per-path rebuild (placeholder until backend exposes per-path) ──
@@ -515,34 +589,40 @@ export function RAGPage() {
               </div>
             </div>
             <div className="proto-atelier-rag-actions-grid">
-              <ActionTile
-                icon={<Database size={14} />}
-                title="Embedding"
-                tone="non-llm"
-                desc="Re-chunk + re-embed selected sources. No LLM calls."
-                disabled={selected.size === 0 || busyKinds.has("embed")}
-                running={busyKinds.has("embed")}
-                progress={runStats.embed.total > 0 ? { done: runStats.embed.done + runStats.embed.failed, total: runStats.embed.total } : undefined}
-                onClick={runEmbedding}
-              />
-              <ActionTile
-                icon={<Sparkles size={14} />}
-                title="Enrich"
-                tone="llm"
-                desc="LLM classifier + tag generation + segment summaries."
-                disabled={selected.size === 0 || busyKinds.has("enrich")}
-                running={busyKinds.has("enrich")}
-                progress={runStats.enrich.total > 0 ? { done: runStats.enrich.done + runStats.enrich.failed, total: runStats.enrich.total } : undefined}
-                onClick={runEnrich}
-              />
-              <ActionTile
-                icon={<Hash size={14} />}
-                title="Tag pass"
-                tone="llm"
-                desc="Refresh AI tags on selected (subset of full enrich)."
-                disabled={selected.size === 0}
-                onClick={runTagPass}
-              />
+              {(() => { const e = actionLabel("embed"); return (
+                <ActionTile
+                  icon={<Database size={14} />}
+                  title={e.title}
+                  tone="non-llm"
+                  desc={e.desc}
+                  disabled={selected.size === 0 || busyKinds.has("embed")}
+                  running={busyKinds.has("embed")}
+                  progress={runStats.embed.total > 0 ? { done: runStats.embed.done + runStats.embed.failed, total: runStats.embed.total } : undefined}
+                  onClick={runEmbedding}
+                />
+              ); })()}
+              {(() => { const e = actionLabel("enrich"); return (
+                <ActionTile
+                  icon={<Sparkles size={14} />}
+                  title={e.title}
+                  tone="llm"
+                  desc={e.desc}
+                  disabled={selected.size === 0 || busyKinds.has("enrich")}
+                  running={busyKinds.has("enrich")}
+                  progress={runStats.enrich.total > 0 ? { done: runStats.enrich.done + runStats.enrich.failed, total: runStats.enrich.total } : undefined}
+                  onClick={runEnrich}
+                />
+              ); })()}
+              {(() => { const e = actionLabel("tag"); return (
+                <ActionTile
+                  icon={<Hash size={14} />}
+                  title={e.title}
+                  tone="llm"
+                  desc={e.desc}
+                  disabled={selected.size === 0}
+                  onClick={runTagPass}
+                />
+              ); })()}
               <ActionTile
                 icon={<NetworkIcon size={14} />}
                 title="Rebuild entity graph"
@@ -569,7 +649,10 @@ export function RAGPage() {
             });
           }} />
 
-          {/* 6 retrieval paths */}
+          {/* 6 retrieval paths — rebuild only where it makes sense
+              (per-path status pill explains: embed / auto / query /
+              enrich; rebuild button only on the 3 paths that actually
+              go stale). */}
           <section className="proto-atelier-rag-section">
             <div className="proto-atelier-rag-section-head">
               <h3 className="proto-atelier-rag-section-title">Retrieval paths · 6-path hybrid</h3>
@@ -587,15 +670,41 @@ export function RAGPage() {
                       <div className="proto-atelier-rag-path-name">{p.name}</div>
                       <div className="proto-atelier-rag-path-desc">{p.desc}</div>
                     </div>
-                    <span className="proto-atelier-rag-path-status">live</span>
-                    <button
-                      type="button"
-                      onClick={() => rebuildPath(p.key)}
-                      className="proto-atelier-rag-path-btn"
-                      title={`Rebuild ${p.name} index`}
+                    <span
+                      className={cn(
+                        "proto-atelier-rag-path-status",
+                        `proto-atelier-rag-path-status-${p.built}`,
+                      )}
+                      title={
+                        p.built === "embed"  ? "Built when you run Embedding."
+                        : p.built === "auto"   ? "Maintained automatically by Postgres trigger."
+                        : p.built === "query"  ? "Computed at query time. No index, nothing to rebuild."
+                        :                        "Populated when you run Enrich."
+                      }
                     >
-                      <RotateCw size={11} strokeWidth={2} /> Rebuild
-                    </button>
+                      {PATH_BUILT_LABEL[p.built]}
+                    </span>
+                    {p.rebuild ? (
+                      <button
+                        type="button"
+                        onClick={() => rebuildPath(p.key)}
+                        className="proto-atelier-rag-path-btn"
+                        title={p.rebuild.rationale}
+                      >
+                        <RotateCw size={11} strokeWidth={2} /> {p.rebuild.label}
+                      </button>
+                    ) : (
+                      <span
+                        className="proto-atelier-rag-path-noop"
+                        title={
+                          p.built === "auto"  ? "Postgres trigger keeps this in sync — never needs rebuild."
+                          : p.built === "query" ? "No index — recomputed on every search."
+                          : "Auto-maintained."
+                        }
+                      >
+                        no rebuild
+                      </span>
+                    )}
                   </div>
                 );
               })}
