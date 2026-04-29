@@ -1,31 +1,28 @@
 import { cn } from "@/lib/cn";
 import type { ChannelId } from "@/lib/types";
+import { LibraryDocsPane } from "./LibraryDocsPane";
+import { LibraryMemoriesPane } from "./LibraryMemoriesPane";
+import { LibrarySkillsPane } from "./LibrarySkillsPane";
 
-/* Library surface (replaces v2's "Wiki" rail destination).
+/* Library surface — three sub-tabs share left-tree + right-pane chrome.
  *
- * Three sub-tabs share a left-tree + right-content chrome:
+ *   Docs       wiki documents grouped by AI topic (default)
+ *   Memories   agent-proposed (MCP) + daily-digest candidates
+ *   Skills     claude/cursor/opencode skill files + workflows
  *
- *   Docs       — wiki documents grouped by AI topic (default)
- *   Memories   — agent-proposed (MCP) + daily-digest candidates
- *   Skills     — claude/cursor/opencode skill files + custom workflows
- *
- * Phase 1 stub: tabs render and sync to the active channel; pane
- * bodies land in Phase 3 (Docs + Memories) and Phase 4 (Skills).
+ * Active sub-tab is driven by the routed channel (library:docs |
+ * library:memories | library:skills). Pending memory count shows
+ * as the "· N pending" accent on the Memories tab.
  */
 
 type SubTab = "docs" | "memories" | "skills";
 
 type Props = {
-  /** Which sub-tab is active. Driven by the routed channel. */
   active: SubTab;
   onSelect: (channel: ChannelId) => void;
-  /** Pending memory count (drives the "· N pending" accent on Memories). */
   pendingMemoryCount: number;
-  /** Total memory count for the count badge. */
   memoryCount?: number;
-  /** Total docs count for the count badge. */
   docsCount?: number;
-  /** Total skills count for the count badge. */
   skillsCount?: number;
 };
 
@@ -66,11 +63,9 @@ export function LibraryShell({
       </nav>
 
       <div className="proto-library-pane" role="tabpanel">
-        <div className="proto-library-empty">
-          {active === "docs" && "Docs pane lands in Phase 3 — wiki topic tree + chunks viewer."}
-          {active === "memories" && "Memories pane lands in Phase 3 — pending review + daily digest + by-source groups."}
-          {active === "skills" && "Skills pane lands in Phase 4 — by-agent grouping + skill markdown cards."}
-        </div>
+        {active === "docs" && <LibraryDocsPane onOpenSource={onSelect} />}
+        {active === "memories" && <LibraryMemoriesPane />}
+        {active === "skills" && <LibrarySkillsPane />}
       </div>
     </div>
   );
