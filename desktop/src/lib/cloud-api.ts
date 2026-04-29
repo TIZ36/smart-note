@@ -133,6 +133,29 @@ export const patchDocument = (
   patch: { name?: string; kind?: string; metadata?: Record<string, unknown> },
 ) => call<CloudDocument>("PATCH", `/v1/documents/${id}`, patch);
 
+// Wiki smartsheet — chapter-based concept extraction matrix.
+// Distinct from /v1/enrich/run (line-level tag classification).
+// Produces, per chapter: entities, key claims, open questions, refs.
+// Backend endpoint coming alongside this commit; until deployed
+// the call surfaces a "not yet" message in the UI.
+export type WikiSmartsheetChapter = {
+  index: number;
+  title: string;
+  entities: string[];
+  claims: string[];
+  questions: string[];
+  refs: string[];
+};
+export type WikiSmartsheet = {
+  document_id: string;
+  built_at: string | null;
+  chapters: WikiSmartsheetChapter[];
+};
+export const buildWikiSmartsheet = (id: string) =>
+  call<WikiSmartsheet>("POST", `/v1/wiki-smartsheet/${id}/build`, {});
+export const getWikiSmartsheet = (id: string) =>
+  call<WikiSmartsheet>("GET", `/v1/wiki-smartsheet/${id}`);
+
 export const createDocument = (req: {
   name: string;
   content: string;

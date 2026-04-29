@@ -639,12 +639,17 @@
   background: var(--color-text-muted);
 }
 
-/* Inline composed answer (B1) — pushes feed down on Enter */
+/* Inline composed answer (B1) — pushes feed down on Enter.
+ * Caps height + internal scroll so 8 chunks × 6-path scores
+ * doesn't eat all the canvas leaving the feed unscrollable. */
 .proto-atelier-stream-answer {
   max-width: 880px;
   width: 100%;
   margin: 0 auto 8px;
   padding: 0 24px;
+  flex-shrink: 0;
+  max-height: 50vh;
+  overflow-y: auto;
 }
 .proto-atelier-stream-answer > * {
   border: 1px solid var(--color-border);
@@ -1273,6 +1278,59 @@
   font-weight: 500;
 }
 .proto-library-btn-primary:hover { color: var(--color-bg-primary); opacity: 0.92; }
+
+/* Raw / KN view-mode toggle — segmented control at left of
+ * Library Docs actions row. Tab role for keyboard nav. */
+.proto-library-view-toggle {
+  display: inline-flex;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  overflow: hidden;
+  height: 28px;
+  background: var(--color-bg-primary);
+}
+.proto-library-view-toggle button {
+  padding: 0 9px;
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11.5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: color 160ms ease-out, background 160ms ease-out;
+}
+.proto-library-view-toggle button:hover { color: var(--color-text-primary); }
+.proto-library-view-toggle button[aria-selected="true"] {
+  background: var(--color-text-primary);
+  color: var(--color-bg-primary);
+}
+.proto-library-view-toggle button + button {
+  border-left: 1px solid var(--color-border);
+}
+
+/* Raw markdown source render — read-only, no fancy CodeMirror.
+ * Plain monospace pre with line wrap so users can copy/select. */
+.proto-library-content-scroll-raw {
+  padding: 0;
+}
+.proto-library-raw {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--color-text-primary);
+  background: var(--color-bg-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  padding: 20px 28px 48px;
+  max-width: 880px;
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+}
 
 /* Inline kind picker — sits in the Library Docs actions row.
  * Native select kept (consistent OS chrome on macOS) but styled to
