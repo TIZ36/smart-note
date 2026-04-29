@@ -598,10 +598,27 @@ async function fetchLiveSettings() {
 }
 
 ipcMain.handle("read_settings", async () => {
+  // Per-user credential storage lives in userData/cloud-creds.json.
+  // We keep cloud_sync_url + api_key OUT of the .env fallback path
+  // (.env is shared with the dev's local stack and would auto-bind
+  // each user to whatever credentials the developer happened to have).
+  // User must enter them via Settings → SmartNote Cloud, where they
+  // get persisted to userData (per-user, not shipped with the app).
+  let userCreds = { cloud_sync_url: "", cloud_sync_api_key: "", cloud_sync_enabled: false };
+  try {
+    const credsPath = path.join(app.getPath("userData"), "cloud-creds.json");
+    if (fs.existsSync(credsPath)) {
+      const raw = JSON.parse(fs.readFileSync(credsPath, "utf8"));
+      userCreds = {
+        cloud_sync_url: typeof raw.cloud_sync_url === "string" ? raw.cloud_sync_url : "",
+        cloud_sync_api_key: typeof raw.cloud_sync_api_key === "string" ? raw.cloud_sync_api_key : "",
+        cloud_sync_enabled: !!raw.cloud_sync_enabled,
+      };
+    }
+  } catch { /* corrupt creds file → behave as if blank */ }
+
   const live = await fetchLiveSettings();
   if (live && typeof live === "object") {
-    // Backend is the source of truth. Coerce booleans since the backend
-    // returns them typed already but we defensively normalize.
     return {
       embedding_mode: live.embedding_mode ?? "local",
       ai_features_enabled: live.ai_features_enabled !== false,
@@ -613,19 +630,20 @@ ipcMain.handle("read_settings", async () => {
       provider_embed_model: live.provider_embed_model ?? "text-embedding-3-small",
       ingest_ai_enabled: !!live.ingest_ai_enabled,
       ingest_ai_model: live.ingest_ai_model ?? "",
-      cloud_sync_enabled: !!live.cloud_sync_enabled,
-      cloud_sync_url: live.cloud_sync_url ?? "",
-      cloud_sync_api_key: live.cloud_sync_api_key ?? "",
+      // Cloud creds: ALWAYS from userData (per-user). Never from .env
+      // or backend live-settings — those would auto-bind a fresh user
+      // to dev/shared credentials.
+      cloud_sync_enabled: userCreds.cloud_sync_enabled,
+      cloud_sync_url: userCreds.cloud_sync_url,
+      cloud_sync_api_key: userCreds.cloud_sync_api_key,
     };
   }
-  // Backend offline — fall back to .env. Covers first-launch and the case
-  // where the user opens Settings before the gateway has started.
+  // Backend offline — fall back to .env for non-cloud settings only.
   const envPath = path.join(serverRoot(), ".env");
   const content = fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf8") : "";
   const map = parseEnvFile(content);
   const ingestAi = map.get("INGEST_AI_ENABLED")?.toLowerCase() ?? "";
   const aiFeatures = map.get("AI_FEATURES_ENABLED")?.toLowerCase() ?? "true";
-  const cloudSyncEnabled = map.get("CLOUD_SYNC_ENABLED")?.toLowerCase() ?? "";
   return {
     embedding_mode: map.get("EMBEDDING_MODE") ?? "local",
     ai_features_enabled: !["false", "0", "no"].includes(aiFeatures),
@@ -637,9 +655,10 @@ ipcMain.handle("read_settings", async () => {
     provider_embed_model: map.get("PROVIDER_EMBED_MODEL") ?? "text-embedding-3-small",
     ingest_ai_enabled: ["true", "1", "yes"].includes(ingestAi),
     ingest_ai_model: map.get("INGEST_AI_MODEL") ?? "",
-    cloud_sync_enabled: ["true", "1", "yes"].includes(cloudSyncEnabled),
-    cloud_sync_url: map.get("CLOUD_SYNC_URL") ?? "",
-    cloud_sync_api_key: map.get("CLOUD_SYNC_API_KEY") ?? "",
+    // Cloud creds always from per-user file, never from .env.
+    cloud_sync_enabled: userCreds.cloud_sync_enabled,
+    cloud_sync_url: userCreds.cloud_sync_url,
+    cloud_sync_api_key: userCreds.cloud_sync_api_key,
   };
 });
 
@@ -648,7 +667,24 @@ ipcMain.handle("write_settings", async (_, { newSettings }) => {
   const existing = fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf8") : "";
   const aiEnabledStr = newSettings.ingest_ai_enabled ? "true" : "false";
   const aiFeaturesStr = newSettings.ai_features_enabled === false ? "false" : "true";
-  const cloudSyncEnabledStr = newSettings.cloud_sync_enabled ? "true" : "false";
+  // Cloud creds get persisted PER-USER in userData, NOT to .env, so
+  // a fresh install never inherits dev/shared credentials. Each
+  // user must enter their own URL + API key via Settings →
+  // SmartNote Cloud the first time they want to connect.
+  try {
+    const credsPath = path.join(app.getPath("userData"), "cloud-creds.json");
+    fs.writeFileSync(credsPath, JSON.stringify({
+      cloud_sync_enabled: !!newSettings.cloud_sync_enabled,
+      cloud_sync_url: newSettings.cloud_sync_url ?? "",
+      cloud_sync_api_key: newSettings.cloud_sync_api_key ?? "",
+      saved_at: new Date().toISOString(),
+    }, null, 2), "utf8");
+    // chmod 600 so the API key isn't world-readable on multi-user machines
+    try { fs.chmodSync(credsPath, 0o600); } catch { /* best-effort */ }
+  } catch (e) {
+    console.warn("Failed to persist cloud creds:", e);
+  }
+
   const updates = new Map([
     ["EMBEDDING_MODE", newSettings.embedding_mode],
     ["AI_FEATURES_ENABLED", aiFeaturesStr],
@@ -660,11 +696,8 @@ ipcMain.handle("write_settings", async (_, { newSettings }) => {
     ["PROVIDER_EMBED_MODEL", newSettings.provider_embed_model],
     ["INGEST_AI_ENABLED", aiEnabledStr],
     ["INGEST_AI_MODEL", newSettings.ingest_ai_model],
-    // Cloud sync — mirrored to .env so a restart with the backend down
-    // still boots with the right config.
-    ["CLOUD_SYNC_ENABLED", cloudSyncEnabledStr],
-    ["CLOUD_SYNC_URL", newSettings.cloud_sync_url ?? ""],
-    ["CLOUD_SYNC_API_KEY", newSettings.cloud_sync_api_key ?? ""],
+    // CLOUD_SYNC_* deliberately excluded from .env — they live only
+    // in per-user userData/cloud-creds.json.
   ]);
   const writtenKeys = new Set();
   const lines = [];
