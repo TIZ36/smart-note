@@ -501,6 +501,36 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
   // sources there, where the user picks them and triggers AI capabilities
   // explicitly. This keeps the editor focused on writing.
 
+  // Global ⌘B re-routes to the editor's bookmark keymap even when
+  // focus has drifted (clicked a chip in the view strip, hit a
+  // header button, etc). CodeMirror's Mod-b binding only fires when
+  // the editor itself owns focus; this re-fires the keystroke at
+  // .cm-content so the user's bookmark muscle memory always works
+  // anywhere on the Note surface.
+  useEffect(() => {
+    if (!rawPath) return;
+    function onKey(e: KeyboardEvent) {
+      const isMod = e.metaKey || e.ctrlKey;
+      if (!isMod || e.key.toLowerCase() !== "b") return;
+      const cm = document.querySelector<HTMLElement>(".cm-content");
+      if (!cm) return;
+      // If editor already has focus, let CodeMirror handle natively.
+      if (cm.contains(document.activeElement)) return;
+      e.preventDefault();
+      cm.focus();
+      cm.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "b",
+        code: "KeyB",
+        metaKey: e.metaKey,
+        ctrlKey: e.ctrlKey,
+        bubbles: true,
+        cancelable: true,
+      }));
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [rawPath]);
+
   // Trigger the editor's native ⌘S save by synthesizing a keydown.
   // CodeMirror's keymap picks it up so save flows through the same
   // path as user-typed ⌘S (handleSave callback below).

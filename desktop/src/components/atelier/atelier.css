@@ -1846,11 +1846,14 @@
   min-height: 0;
 }
 
-/* Floating action stack (bookmarks, packs, jump-to-bottom) */
+/* Floating action stack (bookmarks, packs, jump-to-bottom).
+ * Bottom-right corner so it sits below the user's reading line and
+ * doesn't compete with the editor's top breathing room. Vertical
+ * stack of badge-shaped buttons. */
 .proto-note-v3-floating-stack {
   position: absolute;
-  right: 16px;
-  top: 16px;
+  right: 18px;
+  bottom: 18px;
   display: flex;
   flex-direction: column;
   gap: 8px;
