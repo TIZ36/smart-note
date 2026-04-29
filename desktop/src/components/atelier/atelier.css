@@ -330,6 +330,282 @@
   flex-direction: column;
   gap: 16px;
 }
+/* Cloud-modal top tabs — split the modal into 4 functional surfaces
+   (Connection · AI provider · Workspace · MCP) so each one owns its
+   own vertical space. Sticky at modal-body top so they survive
+   scroll within a tall tab body. */
+.proto-modal-tabs {
+  display: flex;
+  gap: 4px;
+  margin: -4px -2px 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--color-border);
+  position: sticky;
+  top: 0;
+  background: var(--color-bg-elevated);
+  z-index: 1;
+}
+.proto-modal-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--color-text-muted);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.proto-modal-tab:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
+}
+.proto-modal-tab-active {
+  color: var(--color-text-primary);
+  background: color-mix(in oklab, var(--color-accent) 12%, transparent);
+  font-weight: 500;
+}
+.proto-modal-tab-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.proto-modal-tab-dot-ok { background: var(--color-success); }
+.proto-modal-tab-dot-warn { background: var(--color-warning); }
+
+/* ── Spotlight palette ────────────────────────────────────────────
+ * Global ⌘K command surface. Apple-style frosted glass: full-screen
+ * dim backdrop + centered translucent panel. backdrop-filter is a
+ * Chromium-supported feature so Electron renders it natively. */
+.proto-spotlight-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 14vh;
+  background: rgba(0, 0, 0, 0.42);
+  animation: proto-spotlight-in 140ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+@keyframes proto-spotlight-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.proto-spotlight {
+  width: min(680px, 92vw);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  /* Solid surface that matches the main app's elevated panels
+     (CloudModal, settings cards). The "floating glass" effect
+     is provided by the transparent BrowserWindow around it —
+     no backdrop-filter on the panel itself, which was causing
+     a flicker on every keystroke (Chromium re-composites the
+     blur layer on each child paint). */
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+  box-shadow:
+    0 30px 80px -20px rgba(0, 0, 0, 0.55),
+    0 1px 0 color-mix(in oklab, var(--color-text-primary) 4%, transparent) inset;
+  overflow: hidden;
+  animation: proto-spotlight-pop 180ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+/* Window mode: the panel IS the entire window. No drag region —
+   Apple's Spotlight isn't draggable either, and putting -webkit-app-
+   region: drag on the root caused all clicks (input / buttons /
+   result rows) to be swallowed by macOS's window-drag handling.
+   The transparent BrowserWindow shows desktop through the rounded
+   panel edges, giving the floating-glass effect for free. */
+.proto-spotlight-window-root {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+}
+.proto-spotlight-window {
+  width: 100%;
+  height: 100%;
+  max-height: 100%;
+  border-radius: 14px;
+}
+@keyframes proto-spotlight-pop {
+  from { transform: translateY(-8px) scale(0.985); opacity: 0; }
+  to   { transform: translateY(0) scale(1); opacity: 1; }
+}
+
+.proto-spotlight-input-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid color-mix(in oklab, var(--color-text-primary) 8%, transparent);
+}
+.proto-spotlight-input-icon {
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+.proto-spotlight-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-size: 16px;
+  font-family: inherit;
+  color: var(--color-text-primary);
+}
+.proto-spotlight-input::placeholder {
+  color: var(--color-text-muted);
+}
+.proto-spotlight-esc {
+  font-family: inherit;
+  font-size: 10px;
+  padding: 2px 7px;
+  color: var(--color-text-muted);
+  background: color-mix(in oklab, var(--color-text-primary) 8%, transparent);
+  border-radius: 4px;
+  border: 1px solid color-mix(in oklab, var(--color-text-primary) 6%, transparent);
+}
+
+.proto-spotlight-results {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 0;
+  min-height: 80px;
+}
+.proto-spotlight-empty {
+  padding: 24px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+.proto-spotlight-group + .proto-spotlight-group {
+  margin-top: 6px;
+}
+.proto-spotlight-group-head {
+  padding: 4px 16px 2px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+}
+.proto-spotlight-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 16px;
+  background: transparent;
+  border: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.proto-spotlight-row:hover {
+  background: color-mix(in oklab, var(--color-accent) 10%, transparent);
+}
+.proto-spotlight-row-icon {
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+.proto-spotlight-row-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+}
+.proto-spotlight-row-name {
+  font-size: 12.5px;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.proto-spotlight-row-snippet {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.proto-spotlight-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--color-text-muted);
+}
+.proto-spotlight-row-score {
+  padding: 1px 6px;
+  background: color-mix(in oklab, var(--color-accent) 12%, transparent);
+  color: var(--color-accent);
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.proto-spotlight-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid color-mix(in oklab, var(--color-text-primary) 8%, transparent);
+  background: color-mix(in oklab, var(--color-text-primary) 3%, transparent);
+}
+.proto-spotlight-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--color-text-primary);
+  background: color-mix(in oklab, var(--color-text-primary) 6%, transparent);
+  border: 1px solid color-mix(in oklab, var(--color-text-primary) 8%, transparent);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.proto-spotlight-action:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--color-accent) 14%, transparent);
+  border-color: color-mix(in oklab, var(--color-accent) 35%, transparent);
+}
+.proto-spotlight-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.proto-spotlight-flash {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+.proto-spotlight-flash-ok { color: var(--color-success); }
+.proto-spotlight-flash-err { color: var(--color-danger); }
+.proto-spotlight-spacer { flex: 1; }
+.proto-spotlight-close {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+.proto-spotlight-close:hover {
+  background: color-mix(in oklab, var(--color-text-primary) 8%, transparent);
+  color: var(--color-text-primary);
+}
 .proto-modal-section {
   display: flex;
   flex-direction: column;
@@ -736,6 +1012,118 @@
   border-radius: 0 0 8px 8px;
 }
 .proto-atelier-stream-answer-error { color: var(--color-danger); }
+
+/* LLM-synthesized answer — sits between the result-summary header and
+   the citation chunks list. Slightly elevated background so the
+   composed answer reads as a single, distinct surface. */
+.proto-atelier-stream-answer-synth {
+  border-top: 1px solid var(--color-border);
+  background: color-mix(in oklab, var(--color-accent) 4%, var(--color-bg-elevated));
+  padding: 12px 14px 10px;
+}
+.proto-atelier-stream-answer-synth-pending,
+.proto-atelier-stream-answer-synth-unavailable,
+.proto-atelier-stream-answer-synth-error {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+/* Reasoning ("Thinking") collapsible — sits above the answer body
+   when a reasoner model is streaming. Quieter than the answer itself
+   so visual hierarchy still favors the actual content. */
+.proto-atelier-stream-answer-think {
+  margin-bottom: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: color-mix(in oklab, var(--color-text-muted) 6%, transparent);
+}
+.proto-atelier-stream-answer-think > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+.proto-atelier-stream-answer-think > summary::-webkit-details-marker { display: none; }
+.proto-atelier-stream-answer-think-len {
+  margin-left: auto;
+  font-size: 10px;
+  opacity: 0.7;
+}
+.proto-atelier-stream-answer-think-body {
+  padding: 0 10px 8px;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--color-text-muted);
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.proto-atelier-stream-answer-cursor {
+  display: inline-block;
+  margin-left: 2px;
+  color: var(--color-accent);
+  animation: proto-stream-blink 1s steps(2) infinite;
+}
+@keyframes proto-stream-blink {
+  to { opacity: 0; }
+}
+
+.proto-atelier-stream-answer-stop {
+  margin-left: 8px;
+  padding: 1px 8px;
+  font-size: 10px;
+  font-family: inherit;
+  color: var(--color-text-muted);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.proto-atelier-stream-answer-stop:hover {
+  color: var(--color-danger);
+  border-color: color-mix(in oklab, var(--color-danger) 50%, var(--color-border));
+}
+
+.proto-atelier-stream-answer-synth-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--color-accent);
+  background: transparent;
+  border: 1px dashed color-mix(in oklab, var(--color-accent) 50%, transparent);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.proto-atelier-stream-answer-synth-cta:hover {
+  background: color-mix(in oklab, var(--color-accent) 8%, transparent);
+  border-style: solid;
+}
+.proto-atelier-stream-answer-synth-error { color: var(--color-danger); font-style: normal; }
+.proto-atelier-stream-answer-synth-body {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--color-text-primary);
+  white-space: pre-wrap;
+}
+.proto-atelier-stream-answer-synth-meta {
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
 .proto-atelier-stream-answer-chunks {
   border-top: 1px solid var(--color-border);
   background: var(--color-bg-primary);
@@ -1328,6 +1716,69 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+/* KN view — top tab bar + per-tab body. The tabs are sticky-ish at
+   the top of the scroll surface so the user always knows which slice
+   of the doc they're looking at. */
+.proto-library-kn {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+.proto-library-kn-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 12px;
+  position: sticky;
+  top: 0;
+  background: var(--color-bg-primary);
+  z-index: 1;
+}
+.proto-library-kn-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px 9px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--color-text-muted);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+}
+.proto-library-kn-tab:hover {
+  color: var(--color-text-primary);
+}
+.proto-library-kn-tab-active {
+  color: var(--color-text-primary);
+  border-bottom-color: var(--color-accent);
+  font-weight: 500;
+}
+.proto-library-kn-tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  padding: 0 5px;
+  height: 16px;
+  font-size: 10px;
+  color: var(--color-text-muted);
+  background: var(--color-bg-soft);
+  border-radius: 8px;
+}
+.proto-library-kn-tab-active .proto-library-kn-tab-count {
+  background: color-mix(in oklab, var(--color-accent) 15%, transparent);
+  color: var(--color-accent);
+}
+.proto-library-kn-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Buttons used inside library-content-bar + content scrolls */

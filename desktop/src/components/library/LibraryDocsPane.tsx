@@ -50,7 +50,15 @@ export function LibraryDocsPane({ onOpenSource }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("raw");
   const [rawContent, setRawContent] = useState<string | null>(null);
+  const [knData, setKnData] = useState<cloudApi.DocumentKn | null>(null);
+  const [knLoading, setKnLoading] = useState(false);
   const [copiedRef, setCopiedRef] = useState(false);
+  // Sub-tab inside the KN view. Tab set varies by document kind:
+  //   Note  → Pipeline · Chunks · Tag segments · Enrich history
+  //   Wiki  → Pipeline · Chunks · Chapters · Enrich history
+  // Resets to "pipeline" whenever the active doc changes so the user
+  // doesn't land on a wiki-only tab after switching to a note (and v.v.).
+  const [knTab, setKnTab] = useState<"pipeline" | "chunks" | "tags" | "chapters" | "enrich">("pipeline");
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function reload() {
@@ -154,14 +162,30 @@ export function LibraryDocsPane({ onOpenSource }: Props) {
   // changes. Cache result keyed by doc id so flipping back from KN
   // mode doesn't re-fetch.
   useEffect(() => {
-    if (!activeId) { setRawContent(null); return; }
+    if (!activeId) { setRawContent(null); setKnData(null); return; }
     let alive = true;
     setRawContent(null);
+    setKnData(null);
+    setKnTab("pipeline");  // reset KN sub-tab on doc change
     cloudApi.getDocument(activeId)
       .then((d) => alive && setRawContent(d.content || ""))
       .catch(() => alive && setRawContent("(failed to load content — cloud unreachable?)"));
     return () => { alive = false; };
   }, [activeId]);
+
+  // Fetch KN payload (chunks + tag_segments + enrich_jobs) lazily —
+  // only when the user opens KN mode. Cached per activeId so flipping
+  // back from Raw doesn't re-fetch.
+  useEffect(() => {
+    if (viewMode !== "kn" || !activeId) return;
+    if (knData && knData.document_id === activeId) return;
+    let alive = true;
+    setKnLoading(true);
+    cloudApi.getDocumentKn(activeId)
+      .then((d) => { if (alive) { setKnData(d); setKnLoading(false); } })
+      .catch(() => { if (alive) { setKnData(null); setKnLoading(false); } });
+    return () => { alive = false; };
+  }, [viewMode, activeId, knData]);
 
   // Direct reference — a stable URI that, when pasted into a Claude /
   // Cursor prompt, lets the agent resolve THIS exact document via
@@ -395,83 +419,14 @@ export function LibraryDocsPane({ onOpenSource }: Props) {
                   <pre className="proto-library-raw">{rawContent}</pre>
                 )
               ) : (
-                <div className="proto-library-card-list">
-                  {/* Pipeline status — clickable summary of KP pass state */}
-                  <div className="proto-doc-card">
-                    <div className="proto-doc-card-head">
-                      <div className="proto-doc-card-title">Pipeline status</div>
-                      <div className="proto-doc-card-meta">{active.id.slice(0, 8)}</div>
-                    </div>
-                    <div className="proto-doc-card-snippet">
-                      Created {fmtDate(active.created_at)}
-                      {active.updated_at && ` · updated ${fmtDate(active.updated_at)}`}
-                      {active.ingested_at
-                        ? ` · ingested ${fmtDate(active.ingested_at)}`
-                        : " · not yet ingested — run Embedding from KP"}
-                    </div>
-                    <div className="proto-doc-card-tags">
-                      <span className={cn("proto-tag", active.ingested_at && "proto-tag-accent")}>
-                        E: {active.ingested_at ? "embedded" : "pending"}
-                      </span>
-                      <span className="proto-tag">
-                        N: {(active.metadata as Record<string, unknown> | null)?.["enrich_status"] === "done" ? "enriched" : "pending"}
-                      </span>
-                      <span className="proto-tag">
-                        T: {Array.isArray((active.metadata as Record<string, unknown> | null)?.["ai_tags"])
-                          ? "tagged"
-                          : "pending"}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Document metadata snapshot */}
-                  {active.metadata && Object.keys(active.metadata).length > 0 && (
-                    <div className="proto-doc-card">
-                      <div className="proto-doc-card-head">
-                        <div className="proto-doc-card-title">Metadata</div>
-                      </div>
-                      <div className="proto-doc-card-tags">
-                        {Object.entries(active.metadata)
-                          .filter(([, v]) => typeof v !== "object")
-                          .slice(0, 12)
-                          .map(([k, v]) => (
-                            <span key={k} className="proto-tag" title={`${k}: ${String(v)}`}>
-                              {k}: {String(v).slice(0, 40)}
-                            </span>
-                          ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Smartsheet preview placeholder for wiki kind */}
-                  {kindOf(active) === "wiki_topic" && (
-                    <div className="proto-doc-card" style={{ borderStyle: "dashed" }}>
-                      <div className="proto-doc-card-head">
-                        <div className="proto-doc-card-title">Wiki smartsheet</div>
-                        <div className="proto-doc-card-meta">chapter × concept matrix</div>
-                      </div>
-                      <div className="proto-doc-card-snippet" style={{ color: "var(--color-text-muted)" }}>
-                        Click <em>Build wiki-smartsheet</em> above to extract per-chapter
-                        entities, key claims, open questions, and references. The result
-                        renders here as a structured table.
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Chunks list placeholder — backend endpoint
-                      /v1/documents/{id}/chunks lands alongside this commit */}
-                  <div className="proto-doc-card" style={{ borderStyle: "dashed" }}>
-                    <div className="proto-doc-card-head">
-                      <div className="proto-doc-card-title">Chunks</div>
-                      <div className="proto-doc-card-meta">{active.ingested_at ? "indexed" : "—"}</div>
-                    </div>
-                    <div className="proto-doc-card-snippet" style={{ color: "var(--color-text-muted)" }}>
-                      Per-chunk listing (text · dimension · keywords · scores) coming
-                      with the cloud /v1/documents/{`{id}`}/chunks endpoint.
-                      For now: search this doc via Stream's ⌘K to see chunks via 6-path retrieval.
-                    </div>
-                  </div>
-                </div>
+                <KnView
+                  doc={active}
+                  knData={knData}
+                  knLoading={knLoading}
+                  knTab={knTab}
+                  onKnTab={setKnTab}
+                  isWiki={kindOf(active) === "wiki_topic"}
+                />
               )}
             </div>
           </>
@@ -481,6 +436,353 @@ export function LibraryDocsPane({ onOpenSource }: Props) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/* KN view — top menu bar + per-tab body. Tab set differs by kind:
+ *
+ *   Note  → Pipeline · Chunks · Tag segments · Enrich
+ *   Wiki  → Pipeline · Chunks · Chapters · Enrich
+ *
+ * Pipeline status badges read directly from the /v1/documents/{id}/kn
+ * payload (chunks / tag_segments / wiki_chapters / enrich_jobs counts)
+ * — NOT from metadata flags. metadata.enrich_status / ai_tags lag the
+ * actual processing state, which is why KP and Library disagreed
+ * before. Single source of truth = the KN endpoint.
+ */
+type KnTab = "pipeline" | "chunks" | "tags" | "chapters" | "enrich";
+
+function KnView({
+  doc, knData, knLoading, knTab, onKnTab, isWiki,
+}: {
+  doc: cloudApi.CloudDocument;
+  knData: cloudApi.DocumentKn | null;
+  knLoading: boolean;
+  knTab: KnTab;
+  onKnTab: (t: KnTab) => void;
+  isWiki: boolean;
+}) {
+  // Available tabs depend on kind. Keep order stable so users build
+  // muscle memory: Pipeline first, content (chunks) next, AI output
+  // (tags or chapters) third, history last.
+  const tabs: { key: KnTab; label: string; count?: number }[] = [
+    { key: "pipeline", label: "Pipeline" },
+    { key: "chunks", label: "Chunks", count: knData?.chunks.length ?? 0 },
+    isWiki
+      ? { key: "chapters", label: "Chapters", count: knData?.wiki_chapters.length ?? 0 }
+      : { key: "tags", label: "Tag segments", count: knData?.tag_segments.length ?? 0 },
+    { key: "enrich", label: "Enrich", count: knData?.enrich_jobs.length ?? 0 },
+  ];
+  // Snap back to pipeline if the active tab disappeared (e.g. doc
+  // re-classified from note → wiki while open).
+  if (!tabs.some((t) => t.key === knTab)) {
+    onKnTab("pipeline");
+  }
+
+  return (
+    <div className="proto-library-kn">
+      <nav className="proto-library-kn-tabs" role="tablist" aria-label="Knowledge view">
+        {tabs.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            aria-selected={knTab === t.key}
+            onClick={() => onKnTab(t.key)}
+            className={cn("proto-library-kn-tab", knTab === t.key && "proto-library-kn-tab-active")}
+          >
+            {t.label}
+            {typeof t.count === "number" && (
+              <span className="proto-library-kn-tab-count">{t.count}</span>
+            )}
+          </button>
+        ))}
+      </nav>
+
+      <div className="proto-library-kn-body">
+        {knTab === "pipeline" && (
+          <PipelineStatus doc={doc} knData={knData} knLoading={knLoading} isWiki={isWiki} />
+        )}
+        {knTab === "chunks" && (
+          <ChunksTab knData={knData} knLoading={knLoading} />
+        )}
+        {knTab === "chapters" && isWiki && (
+          <ChaptersTab knData={knData} knLoading={knLoading} />
+        )}
+        {knTab === "tags" && !isWiki && (
+          <TagSegmentsTab knData={knData} knLoading={knLoading} />
+        )}
+        {knTab === "enrich" && (
+          <EnrichHistoryTab knData={knData} knLoading={knLoading} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PipelineStatus({
+  doc, knData, knLoading, isWiki,
+}: {
+  doc: cloudApi.CloudDocument;
+  knData: cloudApi.DocumentKn | null;
+  knLoading: boolean;
+  isWiki: boolean;
+}) {
+  // ── Source-of-truth derivation ──
+  // All badges read from the /v1/documents/{id}/kn payload, NOT from
+  // metadata flags. metadata can lag the actual processed state.
+  //
+  // Three pipeline artifacts, two different labels per kind:
+  //
+  //   Note kind:
+  //     E (embed)              — chunks exist in the vector index
+  //     R (aisegment)          — line-range tag segments produced by enrich
+  //     G (info-graph)         — entities + co-occurrence edges in the graph
+  //
+  //   Wiki kind:
+  //     E (embed)              — chunks exist in the vector index
+  //     R (wiki-knowledge-sheet) — per-chapter summary + keywords (Phase B)
+  //     G (info-graph)         — entities extracted from chapter abstracts
+  //
+  // R and G ride the same enrich/Phase-B pass (entity extraction is
+  // baked into the segment / chapter writer), so G ≈ R today. Kept
+  // as a separate badge because the conceptual artifact is different
+  // and they will diverge once graph-rebuild becomes incremental.
+  const chunkCount = knData?.chunks.length ?? 0;
+  const embedded = chunkCount > 0;
+
+  const segmentCount = knData?.tag_segments.length ?? 0;
+  const chapterCount = knData?.wiki_chapters.length ?? 0;
+  const summarizedChapters = (knData?.wiki_chapters || []).filter((c) => c.summarized).length;
+  const hasDoneJob = (knData?.enrich_jobs || []).some((j) => j.status === "done");
+
+  // R = per-kind AI artifact existence
+  const rDone = isWiki ? summarizedChapters > 0 : (segmentCount > 0 || hasDoneJob);
+  const rLabel = isWiki ? "wiki-knowledge-sheet" : "aisegment";
+  const rDetail = isWiki
+    ? (chapterCount > 0
+        ? `${summarizedChapters}/${chapterCount} chapters summarized`
+        : "no chapters yet — wiki Phase A produces them on Embedding")
+    : (segmentCount > 0
+        ? `${segmentCount} segments`
+        : (hasDoneJob ? "enrich job done but no segments" : "no enrich pass yet"));
+
+  // G = info-graph. Same truth as R for now — entity upsert rides
+  // segment / chapter writes. Future: separate truth when rebuild
+  // becomes per-doc incremental.
+  const gDone = rDone;
+
+  return (
+    <div className="proto-library-card-list">
+      <div className="proto-doc-card">
+        <div className="proto-doc-card-head">
+          <div className="proto-doc-card-title">Pipeline status</div>
+          <div className="proto-doc-card-meta">{doc.id.slice(0, 8)}</div>
+        </div>
+        <div className="proto-doc-card-snippet">
+          Created {fmtDate(doc.created_at)}
+          {doc.updated_at && ` · updated ${fmtDate(doc.updated_at)}`}
+          {knLoading && " · loading state…"}
+        </div>
+        <div className="proto-doc-card-tags">
+          <span
+            className={cn("proto-tag", embedded && "proto-tag-accent")}
+            title={embedded
+              ? `${chunkCount} chunks indexed`
+              : "no chunks yet — run Embedding from KP"}
+          >
+            E: embed{embedded ? ` (${chunkCount})` : " · pending"}
+          </span>
+          <span
+            className={cn("proto-tag", rDone && "proto-tag-accent")}
+            title={rDetail}
+          >
+            R: {rLabel}
+            {isWiki
+              ? (summarizedChapters > 0 ? ` (${summarizedChapters}/${chapterCount})` : " · pending")
+              : (segmentCount > 0 ? ` (${segmentCount})` : " · pending")}
+          </span>
+          <span
+            className={cn("proto-tag", gDone && "proto-tag-accent")}
+            title={gDone
+              ? "entities + co-occurrence edges built (rides R pass)"
+              : "no entities yet — completes alongside R"}
+          >
+            G: info-graph{gDone ? "" : " · pending"}
+          </span>
+        </div>
+      </div>
+
+      {/* Compact metadata snapshot — same place as before but shown
+          inside the Pipeline tab so it doesn't fight for attention. */}
+      {doc.metadata && Object.keys(doc.metadata).length > 0 && (
+        <div className="proto-doc-card">
+          <div className="proto-doc-card-head">
+            <div className="proto-doc-card-title">Metadata</div>
+          </div>
+          <div className="proto-doc-card-tags">
+            {Object.entries(doc.metadata)
+              .filter(([, v]) => typeof v !== "object")
+              .slice(0, 12)
+              .map(([k, v]) => (
+                <span key={k} className="proto-tag" title={`${k}: ${String(v)}`}>
+                  {k}: {String(v).slice(0, 40)}
+                </span>
+              ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ChunksTab({ knData, knLoading }: { knData: cloudApi.DocumentKn | null; knLoading: boolean }) {
+  if (knLoading) return <KnEmpty msg="loading…" />;
+  if (!knData || knData.chunks.length === 0) {
+    return <KnEmpty msg="Not yet embedded. Run Embedding from KP." />;
+  }
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      {knData.chunks.slice(0, 50).map((c) => (
+        <div key={c.id} style={{ padding: "6px 8px", borderRadius: 4, background: "var(--color-bg-soft)", fontSize: 11 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+            <span style={{ color: "var(--color-text-muted)", fontSize: 10, fontFamily: "ui-monospace, SFMono-Regular, monospace" }}>
+              dim · {c.dimension}
+            </span>
+            <span style={{ color: "var(--color-text-muted)" }}>L{c.line_start}–{c.line_end}</span>
+            {c.keywords.length > 0 && (
+              <span style={{ color: "var(--color-text-muted)", fontSize: 10 }}>
+                · {c.keywords.slice(0, 4).join(", ")}
+              </span>
+            )}
+          </div>
+          <div style={{ color: "var(--color-text-muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {c.text.slice(0, 160)}
+          </div>
+        </div>
+      ))}
+      {knData.chunks.length > 50 && (
+        <div style={{ fontSize: 10, color: "var(--color-text-muted)", textAlign: "center", padding: 4 }}>
+          +{knData.chunks.length - 50} more…
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ChaptersTab({ knData, knLoading }: { knData: cloudApi.DocumentKn | null; knLoading: boolean }) {
+  if (knLoading) return <KnEmpty msg="loading…" />;
+  if (!knData || knData.wiki_chapters.length === 0) {
+    return <KnEmpty msg="No chapters yet. Run Embedding from KP — Phase A splits the doc by H2 headings." />;
+  }
+  const summarized = knData.wiki_chapters.filter((c) => c.summarized).length;
+  return (
+    <>
+      {summarized < knData.wiki_chapters.length && (
+        <div className="proto-form-hint" style={{ marginBottom: 8 }}>
+          {summarized} of {knData.wiki_chapters.length} chapters summarized.
+          Run <em>Build wiki-abstract</em> from KP to fill in the rest.
+        </div>
+      )}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {knData.wiki_chapters.map((ch) => (
+          <div key={ch.id} style={{ padding: "8px 10px", borderRadius: 4, background: "var(--color-bg-soft)" }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 6, fontSize: 11 }}>
+              <span style={{ fontWeight: 600 }}>{ch.title || "(untitled)"}</span>
+              <span style={{ color: "var(--color-text-muted)", fontSize: 10 }}>
+                H{ch.level} · L{ch.line_start}–{ch.line_end}
+              </span>
+              {!ch.summarized && (
+                <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--color-text-muted)" }}>
+                  pending abstract
+                </span>
+              )}
+              {ch.summarized && (
+                <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--color-success)" }}>
+                  ✓ summarized
+                </span>
+              )}
+            </div>
+            {ch.summary && (
+              <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 6, lineHeight: 1.55 }}>
+                {ch.summary}
+              </div>
+            )}
+            {ch.keywords.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
+                {ch.keywords.slice(0, 8).map((k) => (
+                  <span key={k} className="proto-tag">{k}</span>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function TagSegmentsTab({ knData, knLoading }: { knData: cloudApi.DocumentKn | null; knLoading: boolean }) {
+  if (knLoading) return <KnEmpty msg="loading…" />;
+  if (!knData || knData.tag_segments.length === 0) {
+    return <KnEmpty msg="No tag segments yet. Run Enrich from KP." />;
+  }
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      {knData.tag_segments.slice(0, 30).map((t) => (
+        <div key={t.id} style={{ display: "flex", flexDirection: "column", gap: 2, padding: "6px 8px", borderRadius: 4, background: "var(--color-bg-soft)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
+            <span className="proto-tag proto-tag-accent">{t.tag}</span>
+            <span style={{ color: "var(--color-text-muted)" }}>L{t.line_start}–{t.line_end}</span>
+            {t.confidence > 0 && (
+              <span style={{ color: "var(--color-text-muted)", fontSize: 10 }}>
+                · {(t.confidence * 100).toFixed(0)}%
+              </span>
+            )}
+          </div>
+          {t.summary && (
+            <div style={{ fontSize: 11, color: "var(--color-text-muted)" }}>{t.summary}</div>
+          )}
+        </div>
+      ))}
+      {knData.tag_segments.length > 30 && (
+        <div style={{ fontSize: 10, color: "var(--color-text-muted)", textAlign: "center", padding: 4 }}>
+          +{knData.tag_segments.length - 30} more…
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EnrichHistoryTab({ knData, knLoading }: { knData: cloudApi.DocumentKn | null; knLoading: boolean }) {
+  if (knLoading) return <KnEmpty msg="loading…" />;
+  if (!knData || knData.enrich_jobs.length === 0) {
+    return <KnEmpty msg="No enrich passes yet." />;
+  }
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11 }}>
+      {knData.enrich_jobs.map((j) => (
+        <div key={j.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 4, background: "var(--color-bg-soft)" }}>
+          <span className={cn("proto-tag", j.status === "done" && "proto-tag-accent")}>{j.status}</span>
+          <span style={{ color: "var(--color-text-muted)" }}>{j.executor || "—"}</span>
+          {j.tokens_total > 0 && (
+            <span style={{ color: "var(--color-text-muted)" }}>· {j.tokens_total.toLocaleString()} tok</span>
+          )}
+          <span style={{ marginLeft: "auto", color: "var(--color-text-muted)", fontSize: 10 }}>
+            {fmtDate(j.finished_at || j.dispatched_at || j.created_at || "")}
+          </span>
+          {j.error && <span title={j.error} style={{ color: "var(--color-danger)" }}>!</span>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function KnEmpty({ msg }: { msg: string }) {
+  return (
+    <div style={{ padding: 24, fontSize: 12, color: "var(--color-text-muted)", textAlign: "center" }}>
+      {msg}
     </div>
   );
 }

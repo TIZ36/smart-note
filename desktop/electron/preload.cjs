@@ -26,4 +26,26 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.on("smartnote:ws-event", listener);
     return () => ipcRenderer.removeListener("smartnote:ws-event", listener);
   },
+  // Streaming AI chat chunks — pushed from main when ai_chat_stream
+  // is active. Payloads include the request id so multiple concurrent
+  // streams can be routed correctly.
+  onAiChatChunk(callback) {
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on("smartnote:ai-chat-chunk", listener);
+    return () => ipcRenderer.removeListener("smartnote:ai-chat-chunk", listener);
+  },
+  // Global ⌘K → main process focuses the window and emits this so
+  // the renderer opens the Spotlight palette overlay.
+  onSpotlightOpen(callback) {
+    const listener = () => callback();
+    ipcRenderer.on("smartnote:spotlight-open", listener);
+    return () => ipcRenderer.removeListener("smartnote:spotlight-open", listener);
+  },
+  // Spotlight (separate window) picked a result → main forwards
+  // the channel id to the main window so it can navigate.
+  onOpenSource(callback) {
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on("smartnote:open-source", listener);
+    return () => ipcRenderer.removeListener("smartnote:open-source", listener);
+  },
 });

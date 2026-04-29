@@ -94,12 +94,29 @@ export function RAGPage() {
   // per doc, so we drive concurrency client-side and update this
   // map as each call returns.
   const [runs, setRuns] = useState<Map<string, RunStatus>>(new Map());
+  // Cloud provider availability — drives whether the Enrich /
+  // Wiki-abstract tiles are clickable. Both burn cloud LLM tokens, so
+  // without an api_key on /v1/enrich/provider they 412 anyway. Better
+  // to gate up-front + tell the user where to fix it.
+  const [cloudProviderReady, setCloudProviderReady] = useState<boolean | null>(null);
 
   // Tags
   const [tags, setTags] = useState<cloudApi.CloudTag[] | null>(null);
   const [tagDraft, setTagDraft] = useState("");
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const [editingTagDesc, setEditingTagDesc] = useState("");
+
+  // Cloud provider readiness — fetch once on mount. Refreshed when
+  // the user explicitly retries an action (the run* functions catch
+  // 412 / 409 from the cloud and re-check). Polling on a timer was
+  // causing a churn of failed fetches when cloud was unreachable.
+  useEffect(() => {
+    let alive = true;
+    cloudApi.fetchEnrichProvider()
+      .then((cfg) => { if (alive) setCloudProviderReady(!!cfg.has_api_key); })
+      .catch(() => { if (alive) setCloudProviderReady(false); });
+    return () => { alive = false; };
+  }, []);
 
   // Load sources (notes + wiki) from cloud, enriched with per-source
   // status badges derived from the enrich-jobs feed.
@@ -298,6 +315,10 @@ export function RAGPage() {
 
   async function runEnrich() {
     if (selected.size === 0) return;
+    if (!cloudProviderReady) {
+      flashSet("Cloud AI provider not configured — open Cloud panel → Cloud AI provider.", "err");
+      return;
+    }
     await runBulk("enrich", [...selected], "Enrich-dispatched", (id) => cloudApi.runEnrich(id), 3);
   }
 
@@ -312,21 +333,15 @@ export function RAGPage() {
       flashSet("Select at least one Wiki topic to build a smartsheet.", "err");
       return;
     }
+    if (!cloudProviderReady) {
+      flashSet("Cloud AI provider not configured — open Cloud panel → Cloud AI provider.", "err");
+      return;
+    }
     await runBulk(
       "tag",  // re-using the tag run kind for this stage's progress slot
       wikiIds,
-      "Smartsheet built for",
-      async (id) => {
-        try {
-          await cloudApi.buildWikiSmartsheet(id);
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          if (msg.includes("404")) {
-            throw new Error("/v1/wiki-smartsheet endpoint not deployed yet (next cloud release).");
-          }
-          throw e;
-        }
-      },
+      "Wiki abstract built for",
+      async (id) => { await cloudApi.buildWikiAbstract(id); },
       2,
     );
   }
@@ -431,6 +446,13 @@ export function RAGPage() {
   }
 
   // ── Tag CRUD ────────────────────────────────────────────────────
+  // Notify the rest of the app (Note top-strip, etc.) that the
+  // workspace tag vocabulary changed. Window-event broadcast keeps
+  // the contract loose so we don't have to thread callbacks down.
+  const _broadcastTagsChanged = () => {
+    try { window.dispatchEvent(new CustomEvent("smartnote:tags-changed")); } catch { /* silent */ }
+  };
+
   async function addTag() {
     const name = tagDraft.trim();
     if (!name) return;
@@ -439,6 +461,7 @@ export function RAGPage() {
       setTagDraft("");
       const t = await cloudApi.fetchTags();
       setTags(t);
+      _broadcastTagsChanged();
     } catch (e) {
       flashSet(e instanceof Error ? e.message : String(e), "err");
     }
@@ -451,6 +474,7 @@ export function RAGPage() {
       setEditingTagDesc("");
       const t = await cloudApi.fetchTags();
       setTags(t);
+      _broadcastTagsChanged();
     } catch (e) {
       flashSet(e instanceof Error ? e.message : String(e), "err");
     }
@@ -462,6 +486,7 @@ export function RAGPage() {
       await cloudApi.deleteTag(name);
       const t = await cloudApi.fetchTags();
       setTags(t);
+      _broadcastTagsChanged();
     } catch (e) {
       flashSet(e instanceof Error ? e.message : String(e), "err");
     }
@@ -584,9 +609,20 @@ export function RAGPage() {
                           : <Square size={13} strokeWidth={1.6} />}
                         <span className="proto-atelier-rag-tree-item-name">{s.name}</span>
                         <span className="proto-atelier-rag-tree-item-status">
-                          <StatusDot on={s.embedded} title="Embedding" letter="E" />
-                          <StatusDot on={s.enriched} title="Enriched"  letter="N" />
-                          <StatusDot on={s.tagged}   title="AI tags"   letter="T" />
+                          {/* Three-letter pipeline state — matches Library KN
+                              badges so KP and Library agree. R label varies
+                              by kind: note → "aisegment", wiki → "wiki-knowledge-sheet". */}
+                          <StatusDot on={s.embedded} title="Embed — chunks indexed" letter="E" />
+                          <StatusDot
+                            on={s.enriched}
+                            title={s.kind === "wiki" ? "Wiki knowledge-sheet — per-chapter summaries" : "AI segment — line-range tag classification"}
+                            letter="R"
+                          />
+                          <StatusDot
+                            on={s.enriched}
+                            title="Info-graph — entities + co-occurrence edges (rides R)"
+                            letter="G"
+                          />
                         </span>
                         <span className="proto-atelier-rag-tree-item-meta">
                           {Math.round(s.byteSize / 1024)}k
@@ -631,8 +667,10 @@ export function RAGPage() {
                   icon={<Sparkles size={14} />}
                   title={e.title}
                   tone="llm"
-                  desc={e.desc}
-                  disabled={selected.size === 0 || busyKinds.has("enrich")}
+                  desc={cloudProviderReady === false
+                    ? "Cloud AI provider not set — open Cloud panel to add one."
+                    : e.desc}
+                  disabled={selected.size === 0 || busyKinds.has("enrich") || cloudProviderReady === false}
                   running={busyKinds.has("enrich")}
                   progress={runStats.enrich.total > 0 ? { done: runStats.enrich.done + runStats.enrich.failed, total: runStats.enrich.total } : undefined}
                   onClick={runEnrich}
@@ -650,11 +688,13 @@ export function RAGPage() {
                     title="Build wiki-smartsheet"
                     tone="llm"
                     desc={
-                      wikiSelCount === 0
+                      cloudProviderReady === false
+                        ? "Cloud AI provider not set — open Cloud panel to add one."
+                        : wikiSelCount === 0
                         ? "Per-chapter concept matrix (entities × claims × refs). Select Wiki docs first."
                         : `${wikiSelCount} wiki doc${wikiSelCount === 1 ? "" : "s"} selected — extract chapter concepts.`
                     }
-                    disabled={wikiSelCount === 0 || busyKinds.has("tag")}
+                    disabled={wikiSelCount === 0 || busyKinds.has("tag") || cloudProviderReady === false}
                     running={busyKinds.has("tag")}
                     progress={runStats.tag.total > 0 ? { done: runStats.tag.done + runStats.tag.failed, total: runStats.tag.total } : undefined}
                     onClick={runWikiSmartsheet}

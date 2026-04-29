@@ -108,6 +108,28 @@ export default function App() {
     refreshTags();
   }, [refreshTags]);
 
+  // ⌘K Spotlight is its own frameless BrowserWindow (see
+  // electron/main.mjs ensureSpotlightWindow). When the user picks a
+  // result there, main forwards "smartnote:open-source" with the
+  // channel id and brings the main window forward — react by
+  // switching to that channel here.
+  useEffect(() => {
+    const off = window.desktop?.onOpenSource?.((data) => {
+      if (data?.channel) setActiveChannel(data.channel as ChannelId);
+    });
+    return () => { off?.(); };
+  }, []);
+
+  // Listen for tag-vocabulary changes from anywhere in the app —
+  // RAGPage's tag CRUD (add / rename / delete) dispatches this so
+  // the Note top-strip updates without an app restart. Avoids
+  // threading callbacks through every intermediate component.
+  useEffect(() => {
+    const handler = () => refreshTags();
+    window.addEventListener("smartnote:tags-changed", handler);
+    return () => window.removeEventListener("smartnote:tags-changed", handler);
+  }, [refreshTags]);
+
   // Poll pending memory proposals every 30s. Errors are silent — the
   // rail badge is decorative, not critical, so a momentary cloud blip
   // shouldn't error-flash the UI.
@@ -220,6 +242,11 @@ export default function App() {
         });
         // Trigger Library / RAG re-fetch via build version bump.
         setBuildVersion((v) => v + 1);
+        // Workspace tag vocabulary may have grown during enrichment
+        // (classifier auto-creates tags). Re-pull so the Note top
+        // strip and other tag chips reflect the new vocabulary
+        // without an app restart.
+        refreshTags();
       } else if (e.type === "memory_proposed") {
         const ev = e as { agent?: string; kind?: string; preview?: string };
         setToast({
@@ -311,6 +338,8 @@ export default function App() {
       <AnimatePresence>
         {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
       </AnimatePresence>
+      {/* Spotlight lives in its own frameless BrowserWindow now —
+          opens via global ⌘K, NOT inside the main canvas. */}
     </>
   );
 }

@@ -4,6 +4,7 @@ import {
   Clock, FileEdit, ArrowRight, X, SlidersHorizontal,
 } from "lucide-react";
 import * as cloudApi from "@/lib/cloud-api";
+import * as electron from "@/lib/electron";
 import type { ChannelId } from "@/lib/types";
 import { cn } from "@/lib/cn";
 
@@ -97,11 +98,26 @@ type FeedEvent = {
   iconAccent?: boolean;
 };
 
+type SynthState =
+  | { status: "idle" }
+  | { status: "loading" }
+  // Streaming — chunks are accumulating. reasoning lights up during
+  // the chain-of-thought phase (DeepSeek-Reasoner / o1 / Qwen-thinking);
+  // text is the visible answer that follows.
+  | { status: "streaming"; reasoning: string; text: string; cancel: () => void }
+  | { status: "ready"; reasoning: string; text: string; total_tokens: number; finish_reason: string }
+  | { status: "unavailable"; err: string }
+  | { status: "error"; err: string };
+
 type AnswerState = {
   status: "loading" | "ready" | "error";
   query: string;
   hits: cloudApi.ChunkSearchHit[];
   err?: string;
+  /** LLM-synthesized answer composed on top of the retrieval results
+   *  using the user's local chat provider. Lazy — populated after
+   *  retrieval lands; absent when the user hasn't run a query yet. */
+  synth?: SynthState;
 };
 
 const POLL_MS = 15_000;
@@ -326,16 +342,21 @@ export function StreamHome({ onSelect, onOpenPalette }: Props) {
     setAnswer({ status: "loading", query: q, hits: [] });
     try {
       if (!(await cloudApi.isCloudConfigured())) {
-        setAnswer({ status: "error", query: q, hits: [], err: "Cloud not configured. Open Settings → AI providers." });
+        setAnswer({ status: "error", query: q, hits: [], err: "Cloud not configured. Open the Cloud panel to add URL + API key." });
         return;
       }
       const res = await cloudApi.searchChunks(q, { topk: retrieval.topk });
-      // Client-side min-score filter — backend doesn't expose it as
-      // a query param, so we trim after the fact.
       const filtered = retrieval.minScore > 0
         ? res.results.filter((h) => h.score >= retrieval.minScore)
         : res.results;
-      setAnswer({ status: "ready", query: q, hits: filtered });
+      // Show retrieval immediately, then layer the LLM synthesis on
+      // top once it lands. If the local provider isn't configured we
+      // skip synthesis entirely and surface a small notice — the
+      // chunk list alone is still useful.
+      // Default = retrieval only. AI answer composition is opt-in
+      // via the Compose answer button below — burning LLM tokens on
+      // every search (and waiting for it to finish) was bad UX.
+      setAnswer({ status: "ready", query: q, hits: filtered, synth: { status: "idle" } });
     } catch (e) {
       setAnswer({
         status: "error",
@@ -344,6 +365,67 @@ export function StreamHome({ onSelect, onOpenPalette }: Props) {
         err: e instanceof Error ? e.message : String(e),
       });
     }
+  }
+
+  // Streaming RAG answer. Sends top-N chunks as numbered citations,
+  // then renders reasoning_content (when present — DeepSeek-Reasoner
+  // / o1 / Qwen-thinking) and content as separate streams. Inspired
+  // by chaya-engine's openai_llm.go dual-stream pattern.
+  function synthesizeAnswer(q: string, hits: cloudApi.ChunkSearchHit[]) {
+    if (hits.length === 0) {
+      setAnswer((a) => a && { ...a, synth: { status: "idle" } });
+      return;
+    }
+    const ctxBlocks = hits.slice(0, 8).map((h, i) => (
+      `[${i + 1}] ${h.document_name}${h.line_start > 0 ? ` (L${h.line_start}–${h.line_end})` : ""}\n${h.text.slice(0, 700)}`
+    )).join("\n\n");
+    const system = (
+      "You are SmartNote's answer composer. Answer the user's question using ONLY " +
+      "the numbered context excerpts. Cite each claim with [N] markers matching " +
+      "the excerpt numbers. If the context doesn't contain the answer, say so " +
+      "plainly. Match the user's language. Be concise — 1 to 4 short paragraphs."
+    );
+    const user = `Question: ${q}\n\nContext:\n${ctxBlocks}`;
+
+    let reasoning = "";
+    let text = "";
+    const cancel = electron.aiChatStream({ system, user, temperature: 0.2 }, (chunk) => {
+      if (chunk.type === "reasoning") {
+        reasoning += chunk.text;
+        setAnswer((a) => a && { ...a, synth: { status: "streaming", reasoning, text, cancel } });
+      } else if (chunk.type === "content") {
+        text += chunk.text;
+        setAnswer((a) => a && { ...a, synth: { status: "streaming", reasoning, text, cancel } });
+      } else if (chunk.type === "done") {
+        if (!text.trim() && !reasoning.trim()) {
+          const why = chunk.finish_reason
+            ? `provider returned no text (finish_reason: ${chunk.finish_reason})`
+            : "provider returned no text";
+          setAnswer((a) => a && { ...a, synth: { status: "error", err: why } });
+          return;
+        }
+        setAnswer((a) => a && {
+          ...a,
+          synth: {
+            status: "ready",
+            reasoning,
+            text: text.trim() || reasoning,  // fallback: show reasoning if no content
+            total_tokens: chunk.total_tokens || 0,
+            finish_reason: chunk.finish_reason || "",
+          },
+        });
+      } else if (chunk.type === "error") {
+        const msg = chunk.err || "stream error";
+        const notConfigured = /local provider not configured/i.test(msg);
+        setAnswer((a) => a && {
+          ...a,
+          synth: { status: notConfigured ? "unavailable" : "error", err: msg },
+        });
+      }
+    });
+    // Initial state — opens the streaming block immediately so the
+    // user sees the request was accepted, even before first chunk.
+    setAnswer((a) => a && { ...a, synth: { status: "streaming", reasoning: "", text: "", cancel } });
   }
 
   function clearAnswer() {
@@ -445,6 +527,7 @@ export function StreamHome({ onSelect, onOpenPalette }: Props) {
           state={answer}
           docKinds={docKinds}
           onClose={clearAnswer}
+          onCompose={() => synthesizeAnswer(answer.query, answer.hits)}
           onChunkClick={(hit) => {
             // Carry line range so the source viewer can scroll +
             // highlight that span. Channel format documented in
@@ -646,11 +729,12 @@ function PathScores({ scores }: { scores: Record<string, number> }) {
 }
 
 function InlineAnswer({
-  state, docKinds, onClose, onChunkClick,
+  state, docKinds, onClose, onCompose, onChunkClick,
 }: {
   state: AnswerState;
   docKinds: Map<string, "note" | "wiki" | "doc">;
   onClose: () => void;
+  onCompose: () => void;
   onChunkClick: (hit: cloudApi.ChunkSearchHit) => void;
 }) {
   return (
@@ -679,6 +763,14 @@ function InlineAnswer({
         <div className="proto-atelier-stream-answer-empty">
           No chunks matched. Try a broader phrasing or ingest more sources.
         </div>
+      )}
+      {/* AI answer composition — opt-in. Default is retrieval only;
+          user clicks Compose answer to spend tokens. Citations [N] in
+          the composed prose match the chunk numbers below. Reasoning
+          (DeepSeek-Reasoner / o1) renders as a collapsible "thinking"
+          block above the answer body. */}
+      {state.status === "ready" && state.hits.length > 0 && state.synth && (
+        <SynthBlock synth={state.synth} hitCount={state.hits.length} onCompose={onCompose} />
       )}
       {state.status === "ready" && state.hits.length > 0 && (() => {
         // Group hits by source kind. Notes (user-authored, narrow but
@@ -753,6 +845,123 @@ function InlineAnswer({
         );
       })()}
     </section>
+  );
+}
+
+/* SynthBlock — streaming AI answer surface. Two visual layers:
+ *   1. Reasoning ("Thinking") — collapsible, dimmed, mono-ish.
+ *      Auto-expanded while streaming so the user sees progress;
+ *      auto-collapsed once the final answer arrives.
+ *   2. Content — the actual answer prose with [N] citations.
+ *
+ * The dual-stream pattern matches DeepSeek-Reasoner / o1 / Qwen-
+ * thinking which emit reasoning_content first, then content. Chat-
+ * only models (deepseek-chat, gpt-4o-mini) skip reasoning entirely
+ * and the Thinking block never appears. */
+function SynthBlock({
+  synth, hitCount, onCompose,
+}: {
+  synth: SynthState;
+  hitCount: number;
+  onCompose: () => void;
+}) {
+  const [thinkingOpen, setThinkingOpen] = useState(true);
+
+  // Once content starts flowing, auto-collapse the thinking pane —
+  // the user is past the chain-of-thought and reading the answer.
+  useEffect(() => {
+    if (synth.status === "streaming" && synth.text.length > 0) {
+      setThinkingOpen(false);
+    } else if (synth.status === "ready" && synth.text.trim().length > 0) {
+      setThinkingOpen(false);
+    }
+  }, [synth]);
+
+  return (
+    <div className="proto-atelier-stream-answer-synth">
+      {synth.status === "idle" && (
+        <button
+          type="button"
+          className="proto-atelier-stream-answer-synth-cta"
+          onClick={onCompose}
+          title="Compose an answer from the chunks above using your chat provider"
+        >
+          ✨ Compose answer from these {hitCount} chunk{hitCount === 1 ? "" : "s"}
+        </button>
+      )}
+      {synth.status === "loading" && (
+        <div className="proto-atelier-stream-answer-synth-pending">
+          Composing answer…
+        </div>
+      )}
+      {(synth.status === "streaming" || synth.status === "ready") && (
+        <>
+          {synth.reasoning && (
+            <details
+              className="proto-atelier-stream-answer-think"
+              open={thinkingOpen}
+              onToggle={(e) => setThinkingOpen((e.target as HTMLDetailsElement).open)}
+            >
+              <summary>
+                {synth.status === "streaming" && synth.text.length === 0
+                  ? "💭 Thinking…"
+                  : "💭 Thinking"}
+                <span className="proto-atelier-stream-answer-think-len">
+                  {synth.reasoning.length.toLocaleString()} chars
+                </span>
+              </summary>
+              <div className="proto-atelier-stream-answer-think-body">
+                {synth.reasoning}
+              </div>
+            </details>
+          )}
+          {synth.text && (
+            <div className="proto-atelier-stream-answer-synth-body">
+              {synth.text}
+              {synth.status === "streaming" && (
+                <span className="proto-atelier-stream-answer-cursor" aria-hidden>▍</span>
+              )}
+            </div>
+          )}
+          {synth.status === "streaming" && !synth.text && !synth.reasoning && (
+            <div className="proto-atelier-stream-answer-synth-pending">
+              Waiting for first token…
+            </div>
+          )}
+          <div className="proto-atelier-stream-answer-synth-meta">
+            {synth.status === "streaming" ? (
+              <>
+                streaming…
+                <button
+                  type="button"
+                  className="proto-atelier-stream-answer-stop"
+                  onClick={() => synth.cancel()}
+                >
+                  stop
+                </button>
+              </>
+            ) : (
+              <>
+                via chat provider
+                {synth.total_tokens > 0 && ` · ${synth.total_tokens.toLocaleString()} tokens`}
+                {synth.finish_reason && synth.finish_reason !== "stop" && ` · ${synth.finish_reason}`}
+              </>
+            )}
+          </div>
+        </>
+      )}
+      {synth.status === "unavailable" && (
+        <div className="proto-atelier-stream-answer-synth-unavailable">
+          Configure <strong>Settings → Chat provider</strong> to enable AI
+          answer composition. Chunks below are still usable.
+        </div>
+      )}
+      {synth.status === "error" && (
+        <div className="proto-atelier-stream-answer-synth-error">
+          Answer composition failed: {synth.err}
+        </div>
+      )}
+    </div>
   );
 }
 

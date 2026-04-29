@@ -1,106 +1,54 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!--
+    SmartNote app icon — black tile + white "SN" wordmark, mirroring
+    the left-rail monogram. Follows Apple Big Sur+ icon conventions:
+
+      • 1024 canvas with ~100px transparent margin (Apple's icon grid
+        keeps the visible shape inside an 824 box so the dock's
+        size-equalizer treats it the same as system apps).
+      • Rounded square with rx = 185 (~22.4% of 824 — the canonical
+        macOS squircle radius. iOS-style 25% looked oversized next
+        to system icons in the dock).
+      • Content inset 100px on every side.
+  -->
   <defs>
-    <!-- Back card: receding, darkest -->
-    <linearGradient id="cardBack" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#1e5a51"/>
-      <stop offset="100%" stop-color="#0e332e"/>
+    <linearGradient id="topGloss" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"  stop-color="#ffffff" stop-opacity="0.10"/>
+      <stop offset="6%"  stop-color="#ffffff" stop-opacity="0.04"/>
+      <stop offset="22%" stop-color="#ffffff" stop-opacity="0"/>
     </linearGradient>
-
-    <!-- Middle card -->
-    <linearGradient id="cardMid" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#2c8d7f"/>
-      <stop offset="100%" stop-color="#175a50"/>
+    <linearGradient id="ring" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#3a3a3a"/>
+      <stop offset="100%" stop-color="#0c0c0c"/>
     </linearGradient>
-
-    <!-- Front card — carries the S -->
-    <linearGradient id="cardFront" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#6de6d3"/>
-      <stop offset="55%" stop-color="#3fbfaa"/>
-      <stop offset="100%" stop-color="#269883"/>
-    </linearGradient>
-
-    <!-- Top-edge rim highlight — card thickness -->
-    <linearGradient id="topRim" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.42"/>
-      <stop offset="6%" stop-color="#ffffff" stop-opacity="0.12"/>
-      <stop offset="16%" stop-color="#ffffff" stop-opacity="0"/>
-    </linearGradient>
-
-    <!-- Inner shade pooled at bottom of front card — concave depth -->
-    <linearGradient id="innerShade" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#000000" stop-opacity="0"/>
-      <stop offset="70%" stop-color="#000000" stop-opacity="0"/>
-      <stop offset="100%" stop-color="#062e28" stop-opacity="0.35"/>
-    </linearGradient>
-
-    <!-- Shadow cast by each card onto the one below -->
-    <filter id="cardShadow" x="-25%" y="-25%" width="150%" height="150%">
-      <feGaussianBlur in="SourceAlpha" stdDeviation="4"/>
-      <feOffset dy="8" result="blur"/>
-      <feComponentTransfer>
-        <feFuncA type="linear" slope="0.55"/>
-      </feComponentTransfer>
-      <feMerge>
-        <feMergeNode/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
-
-    <!-- Icon-shaped clip so back cards that extend past the front stay
-         inside the rounded-square silhouette. -->
-    <clipPath id="iconMask">
-      <rect width="512" height="512" rx="108"/>
-    </clipPath>
   </defs>
 
-  <g clip-path="url(#iconMask)">
+  <!-- Outer ring (separation against dark dock backgrounds) -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#ring)"/>
+  <!-- Tile body -->
+  <rect x="103" y="103" width="818" height="818" rx="183" fill="#0a0a0a"/>
+  <!-- Top gloss -->
+  <rect x="103" y="103" width="818" height="818" rx="183" fill="url(#topGloss)"/>
 
-    <!-- ── Back card: offset to upper-right, slight CW rotation ── -->
-    <g transform="translate(32 -14) rotate(7 256 256)">
-      <rect x="24" y="24" width="464" height="464" rx="104"
-            fill="url(#cardBack)" filter="url(#cardShadow)"/>
-      <rect x="24" y="24" width="464" height="464" rx="104"
-            fill="url(#topRim)"/>
-    </g>
-
-    <!-- ── Middle card: offset lower-left, slight CCW rotation ── -->
-    <g transform="translate(-20 20) rotate(-4 256 256)">
-      <rect x="24" y="24" width="464" height="464" rx="104"
-            fill="url(#cardMid)" filter="url(#cardShadow)"/>
-      <rect x="24" y="24" width="464" height="464" rx="104"
-            fill="url(#topRim)"/>
-    </g>
-
-    <!-- ── Front card: slightly smaller than canvas, centered ── -->
-    <g filter="url(#cardShadow)">
-      <rect x="24" y="24" width="464" height="464" rx="104"
-            fill="url(#cardFront)"/>
-      <rect x="24" y="24" width="464" height="464" rx="104"
-            fill="url(#innerShade)"/>
-      <rect x="24" y="24" width="464" height="464" rx="104"
-            fill="url(#topRim)"/>
-
-      <!-- S monogram -->
-      <text
-        x="256"
-        y="348"
-        text-anchor="middle"
-        font-family="-apple-system, 'SF Pro Display', 'Helvetica Neue', system-ui, sans-serif"
-        font-size="320"
-        font-weight="800"
-        letter-spacing="-10"
-        fill="#0a2b26"
-      >S</text>
-
-      <!-- Top-left corner light sliver catching the sun -->
-      <path
-        d="M 80 24 Q 40 24, 28 58 L 24 108"
-        stroke="#ffffff"
-        stroke-opacity="0.55"
-        stroke-width="3"
-        stroke-linecap="round"
-        fill="none"
-      />
-    </g>
+  <!-- SN wordmark, baseline-aligned, S dominant + N lighter.
+       Numbers picked so the glyphs look optically centered inside
+       the 824x824 visible square. -->
+  <g font-family="-apple-system, 'SF Pro Display', 'Helvetica Neue', system-ui, sans-serif"
+     fill="#ffffff">
+    <text
+      x="392" y="640"
+      text-anchor="middle"
+      font-size="520"
+      font-weight="700"
+      letter-spacing="-22"
+    >S</text>
+    <text
+      x="688" y="640"
+      text-anchor="middle"
+      font-size="430"
+      font-weight="500"
+      letter-spacing="-10"
+      opacity="0.62"
+    >N</text>
   </g>
 </svg>

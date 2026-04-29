@@ -26,8 +26,10 @@ type Props = {
   items: SidebarViewItem[];
   activeKey: string | null;
   onChange: (key: string | null) => void;
-  onNewView: () => void;
-  onEditView: (view: NoteView) => void;
+  // View CRUD is disabled until reimplemented on cloud. Pass undefined
+  // to hide the "+ View" button and per-view edit affordances.
+  onNewView?: () => void;
+  onEditView?: (view: NoteView) => void;
   onRepopulateView: (view: NoteView) => void;
   onDeleteView: (view: NoteView) => void;
 };
@@ -70,7 +72,7 @@ export function NoteViewStrip({
               onClick={() => onChange(u.key)}
               onClear={active ? () => onChange(null) : undefined}
             />
-            {(hovered || active) && (
+            {(hovered || active) && onEditView && (
               <span className="proto-note-v3-strip-actions" aria-hidden={!hovered && !active}>
                 <ActionBtn title="Edit view" onClick={() => onEditView(u.view)}>
                   <Pencil size={10} strokeWidth={2} />
@@ -104,15 +106,19 @@ export function NoteViewStrip({
         );
       })}
 
-      <Sep />
-      <button
-        type="button"
-        onClick={onNewView}
-        className="proto-note-v3-strip-add"
-        title="New custom view"
-      >
-        <Plus size={11} strokeWidth={2} /> View
-      </button>
+      {onNewView && (
+        <>
+          <Sep />
+          <button
+            type="button"
+            onClick={onNewView}
+            className="proto-note-v3-strip-add"
+            title="New custom view"
+          >
+            <Plus size={11} strokeWidth={2} /> View
+          </button>
+        </>
+      )}
     </div>
   );
 }

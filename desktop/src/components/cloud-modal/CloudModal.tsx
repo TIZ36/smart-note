@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { X, Calendar, Cpu, Bot } from "lucide-react";
+import { X, Calendar, Cpu, Bot, Save, Loader2 } from "lucide-react";
 import * as cloudApi from "@/lib/cloud-api";
-import { readSettings } from "@/lib/electron";
+import { readSettings, writeSettings } from "@/lib/electron";
 
 /* Cloud center modal (D3) — replaces v2's full-page CloudConsolePage.
  *
@@ -26,6 +26,34 @@ export function CloudModal({ open, onClose }: Props) {
   const [agentChoice, setAgentChoice] = useState<"claude" | "cursor" | "opencode">("claude");
   const [copiedConfig, setCopiedConfig] = useState(false);
   const [copiedRaw, setCopiedRaw] = useState<"url" | "key" | null>(null);
+
+  // Top-level functional tab — splits the modal into 4 self-contained
+  // surfaces (Connection · Provider · Workspace · MCP) so each one
+  // owns its own vertical space and the user can find a setting
+  // without scrolling through everything else.
+  const [tab, setTab] = useState<"connection" | "provider" | "workspace" | "mcp">("connection");
+
+  // Connection settings (was in Settings → SmartNote Cloud).
+  const [connDraft, setConnDraft] = useState<{
+    cloud_sync_url: string;
+    cloud_sync_api_key: string;
+    cloud_sync_enabled: boolean;
+  } | null>(null);
+  const [connSaving, setConnSaving] = useState(false);
+  const [connFlash, setConnFlash] = useState<"" | "ok" | "err">("");
+
+  // Enrich provider config — drives both /v1/enrich/run (cloud_pool
+  // executor) and wiki_abstract. Without this, both surface 412.
+  const [provider, setProvider] = useState<cloudApi.EnrichProviderConfig | null>(null);
+  const [providerDraft, setProviderDraft] = useState<{
+    base_url: string;
+    api_key: string;       // empty string ⇒ leave key untouched on save
+    model: string;
+    max_concurrency: number;
+    auto_enrich_on_ingest: boolean;
+  } | null>(null);
+  const [providerSaving, setProviderSaving] = useState(false);
+  const [providerFlash, setProviderFlash] = useState<"" | "ok" | "err">("");
 
   // Esc-to-close
   useEffect(() => {
@@ -61,23 +89,118 @@ export function CloudModal({ open, onClose }: Props) {
     return () => { alive = false; clearInterval(id); };
   }, [open]);
 
-  // MCP endpoint + API key from persistent app settings (Settings →
-  // SmartNote Cloud). Both are needed to render the per-agent JSON
-  // config snippets the user can paste into their CLI directly.
+  // Cloud connection settings (URL + API key + sync toggle) live
+  // here now — they're cloud-scope, not local. MCP endpoint is
+  // derived from cloud_sync_url so both stay in sync via one source.
   useEffect(() => {
     if (!open) return;
     let alive = true;
     readSettings().then((s) => {
       if (!alive) return;
       const url = (s.cloud_sync_url || "").trim();
-      if (url) setMcpUrl(`${url.replace(/\/$/, "")}/mcp`);
-      else setMcpUrl("—");
-      setApiKey((s.cloud_sync_api_key || "").trim());
+      const key = (s.cloud_sync_api_key || "").trim();
+      setMcpUrl(url ? `${url.replace(/\/$/, "")}/mcp` : "—");
+      setApiKey(key);
+      setConnDraft({
+        cloud_sync_url: url,
+        cloud_sync_api_key: key,
+        cloud_sync_enabled: s.cloud_sync_enabled !== false,
+      });
     }).catch(() => {
-      if (alive) { setMcpUrl("—"); setApiKey(""); }
+      if (alive) {
+        setMcpUrl("—");
+        setApiKey("");
+        setConnDraft({ cloud_sync_url: "", cloud_sync_api_key: "", cloud_sync_enabled: true });
+      }
     });
     return () => { alive = false; };
   }, [open]);
+
+  // Pull current cloud-side enrich provider on open. We never get
+  // the api_key back (server returns has_api_key bool only) — the
+  // password input stays empty unless the user types a new value.
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    cloudApi.fetchEnrichProvider()
+      .then((cfg) => {
+        if (!alive) return;
+        setProvider(cfg);
+        setProviderDraft({
+          base_url: cfg.base_url || "",
+          api_key: "",
+          model: cfg.model || "",
+          max_concurrency: cfg.max_concurrency || 4,
+          auto_enrich_on_ingest: cfg.auto_enrich_on_ingest,
+        });
+      })
+      .catch(() => {
+        if (!alive) return;
+        // No cloud configured yet — show empty draft, save will fail
+        // until connection is set, which is the intended UX flow.
+        setProvider(null);
+        setProviderDraft({
+          base_url: "https://api.deepseek.com/v1",
+          api_key: "",
+          model: "deepseek-chat",
+          max_concurrency: 4,
+          auto_enrich_on_ingest: false,
+        });
+      });
+    return () => { alive = false; };
+  }, [open]);
+
+  async function saveConnection() {
+    if (!connDraft) return;
+    setConnSaving(true);
+    setConnFlash("");
+    try {
+      // writeSettings expects a full AppSettings object — splice the
+      // 3 cloud fields onto whatever the rest of settings currently is.
+      const current = await readSettings();
+      await writeSettings({ ...current, ...connDraft });
+      const url = connDraft.cloud_sync_url.trim();
+      setMcpUrl(url ? `${url.replace(/\/$/, "")}/mcp` : "—");
+      setApiKey(connDraft.cloud_sync_api_key.trim());
+      setConnFlash("ok");
+      setTimeout(() => setConnFlash(""), 1600);
+    } catch {
+      setConnFlash("err");
+      setTimeout(() => setConnFlash(""), 2200);
+    } finally {
+      setConnSaving(false);
+    }
+  }
+
+  async function saveProvider() {
+    if (!providerDraft) return;
+    setProviderSaving(true);
+    setProviderFlash("");
+    try {
+      // Only send api_key when the user actually typed one; empty
+      // string ⇒ "leave existing key alone" (otherwise we'd nuke
+      // the stored key every time the user adjusts model/concurrency).
+      const patch: cloudApi.EnrichProviderUpdate = {
+        base_url: providerDraft.base_url,
+        model: providerDraft.model,
+        max_concurrency: providerDraft.max_concurrency,
+        auto_enrich_on_ingest: providerDraft.auto_enrich_on_ingest,
+      };
+      if (providerDraft.api_key.trim()) {
+        patch.api_key = providerDraft.api_key.trim();
+      }
+      const cfg = await cloudApi.saveEnrichProvider(patch);
+      setProvider(cfg);
+      setProviderDraft((d) => d && ({ ...d, api_key: "" }));
+      setProviderFlash("ok");
+      setTimeout(() => setProviderFlash(""), 1600);
+    } catch {
+      setProviderFlash("err");
+      setTimeout(() => setProviderFlash(""), 2400);
+    } finally {
+      setProviderSaving(false);
+    }
+  }
 
   if (!open) return null;
 
@@ -189,7 +312,7 @@ export function CloudModal({ open, onClose }: Props) {
         aria-modal="true"
       >
         <div className="proto-modal-bar">
-          <div className="proto-modal-title">Workspace</div>
+          <div className="proto-modal-title">Cloud settings</div>
           <div className="proto-modal-meta">
             {overview ? "live · refreshed" : "loading…"}
           </div>
@@ -203,7 +326,93 @@ export function CloudModal({ open, onClose }: Props) {
           </button>
         </div>
         <div className="proto-modal-body">
+          <nav className="proto-modal-tabs" role="tablist" aria-label="Cloud settings">
+            {([
+              { key: "connection", label: "Connection" },
+              { key: "provider", label: "AI provider", flag: provider?.has_api_key ? "ok" : "warn" },
+              { key: "workspace", label: "Workspace" },
+              { key: "mcp", label: "MCP" },
+            ] as const).map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                role="tab"
+                aria-selected={tab === t.key}
+                onClick={() => setTab(t.key)}
+                className={cn("proto-modal-tab", tab === t.key && "proto-modal-tab-active")}
+              >
+                {t.label}
+                {t.key === "connection" && !apiKey && (
+                  <span className="proto-modal-tab-dot proto-modal-tab-dot-warn" title="not configured" />
+                )}
+                {t.key === "provider" && (
+                  <span
+                    className={cn(
+                      "proto-modal-tab-dot",
+                      provider?.has_api_key ? "proto-modal-tab-dot-ok" : "proto-modal-tab-dot-warn",
+                    )}
+                    title={provider?.has_api_key ? "key set" : "no key — wiki / enrich won't run"}
+                  />
+                )}
+              </button>
+            ))}
+          </nav>
 
+          {tab === "connection" && (<>
+          {/* Connection — cloud URL + workspace API key + sync toggle.
+              Moved here from Settings (which is local-only now). */}
+          <div className="proto-modal-section">
+            <div className="proto-modal-section-title">Connection</div>
+            {connDraft && (
+              <>
+                <CloudField label="Cloud URL">
+                  <input
+                    type="text"
+                    className="proto-form-input"
+                    spellCheck={false}
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    placeholder="https://api.smartnote.cloud"
+                    value={connDraft.cloud_sync_url}
+                    onChange={(e) => setConnDraft({ ...connDraft, cloud_sync_url: e.target.value })}
+                  />
+                </CloudField>
+                <CloudField label="Workspace API key">
+                  <input
+                    type="password"
+                    className="proto-form-input"
+                    placeholder="wsk_…"
+                    value={connDraft.cloud_sync_api_key}
+                    onChange={(e) => setConnDraft({ ...connDraft, cloud_sync_api_key: e.target.value })}
+                  />
+                </CloudField>
+                <label className="proto-form-toggle-label" style={{ marginTop: 4 }}>
+                  <input
+                    type="checkbox"
+                    checked={connDraft.cloud_sync_enabled}
+                    onChange={(e) => setConnDraft({ ...connDraft, cloud_sync_enabled: e.target.checked })}
+                  />
+                  <span style={{ fontSize: 12 }}>Sync notes / wiki / tables on save</span>
+                </label>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6 }}>
+                  <button
+                    type="button"
+                    className="proto-btn proto-btn-primary"
+                    onClick={saveConnection}
+                    disabled={connSaving}
+                  >
+                    {connSaving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                    {connSaving ? "Saving…" : "Save connection"}
+                  </button>
+                  {connFlash === "ok" && <span style={{ fontSize: 11, color: "var(--color-success)" }}>✓ saved</span>}
+                  {connFlash === "err" && <span style={{ fontSize: 11, color: "var(--color-danger)" }}>save failed</span>}
+                </div>
+              </>
+            )}
+          </div>
+          </>)}
+
+          {tab === "workspace" && (<>
           {/* Inventory */}
           <div className="proto-modal-section">
             <div className="proto-modal-section-title">Inventory</div>
@@ -267,21 +476,104 @@ export function CloudModal({ open, onClose }: Props) {
               />
             </div>
           </div>
+          </>)}
 
-          {/* Auto-enrich moved to Settings → SmartNote Cloud where it
-              actually persists (was previously a pure-UI toggle that
-              didn't touch the cloud's auto_enrich_on_ingest setting). */}
+          {tab === "provider" && (<>
+          {/* Cloud-side enrich provider — powers /v1/enrich/run AND
+              wiki abstract. Without an api_key here, both 412. */}
+          <div className="proto-modal-section">
+            <div className="proto-modal-section-title">
+              Cloud AI provider · enrich + wiki abstract
+              {provider?.has_api_key && (
+                <span style={{ fontSize: 10, color: "var(--color-success)", marginLeft: 8, textTransform: "none", letterSpacing: 0 }}>
+                  ✓ key set
+                </span>
+              )}
+            </div>
+            {providerDraft && (
+              <>
+                <CloudField label="Base URL">
+                  <input
+                    type="text"
+                    className="proto-form-input"
+                    spellCheck={false}
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    placeholder="https://api.deepseek.com/v1"
+                    value={providerDraft.base_url}
+                    onChange={(e) => setProviderDraft({ ...providerDraft, base_url: e.target.value })}
+                  />
+                </CloudField>
+                <CloudField label={`API key${provider?.has_api_key ? " (blank = keep existing)" : ""}`}>
+                  <input
+                    type="password"
+                    className="proto-form-input"
+                    placeholder={provider?.has_api_key ? "•••••••• (leave empty to keep)" : "sk-…"}
+                    value={providerDraft.api_key}
+                    onChange={(e) => setProviderDraft({ ...providerDraft, api_key: e.target.value })}
+                  />
+                </CloudField>
+                <CloudField label="Model">
+                  <input
+                    type="text"
+                    className="proto-form-input"
+                    placeholder="deepseek-chat"
+                    value={providerDraft.model}
+                    onChange={(e) => setProviderDraft({ ...providerDraft, model: e.target.value })}
+                  />
+                </CloudField>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <CloudField label="Max concurrency">
+                    <input
+                      type="number"
+                      min={1}
+                      max={16}
+                      className="proto-form-input"
+                      value={providerDraft.max_concurrency}
+                      onChange={(e) => setProviderDraft({ ...providerDraft, max_concurrency: Math.max(1, Math.min(16, Number(e.target.value) || 1)) })}
+                    />
+                  </CloudField>
+                  <label className="proto-form-toggle-label" style={{ alignSelf: "end", paddingBottom: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={providerDraft.auto_enrich_on_ingest}
+                      onChange={(e) => setProviderDraft({ ...providerDraft, auto_enrich_on_ingest: e.target.checked })}
+                    />
+                    <span style={{ fontSize: 12 }}>Auto-enrich on save</span>
+                  </label>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6 }}>
+                  <button
+                    type="button"
+                    className="proto-btn proto-btn-primary"
+                    onClick={saveProvider}
+                    disabled={providerSaving}
+                  >
+                    {providerSaving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                    {providerSaving ? "Saving…" : "Save provider"}
+                  </button>
+                  {providerFlash === "ok" && <span style={{ fontSize: 11, color: "var(--color-success)" }}>✓ saved</span>}
+                  {providerFlash === "err" && <span style={{ fontSize: 11, color: "var(--color-danger)" }}>save failed (cloud unreachable?)</span>}
+                </div>
+                <div className="proto-form-hint" style={{ marginTop: 4 }}>
+                  Off by default. Each enrich / wiki-abstract run consumes LLM
+                  tokens at the configured provider's rate.
+                </div>
+              </>
+            )}
+          </div>
+          </>)}
 
+          {tab === "mcp" && (<>
           {/* MCP endpoint — drop-in JSON config per AI CLI. Pre-fills
               URL + API key (key shown masked, copies as plaintext). */}
           <div className="proto-modal-section">
             <div className="proto-modal-section-title">MCP endpoint for AI agents</div>
             {mcpUrl === "—" || !apiKey ? (
               <div className="proto-modal-line-help" style={{ paddingLeft: 0 }}>
-                Open <strong>Settings → SmartNote Cloud</strong> to add your
-                cloud URL and workspace API key. Once set, ready-to-paste
-                JSON snippets for Claude Code / Cursor / Opencode will appear
-                here.
+                Set <strong>Cloud URL</strong> and <strong>API key</strong> in
+                Connection above first — the MCP endpoint and per-agent JSON
+                snippets are derived from them.
               </div>
             ) : (
               <>
@@ -353,6 +645,7 @@ export function CloudModal({ open, onClose }: Props) {
               </>
             )}
           </div>
+          </>)}
 
         </div>
       </div>
@@ -447,4 +740,13 @@ function relTime(iso: string): string {
 
 function cn(...parts: (string | false | null | undefined)[]) {
   return parts.filter(Boolean).join(" ");
+}
+
+function CloudField({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="proto-form-field" style={{ marginBottom: 6 }}>
+      <label className="proto-form-label" style={{ fontSize: 11 }}>{label}</label>
+      {children}
+    </div>
+  );
 }

@@ -11,7 +11,7 @@ const EASE_OUT_QUART = [0.25, 1, 0.5, 1] as const;
 
 export function SettingsPanel() {
   const { mode: themeMode, setMode: setThemeMode } = useTheme();
-  const [hotkey, setHotkeyState] = useState("CommandOrControl+Shift+V");
+  const [hotkey, setHotkeyState] = useState("CommandOrControl+K");
   const [hotkeyEditing, setHotkeyEditing] = useState(false);
   const [hotkeyInput, setHotkeyInput] = useState("");
 
@@ -93,10 +93,14 @@ export function SettingsPanel() {
     <div className="flex flex-col h-full min-h-0">
       <div className="flex-1 overflow-y-auto">
         <div className="proto-page-content">
-          <h1 className="proto-page-title">Settings</h1>
+          <h1 className="proto-page-title">Local settings</h1>
+          <p className="proto-form-hint" style={{ marginTop: -24, marginBottom: 16 }}>
+            This page is local-only. Cloud connection, cloud AI provider, and
+            workspace devices live in the Cloud panel (top-right of the rail).
+          </p>
 
-          <section className="proto-form-section">
-            <h2 className="proto-form-section-title">Appearance</h2>
+          {/* Appearance */}
+          <Card title="Appearance">
             <Field label="Theme">
               <div className="proto-settings-theme-group">
                 {(["system", "light", "dark", "niho"] as ThemeMode[]).map((m) => (
@@ -114,150 +118,31 @@ export function SettingsPanel() {
                 ))}
               </div>
             </Field>
-          </section>
+          </Card>
 
-          <div className="proto-form-divider" />
-
-          <section className="proto-form-section">
-            <h2 className="proto-form-section-title">Global Hotkey</h2>
-            <Field label="Quick paste to raw file">
-              <div className="proto-settings-hotkey-row">
-                {hotkeyEditing ? (
-                  <>
-                    <input
-                      type="text"
-                      value={hotkeyInput}
-                      onChange={(e) => setHotkeyInput(e.target.value)}
-                      placeholder="e.g. CommandOrControl+Shift+V"
-                      className="proto-form-input"
-                      style={{ flex: 1 }}
-                      autoFocus
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          setHotkey(hotkeyInput || hotkey).then((r) => {
-                            setHotkeyState(r.hotkey);
-                            setHotkeyEditing(false);
-                          });
-                        }
-                        if (e.key === "Escape") setHotkeyEditing(false);
-                      }}
-                    />
-                    <button type="button" onClick={() => {
-                      setHotkey(hotkeyInput || hotkey).then((r) => {
-                        setHotkeyState(r.hotkey);
-                        setHotkeyEditing(false);
-                      });
-                    }} className="proto-btn proto-btn-primary">Save</button>
-                  </>
-                ) : (
-                  <>
-                    <kbd className="proto-settings-kbd">
-                      {hotkey.replace("CommandOrControl", "Cmd")}
-                    </kbd>
-                    <button type="button" onClick={() => { setHotkeyInput(hotkey); setHotkeyEditing(true); }} className="proto-btn proto-btn-secondary">Change</button>
-                  </>
-                )}
-              </div>
-              <p className="proto-form-hint">
-                Press this shortcut anywhere to paste clipboard content to your raw file and trigger incremental ingest.
-              </p>
-            </Field>
-          </section>
-
-          <div className="proto-form-divider" />
-
-          <section className="proto-form-section">
-            <h2 className="proto-form-section-title">SmartNote Cloud</h2>
-            <p className="proto-form-hint" style={{ marginBottom: 12 }}>
-              Connect to a SmartNote Cloud workspace to enable cross-device sync,
-              cloud-side enrichment, and the MCP endpoint that AI agents
-              (Claude Code · Cursor · Opencode) read your knowledge through.
-            </p>
-            <Field label="Cloud URL">
-              <input
-                type="text"
-                value={settings.cloud_sync_url || ""}
-                onChange={(e) => update("cloud_sync_url", e.target.value)}
-                placeholder="https://api.smartnote.cloud"
-                className="proto-form-input"
-                spellCheck={false}
-                autoCapitalize="off"
-                autoCorrect="off"
-              />
-              <p className="proto-form-hint">
-                Base URL of your SmartNote Cloud instance. The MCP endpoint
-                Claude/Cursor connects to is automatically <code>{(settings.cloud_sync_url || "").replace(/\/+$/, "") + "/mcp" || "<URL>/mcp"}</code>.
-              </p>
-            </Field>
-            <Field label="Workspace API key">
-              <input
-                type="password"
-                value={settings.cloud_sync_api_key || ""}
-                onChange={(e) => update("cloud_sync_api_key", e.target.value)}
-                placeholder="wsk_…"
-                className="proto-form-input"
-                spellCheck={false}
-                autoCapitalize="off"
-                autoCorrect="off"
-              />
-              <p className="proto-form-hint">
-                Bound to a single workspace. Generate one in the Cloud Console
-                under <em>Devices → Pair</em>. Same key powers both the desktop
-                sync and the MCP endpoint.
-              </p>
-            </Field>
-            <Field label="Sync enabled">
-              <label className="proto-form-toggle-label">
-                <input
-                  type="checkbox"
-                  checked={settings.cloud_sync_enabled !== false}
-                  onChange={(e) => update("cloud_sync_enabled", e.target.checked)}
-                />
-                <span>Push notes / wiki / smart tables to cloud on save</span>
-              </label>
-              <p className="proto-form-hint">
-                Off if you only want the local-first features. Empty URL or
-                key disables sync regardless of this toggle.
-              </p>
-            </Field>
-
-            {/* Auto-enrich — directly hits the cloud's enrich provider
-                config so it actually takes effect. Default is OFF
-                (cloud schema's default) — LLM cost should be opt-in. */}
-            <AutoEnrichToggle />
-          </section>
-
-          <div className="proto-form-divider" />
-
-          <section className="proto-form-section">
-            <h2 className="proto-form-section-title">Embedding</h2>
+          {/* Embedding */}
+          <Card title="Embedding">
             <Field label="Mode">
               <select value={settings.embedding_mode} onChange={(e) => update("embedding_mode", e.target.value)} className="proto-form-input">
-                <option value="sn-cloud">sn-cloud — embed via your SmartNote Cloud</option>
-                <option value="local">local — Docker embedding service (:8009)</option>
-                <option value="mock">mock — hash-based, no network (dev only)</option>
+                <option value="sn-cloud">sn-cloud — via your SmartNote Cloud</option>
+                <option value="local">local — Docker service at :8009</option>
+                <option value="mock">mock — hash-based, dev only</option>
               </select>
               <p className="proto-form-hint">
-                {settings.embedding_mode === "sn-cloud" && "Default. Vectors are computed by your SmartNote Cloud's embedding provider — no per-device GPU needed."}
-                {settings.embedding_mode === "local" && "Local Docker container at :8009. Useful for offline / air-gapped setups. Run ./restart-docker.sh to start it."}
-                {settings.embedding_mode === "mock" && "No real embeddings — fallback to keyword-only search. Dev / no-cloud testing only."}
-                {(settings.embedding_mode === "api" || !["sn-cloud","local","mock"].includes(settings.embedding_mode)) && "Legacy 'api' mode — use 'sn-cloud' instead. Will be migrated automatically."}
+                {settings.embedding_mode === "sn-cloud" && "Vectors computed by SmartNote Cloud. No local GPU needed."}
+                {settings.embedding_mode === "local" && "Offline-friendly. Run ./restart-docker.sh to start the container."}
+                {settings.embedding_mode === "mock" && "Keyword-only fallback. Not for real use."}
+                {!["sn-cloud", "local", "mock"].includes(settings.embedding_mode) && "Legacy mode — switch to sn-cloud."}
               </p>
             </Field>
-          </section>
+          </Card>
 
-          <div className="proto-form-divider" />
-
-          <section className="proto-form-section">
-            <h2 className="proto-form-section-title">AI Features</h2>
-            <p className="proto-form-hint proto-settings-section-hint">
-              Master switch for every LLM call — chat answers, rerank, rewrite, ingest enrichment, wiki topic summaries.
-              Embedding continues to work when this is off (uses the Embedding Provider below).
-            </p>
+          {/* AI features */}
+          <Card title="AI" sub="Master switch for every LLM call. Embedding still works when off.">
             <div className="proto-toggle-row">
               <div>
                 <div className="proto-toggle-label">Enable AI features</div>
-                <div className="proto-toggle-desc">Turn off to fall back to non-LLM paths everywhere.</div>
+                <div className="proto-toggle-desc">Chat, rerank, rewrite, enrichment, summaries</div>
               </div>
               <button
                 type="button"
@@ -268,78 +153,10 @@ export function SettingsPanel() {
                 <span className="proto-toggle-knob" />
               </button>
             </div>
-          </section>
-
-          <div className="proto-form-divider" />
-
-          <section className="proto-form-section">
-            <h2 className="proto-form-section-title">Chat Provider</h2>
-            <p className="proto-form-hint proto-settings-section-hint">Used for AI answers, AI ingestion, and reranking.</p>
-            <Field label="Base URL">
-              <input type="text" value={settings.provider_base_url} onChange={(e) => update("provider_base_url", e.target.value)} placeholder="https://api.deepseek.com/v1" className="proto-form-input" />
-            </Field>
-            <Field label="API Key">
-              <input type="password" value={settings.provider_api_key} onChange={(e) => update("provider_api_key", e.target.value)} placeholder="sk-..." className="proto-form-input" />
-            </Field>
-            <Field label="Chat Model">
-              <input type="text" value={settings.provider_chat_model} onChange={(e) => update("provider_chat_model", e.target.value)} placeholder="deepseek-chat" className="proto-form-input" />
-            </Field>
-          </section>
-
-          <div className="proto-form-divider" />
-
-          <section className="proto-form-section">
-            <h2 className="proto-form-section-title">
-              Embedding Provider
-              {settings.embedding_mode !== "api" && (
-                <span className="proto-settings-section-note">
-                  not used in {settings.embedding_mode} mode
-                </span>
-              )}
-            </h2>
-            <p className="proto-form-hint proto-settings-section-hint">
-              Used when embedding mode is API. Leave blank to fall back to Chat Provider.
-            </p>
-            <Field label="Base URL (blank = same as Chat)">
-              <input
-                type="text"
-                value={settings.embed_base_url}
-                onChange={(e) => update("embed_base_url", e.target.value)}
-                placeholder={settings.provider_base_url || "https://api.openai.com/v1"}
-                disabled={settings.embedding_mode !== "api"}
-                className="proto-form-input"
-              />
-            </Field>
-            <Field label="API Key (blank = same as Chat)">
-              <input
-                type="password"
-                value={settings.embed_api_key}
-                onChange={(e) => update("embed_api_key", e.target.value)}
-                placeholder={settings.embed_base_url ? "sk-..." : "(uses Chat API Key)"}
-                disabled={settings.embedding_mode !== "api"}
-                className="proto-form-input"
-              />
-            </Field>
-            <Field label="Embed Model">
-              <input
-                type="text"
-                value={settings.provider_embed_model}
-                onChange={(e) => update("provider_embed_model", e.target.value)}
-                placeholder="text-embedding-3-small"
-                disabled={settings.embedding_mode !== "api"}
-                className="proto-form-input"
-              />
-            </Field>
-          </section>
-
-          <div className="proto-form-divider" />
-
-          <section className="proto-form-section">
-            <h2 className="proto-form-section-title">AI Ingestion</h2>
             <div className="proto-toggle-row">
               <div>
-                <div className="proto-toggle-label">AI Classification</div>
-                <div className="proto-toggle-desc">Dimension, keyword, entity extraction</div>
+                <div className="proto-toggle-label">AI ingestion</div>
+                <div className="proto-toggle-desc">Dimension, keyword, entity extraction on import</div>
               </div>
               <button
                 type="button"
@@ -350,7 +167,6 @@ export function SettingsPanel() {
                 <span className="proto-toggle-knob" />
               </button>
             </div>
-
             <AnimatePresence>
               {settings.ingest_ai_enabled && (
                 <motion.div
@@ -360,27 +176,78 @@ export function SettingsPanel() {
                   transition={{ duration: 0.2, ease: EASE_OUT_QUART }}
                   className="overflow-hidden"
                 >
-                  <div className="proto-form-field mt-4">
-                    <label className="proto-form-label">Ingestion Model (blank = Chat Model)</label>
-                    <input type="text" value={settings.ingest_ai_model} onChange={(e) => update("ingest_ai_model", e.target.value)} placeholder={settings.provider_chat_model || "gpt-4o-mini"} className="proto-form-input" />
+                  <div className="proto-form-field" style={{ marginTop: 12 }}>
+                    <label className="proto-form-label">Ingestion model</label>
+                    <input type="text" value={settings.ingest_ai_model} onChange={(e) => update("ingest_ai_model", e.target.value)} placeholder={settings.provider_chat_model || "(blank = chat model)"} className="proto-form-input" />
                   </div>
                 </motion.div>
               )}
             </AnimatePresence>
-          </section>
+          </Card>
 
-          <div className="proto-form-divider" />
+          {/* Chat provider */}
+          <Card title="Chat provider" sub="OpenAI-compatible API used for AI answers, ingestion, rerank.">
+            <Field label="Base URL">
+              <input type="text" value={settings.provider_base_url} onChange={(e) => update("provider_base_url", e.target.value)} placeholder="https://api.deepseek.com/v1" className="proto-form-input" />
+            </Field>
+            <Field label="API key">
+              <input type="password" value={settings.provider_api_key} onChange={(e) => update("provider_api_key", e.target.value)} placeholder="sk-…" className="proto-form-input" />
+            </Field>
+            <Field label="Chat model">
+              <input type="text" value={settings.provider_chat_model} onChange={(e) => update("provider_chat_model", e.target.value)} placeholder="deepseek-chat" className="proto-form-input" />
+            </Field>
+          </Card>
 
+          {/* OCR */}
           <OcrSection />
 
-          <div className="proto-form-divider" />
+          {/* Hotkey */}
+          <Card title="Global hotkey" sub="Open the Spotlight palette from anywhere — search · upload to wiki · append to note.">
+            <div className="proto-settings-hotkey-row">
+              {hotkeyEditing ? (
+                <>
+                  <input
+                    type="text"
+                    value={hotkeyInput}
+                    onChange={(e) => setHotkeyInput(e.target.value)}
+                    placeholder="CommandOrControl+K"
+                    className="proto-form-input"
+                    style={{ flex: 1 }}
+                    autoFocus
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        setHotkey(hotkeyInput || hotkey).then((r) => {
+                          setHotkeyState(r.hotkey);
+                          setHotkeyEditing(false);
+                        });
+                      }
+                      if (e.key === "Escape") setHotkeyEditing(false);
+                    }}
+                  />
+                  <button type="button" onClick={() => {
+                    setHotkey(hotkeyInput || hotkey).then((r) => {
+                      setHotkeyState(r.hotkey);
+                      setHotkeyEditing(false);
+                    });
+                  }} className="proto-btn proto-btn-primary">Save</button>
+                </>
+              ) : (
+                <>
+                  <kbd className="proto-settings-kbd">
+                    {hotkey.replace("CommandOrControl", "Cmd")}
+                  </kbd>
+                  <button type="button" onClick={() => { setHotkeyInput(hotkey); setHotkeyEditing(true); }} className="proto-btn proto-btn-secondary">Change</button>
+                </>
+              )}
+            </div>
+          </Card>
 
-          <div className="proto-settings-save-row">
+          <div className="proto-settings-savebar">
             <button type="button" onClick={handleSave} disabled={saving} className="proto-btn proto-btn-primary">
               {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-              {saving ? "Saving..." : "Save"}
+              {saving ? "Saving…" : "Save"}
             </button>
-            {status.text && (
+            {status.text ? (
               <span className={cn(
                 "proto-settings-status",
                 status.type === "success" && "proto-settings-status-success",
@@ -388,8 +255,7 @@ export function SettingsPanel() {
               )}>
                 {status.text}
               </span>
-            )}
-            {!status.text && (
+            ) : (
               <span className="proto-settings-status">Restart backend after saving.</span>
             )}
           </div>
@@ -399,10 +265,22 @@ export function SettingsPanel() {
   );
 }
 
+function Card({ title, sub, children }: { title: string; sub?: string; children: React.ReactNode }) {
+  return (
+    <section className="proto-settings-card">
+      <header className="proto-settings-card-head">
+        <span className="proto-settings-card-title">{title}</span>
+        {sub && <span className="proto-settings-card-sub">{sub}</span>}
+      </header>
+      {children}
+    </section>
+  );
+}
+
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="proto-form-field">
-      <label className="proto-form-label">{label}</label>
+      {label && <label className="proto-form-label">{label}</label>}
       {children}
     </div>
   );
@@ -456,18 +334,21 @@ function OcrSection() {
   const available = OCR_LANG_OPTIONS.filter((o) => installed.includes(o.code));
 
   return (
-    <section className="proto-form-section">
-      <h2 className="proto-form-section-title">OCR (PDF Scanning)</h2>
-      <p className="proto-form-hint proto-settings-section-hint">
-        Select languages for scanned/image-only PDF import. Uses tesseract.
-      </p>
-
-      <div className="proto-form-field">
-        <label className="proto-form-label">Tesseract</label>
-        <span className={cn("proto-form-hint", hasTesseract ? "text-[var(--color-success)]" : "text-[var(--color-danger)]")}>
-          {hasTesseract ? `Installed · ${installed.length} language packs` : "Not found — install via: brew install tesseract tesseract-lang"}
+    <section className="proto-settings-card">
+      <header className="proto-settings-card-head">
+        <span className="proto-settings-card-title">OCR</span>
+        <span className="proto-settings-card-sub">
+          Languages for scanned PDF import · {hasTesseract
+            ? <span style={{ color: "var(--color-success)" }}>tesseract ready</span>
+            : <span style={{ color: "var(--color-danger)" }}>tesseract missing</span>}
         </span>
-      </div>
+      </header>
+
+      {!hasTesseract && (
+        <p className="proto-form-hint">
+          Install: <code>brew install tesseract tesseract-lang</code>
+        </p>
+      )}
 
       {hasTesseract && available.length > 0 && (
         <div className="proto-form-field">
@@ -489,7 +370,7 @@ function OcrSection() {
           </div>
           {active.size === 0 && (
             <p className="proto-form-hint" style={{ marginTop: 6 }}>
-              No languages selected — OCR will auto-detect based on filename.
+              None selected — OCR auto-detects from filename.
             </p>
           )}
         </div>
@@ -497,93 +378,10 @@ function OcrSection() {
 
       {hasTesseract && available.length === 0 && installed.length === 0 && (
         <p className="proto-form-hint">
-          No language packs found. Run: <code style={{ fontSize: 11, padding: "1px 4px", background: "var(--color-bg-elevated)", borderRadius: 3 }}>brew install tesseract-lang</code>
+          No language packs. Run <code>brew install tesseract-lang</code>.
         </p>
       )}
     </section>
   );
 }
 
-/* Auto-enrich toggle — reads + writes the cloud's enrich provider
- * config (auto_enrich_on_ingest field). Pure UI affordance over the
- * existing /v1/enrich/provider GET/PUT API. Default OFF: LLM cost
- * should never be opt-OUT — explicit opt-in only. */
-function AutoEnrichToggle() {
-  const [loading, setLoading] = useState(true);
-  const [enabled, setEnabled] = useState(false);
-  const [savedFlash, setSavedFlash] = useState(false);
-  const [available, setAvailable] = useState(true);
-
-  useEffect(() => {
-    let alive = true;
-    import("@/lib/cloud-api").then(async (m) => {
-      try {
-        if (!(await m.isCloudConfigured())) {
-          if (alive) { setAvailable(false); setLoading(false); }
-          return;
-        }
-        const cfg = await m.fetchEnrichProvider();
-        if (!alive) return;
-        setEnabled(!!cfg.auto_enrich_on_ingest);
-      } catch {
-        if (alive) setAvailable(false);
-      } finally {
-        if (alive) setLoading(false);
-      }
-    });
-    return () => { alive = false; };
-  }, []);
-
-  async function toggle(next: boolean) {
-    setEnabled(next);  // optimistic
-    try {
-      const m = await import("@/lib/cloud-api");
-      await m.saveEnrichProvider({ auto_enrich_on_ingest: next });
-      setSavedFlash(true);
-      setTimeout(() => setSavedFlash(false), 1400);
-    } catch (e) {
-      setEnabled(!next);  // revert
-      window.alert(`Save failed: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }
-
-  if (loading) {
-    return (
-      <div className="proto-form-field">
-        <p className="proto-form-hint">Loading auto-enrich state…</p>
-      </div>
-    );
-  }
-  if (!available) {
-    return (
-      <div className="proto-form-field">
-        <label className="proto-form-field-label">Auto-enrich on save</label>
-        <p className="proto-form-hint">
-          Configure cloud URL + API key above first — auto-enrich is a
-          cloud-side setting.
-        </p>
-      </div>
-    );
-  }
-  return (
-    <div className="proto-form-field">
-      <label className="proto-form-field-label">Auto-enrich on save</label>
-      <label className="proto-form-toggle-label">
-        <input
-          type="checkbox"
-          checked={enabled}
-          onChange={(e) => toggle(e.target.checked)}
-        />
-        <span>
-          Re-enrich (LLM classify + tag generation) every time a note is saved
-          {savedFlash && <span style={{ color: "var(--color-success)", marginLeft: 8 }}>✓ saved</span>}
-        </span>
-      </label>
-      <p className="proto-form-hint">
-        <strong style={{ color: "var(--color-warning)" }}>Off by default.</strong> Each
-        auto-enrich run consumes LLM tokens. Leave off and trigger Enrich
-        manually from the KP page when you want fresh AI tags.
-      </p>
-    </div>
-  );
-}

@@ -128,33 +128,80 @@ export const getDocument = (id: string) =>
 export const deleteDocument = (id: string) =>
   call<{ deleted: boolean; id: string }>("DELETE", `/v1/documents/${id}`);
 
+export type DocumentKnChunk = {
+  id: string;
+  dimension: string;
+  line_start: number;
+  line_end: number;
+  text: string;
+  keywords: string[];
+  source_ref: string | null;
+};
+export type DocumentKnTagSegment = {
+  id: string;
+  line_start: number;
+  line_end: number;
+  tag: string;
+  confidence: number;
+  summary: string;
+  meta: Record<string, unknown>;
+};
+export type DocumentKnEnrichJob = {
+  id: string;
+  status: string;
+  executor: string | null;
+  attempts: number;
+  error: string | null;
+  created_at: string | null;
+  dispatched_at: string | null;
+  finished_at: string | null;
+  tokens_total: number;
+};
+export type DocumentKnChapter = {
+  id: string;
+  ord: number;
+  level: number;
+  anchor: string;
+  title: string;
+  line_start: number;
+  line_end: number;
+  summary: string;
+  keywords: string[];
+  summarized: boolean;
+  updated_at: string | null;
+};
+export type DocumentKn = {
+  document_id: string;
+  kind: string;
+  chunks: DocumentKnChunk[];
+  tag_segments: DocumentKnTagSegment[];
+  wiki_chapters: DocumentKnChapter[];
+  enrich_jobs: DocumentKnEnrichJob[];
+};
+export const getDocumentKn = (id: string) =>
+  call<DocumentKn>("GET", `/v1/documents/${id}/kn`);
+
 export const patchDocument = (
   id: string,
   patch: { name?: string; kind?: string; metadata?: Record<string, unknown> },
 ) => call<CloudDocument>("PATCH", `/v1/documents/${id}`, patch);
 
-// Wiki smartsheet — chapter-based concept extraction matrix.
-// Distinct from /v1/enrich/run (line-level tag classification).
-// Produces, per chapter: entities, key claims, open questions, refs.
-// Backend endpoint coming alongside this commit; until deployed
-// the call surfaces a "not yet" message in the UI.
-export type WikiSmartsheetChapter = {
-  index: number;
-  title: string;
-  entities: string[];
-  claims: string[];
-  questions: string[];
-  refs: string[];
+// Wiki abstract — chapter summarization. Hits the canonical
+// /v1/processing/{id}/run endpoint with kind=wiki_abstract; the
+// result lands in wiki_chapters.summary and is read back through
+// the /kn endpoint along with everything else.
+export type ProcessingRunResult = {
+  run_id: string;
+  status: string;
+  dedup_skipped?: boolean;
+  revision?: number;
 };
-export type WikiSmartsheet = {
-  document_id: string;
-  built_at: string | null;
-  chapters: WikiSmartsheetChapter[];
-};
-export const buildWikiSmartsheet = (id: string) =>
-  call<WikiSmartsheet>("POST", `/v1/wiki-smartsheet/${id}/build`, {});
-export const getWikiSmartsheet = (id: string) =>
-  call<WikiSmartsheet>("GET", `/v1/wiki-smartsheet/${id}`);
+export const buildWikiAbstract = (id: string, force = true) =>
+  call<ProcessingRunResult>("POST", `/v1/processing/${id}/run`, {
+    kind: "wiki_abstract", force,
+  });
+// Back-compat alias — same call. Older callers say "smartsheet".
+export const buildWikiSmartsheet = buildWikiAbstract;
 
 export const createDocument = (req: {
   name: string;

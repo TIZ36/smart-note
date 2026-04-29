@@ -7,9 +7,7 @@ import {
 import * as cloudApi from "@/lib/cloud-api";
 import { NoteEditor, type LineMeta } from "../editor/NoteEditor";
 import { IngestDialog } from "./IngestDialog";
-import { PackBadge } from "./PackBadge";
 import { ReorganizeDialog } from "./ReorganizeDialog";
-import { BookmarksButton } from "./BookmarksButton";
 import { QuickSearch } from "./QuickSearch";
 import { NoteViewDialog } from "./NoteViewDialog";
 import { type SidebarViewItem } from "./NoteViewSidebar";
@@ -75,85 +73,24 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
   // their member line numbers. Loaded once and refreshed when ingestResult
   // changes (same cadence as the old tag strip).
   const [tagSegments, setTagSegments] = useState<api.NoteSegment[]>([]);
-  const [activeBuild, setActiveBuild] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [scrollTarget, setScrollTarget] = useState<{ start: number; end: number } | null>(null);
   const [recentDone, setRecentDone] = useState(false);
-  const [lineMetaRows, setLineMetaRows] = useState<api.NoteLineMeta[]>([]);
-  const [pendingPacks, setPendingPacks] = useState<number>(0);
-  const [packsSinceFull, setPacksSinceFull] = useState<number>(0);
-  const [packsRefreshKey, setPacksRefreshKey] = useState(0);
 
-  // Build the line-number → meta map the editor reads. Deriving (not storing)
-  // keeps the mapping in sync with whichever meta list arrived most recently.
-  const lineMeta = useMemo<LineMeta>(() => {
-    const m: LineMeta = new Map();
-    for (const row of lineMetaRows) {
-      if (row.line_no_last > 0) {
-        m.set(row.line_no_last, {
-          ts: row.ts,
-          bookmark: row.bookmark || undefined,
-          highlight: row.highlight_color || undefined,
-        });
-      }
-    }
-    return m;
-  }, [lineMetaRows]);
+  // Bookmarks / pack queue / pack stats / activeBuild were backed by
+  // the legacy local Python gateway (127.0.0.1:8787) which has been
+  // retired. The right-side bookmark widget, "N since full" badge,
+  // build version chip, and 20s external-edit poll are removed
+  // until reimplemented on cloud state. Note read/save still works
+  // (electron IPC / cloud sync). Empty stand-ins keep the JSX honest
+  // without re-introducing the failing fetches.
+  const lineMeta = useMemo<LineMeta>(() => new Map(), []);
 
-  const bookmarks = useMemo(
-    () => lineMetaRows.filter((r) => r.bookmark && r.line_no_last > 0),
-    [lineMetaRows]
-  );
-
-  // Fetch line meta + pending pack count for the current file. Called on
-  // mount, after save, and after apply/discard.
-  const refreshNoteState = useCallback(async () => {
-    if (!rawPath) return;
-    try {
-      const [meta, packs, stats] = await Promise.all([
-        api.fetchNoteLineMeta(rawPath),
-        api.fetchPacks(rawPath, "pending"),
-        api.fetchPackStats(rawPath).catch(() => null),
-      ]);
-      setLineMetaRows(meta.lines);
-      setPendingPacks(packs.pending_count);
-      setPacksSinceFull(stats ? stats.applied_since_full : 0);
-    } catch {
-      /* offline / gateway down — silent */
-    }
-  }, [rawPath]);
-
-  // Toggle: if line is already bookmarked (hash match), clear; else set.
-  // We send the line content + number so the backend can upsert a row for
-  // files that haven't been saved through /note/save yet.
-  const handleToggleBookmark = useCallback(async (lineNo: number, lineText: string) => {
-    if (!rawPath) return;
-    const trimmed = lineText.trim();
-    if (!trimmed) return;  // skip blank lines — they have no identity
-    try {
-      const hash = await api.lineHash(lineText);
-      const existing = lineMetaRows.find((r) => r.line_hash === hash);
-      const isBookmarked = Boolean(existing?.bookmark);
-      await api.setLineMark(rawPath, hash, {
-        bookmark: isBookmarked ? "" : trimmed.slice(0, 80),
-        line_preview: trimmed,
-        line_no: lineNo,
-      });
-      refreshNoteState();
-    } catch (e) {
-      console.warn("bookmark toggle failed:", e);
-    }
-  }, [rawPath, lineMetaRows, refreshNoteState]);
-
-  const handleRemoveBookmark = useCallback(async (hash: string) => {
-    if (!rawPath) return;
-    try {
-      await api.setLineMark(rawPath, hash, { bookmark: "" });
-      refreshNoteState();
-    } catch { /* silent */ }
-  }, [rawPath, refreshNoteState]);
-
-  useEffect(() => { refreshNoteState(); }, [refreshNoteState, packsRefreshKey]);
+  // No-op stand-in: callers (save/apply/discard handlers, ReorganizeDialog
+  // onApproved) used to trigger a gateway refresh of line meta + pack
+  // queue. The gateway is gone; keeping the callback shape avoids
+  // touching every caller site.
+  const refreshNoteState = useCallback(async () => {}, []);
 
   // ── Views: load list whenever the file changes ──
   const refreshViews = useCallback(async () => {
@@ -226,7 +163,7 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
         }));
       setViewLines(rows);
     }
-  }, [activeKind, activeUserId, activeTagName, rawPath, lineMetaRows, tagSegments]);
+  }, [activeKind, activeUserId, activeTagName, rawPath, tagSegments]);
 
   // Lines that should NOT be dimmed. For user views this is just the
   // resolved member lines. For auto views we expand each segment's
@@ -399,22 +336,8 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
     } catch (e) { console.warn("remove selection failed:", e); }
   }, [activeView, editorSelection, rawPath, refreshViews]);
 
-  // External-edit detection: poll /note/load every 20s. If the file was
-  // changed outside SmartNote, the backend creates an 'external' pack which
-  // the badge will then surface.
-  useEffect(() => {
-    if (!rawPath) return;
-    // Initial load: ensures baseline md5 is recorded for this session.
-    api.loadNote(rawPath).then(() => refreshNoteState()).catch(() => {});
-    const id = setInterval(() => {
-      api.loadNote(rawPath).then((r) => {
-        if (r.external_pack_created) {
-          setPacksRefreshKey((k) => k + 1);
-        }
-      }).catch(() => {});
-    }, 20_000);
-    return () => clearInterval(id);
-  }, [rawPath, refreshNoteState]);
+  /* External-edit detection / md5 baseline lived on the legacy
+     gateway. Removed alongside the bookmarks + pack queue. */
 
   // Shift+Shift (double-tap within 400ms) opens the unified quick-search palette.
   // We only count "bare" Shift presses — any modifier combo (Shift+Cmd, Shift+letter)
@@ -436,13 +359,6 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [rawPath]);
-
-  useEffect(() => {
-    api.fetchBuilds().then((d) => {
-      const active = d.builds.find((b) => b.is_active);
-      if (active) setActiveBuild(active.id);
-    }).catch(() => {});
-  }, [ingestResult]);
 
   // Keep the completion/error badge visible briefly after finishing.
   useEffect(() => {
@@ -638,23 +554,9 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
           <span>Notes /</span>
           <strong>{rawPath.split("/").pop()}</strong>
           {dirty && <span className="proto-note-v3-crumbs-dirty" title="Unsaved changes" />}
-          {activeBuild && (
-            <span className="proto-note-v3-build">v{activeBuild}</span>
-          )}
         </span>
 
         <div className="proto-note-v3-actions">
-          {packsSinceFull > 0 && (
-            <button
-              type="button"
-              onClick={() => setShowIngest(true)}
-              className="proto-note-v3-pill proto-note-v3-pill-warning"
-              title={`${packsSinceFull} pack${packsSinceFull === 1 ? "" : "s"} applied since last full ingest — classification stale.`}
-            >
-              <span className="proto-note-v3-pill-dot" />
-              <span>{packsSinceFull} since full</span>
-            </button>
-          )}
           <AnimatePresence>
             {showProgressPill && (
               <motion.button
@@ -728,8 +630,11 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
         items={sidebarItems}
         activeKey={activeKey}
         onChange={(k) => setActiveKey(k)}
-        onNewView={() => { setViewDialogInitial(null); setViewDialogOpen(true); }}
-        onEditView={(v) => { setViewDialogInitial(v); setViewDialogOpen(true); }}
+        // View CRUD lived on the legacy gateway — disabled until
+        // reimplemented on cloud. Strip still renders auto-views
+        // (AI-classified tag segments) so it isn't empty.
+        onNewView={undefined}
+        onEditView={undefined}
         onRepopulateView={handleRepopulate}
         onDeleteView={handleDeleteView}
       />
@@ -744,7 +649,6 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
             onDirty={setDirty}
             scrollToRange={scrollTarget}
             lineMeta={activeView && activeView.display.show_ts === false ? undefined : lineMeta}
-            onToggleBookmark={handleToggleBookmark}
             memberLines={memberLineSet}
             dimMode={activeView?.display.dim_mode || "opacity"}
             dimLevel={activeView?.display.dim_level || "medium"}
@@ -799,17 +703,6 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
               >
                 <ArrowDownToLine size={14} strokeWidth={2} />
               </button>
-              <BookmarksButton
-                bookmarks={bookmarks}
-                onJumpToLine={(line) => setScrollTarget({ start: line, end: line })}
-                onRemove={handleRemoveBookmark}
-              />
-              <PackBadge
-                rawPath={rawPath}
-                pendingCount={pendingPacks}
-                onChanged={() => setPacksRefreshKey((k) => k + 1)}
-                onJumpToLine={(line) => setScrollTarget({ start: line, end: line })}
-              />
             </div>
           )}
         </div>

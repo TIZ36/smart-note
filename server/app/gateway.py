@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
+import traceback
 from pathlib import Path
 
 import requests
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+log = logging.getLogger("smartnote.gateway")
 
 from app.adaptive import strengthen_profile
 from app.config import settings
@@ -73,6 +77,38 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ── Global exception handler ────────────────────────────────────
+# Without this, an uncaught Python exception turns into a 500 with
+# no CORS header and no diagnostic body — the browser blocks the
+# response under "CORS error", masking the real cause. This handler
+# logs the full traceback to the server log and returns a JSON body
+# containing exception type + message + path. CORSMiddleware sees a
+# normal Response so it can attach Access-Control-Allow-Origin.
+@app.exception_handler(Exception)
+async def _all_exceptions(request: Request, exc: Exception) -> JSONResponse:
+    # HTTPException already encodes the intended status / detail —
+    # don't re-wrap it (FastAPI's default handler runs after this).
+    if isinstance(exc, HTTPException):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail, "path": str(request.url.path)},
+        )
+    tb = traceback.format_exc()
+    log.error("[gateway] unhandled %s on %s\n%s",
+              type(exc).__name__, request.url.path, tb)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": f"{type(exc).__name__}: {exc}",
+            "path": str(request.url.path),
+            # Only include traceback when the gateway is being run
+            # for the desktop locally (no auth, single-user). Helpful
+            # for diagnosis; not a leak in this deployment model.
+            "traceback": tb.splitlines()[-12:],
+        },
+    )
 
 smart_table.IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 app.mount(

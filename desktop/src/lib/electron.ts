@@ -35,6 +35,71 @@ export async function getMvpStatus(): Promise<MvpStatus> {
   return getDesktop().invoke("get_mvp_status") as Promise<MvpStatus>;
 }
 
+/* Direct LLM call via the user's local provider (Settings → Chat
+ * provider). The api key is read inside the main process from
+ * cloud-creds.json — it never enters the renderer context. Throws
+ * if the local provider isn't configured. */
+export type AiChatResult = {
+  content: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  finish_reason?: string;
+};
+export async function aiChat(req: {
+  system: string;
+  user: string;
+  max_tokens?: number;
+  temperature?: number;
+}): Promise<AiChatResult> {
+  return getDesktop().invoke("ai_chat", req) as Promise<AiChatResult>;
+}
+
+/* Streaming variant — emits separate "reasoning" and "content"
+ * chunks as the provider streams. DeepSeek-Reasoner / o1 / Qwen-
+ * thinking emit reasoning_content first (chain-of-thought), then
+ * content (the final answer); chat models emit content only.
+ *
+ * Usage: pass a chunk callback. Returns an abort fn that cancels
+ * the stream both client-side (no more chunks) and server-side
+ * (sends a cancel IPC so the fetch aborts).
+ */
+export type AiChatChunk =
+  | { type: "reasoning"; text: string }
+  | { type: "content"; text: string }
+  | { type: "done"; prompt_tokens: number; completion_tokens: number; total_tokens: number; finish_reason: string }
+  | { type: "error"; err: string };
+
+export function aiChatStream(
+  req: { system: string; user: string; max_tokens?: number; temperature?: number },
+  onChunk: (chunk: AiChatChunk) => void,
+): () => void {
+  const desktop = getDesktop();
+  const id = `ai-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  // Subscribe to the global chunk channel and filter by id. The
+  // preload exposes onAiChatChunk; fall back to invoke-only mode
+  // if the build is older than the streaming preload (returns no-op).
+  const onAi = (desktop as unknown as {
+    onAiChatChunk?: (cb: (chunk: AiChatChunk & { id: string }) => void) => () => void;
+  }).onAiChatChunk;
+  let unsubscribe: () => void = () => {};
+  if (onAi) {
+    unsubscribe = onAi((chunk) => {
+      if (chunk.id !== id) return;
+      onChunk(chunk);
+    });
+  }
+  // Kick off the stream — main returns immediately after handshake;
+  // chunks land asynchronously via onAiChatChunk above.
+  desktop.invoke("ai_chat_stream", { id, ...req }).catch((e) => {
+    onChunk({ type: "error", err: e instanceof Error ? e.message : String(e) });
+  });
+  return () => {
+    try { unsubscribe(); } catch {}
+    desktop.invoke("ai_chat_stream:cancel", id).catch(() => {});
+  };
+}
+
 export async function pickRawFile(): Promise<string | null> {
   return getDesktop().invoke("dialog_open_raw") as Promise<string | null>;
 }

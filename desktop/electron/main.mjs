@@ -342,6 +342,37 @@ function createWindow() {
     console.error("[electron] did-fail-load", { code, desc, url });
   });
 
+  /* DevTools shortcuts — the app menu is suppressed (proto layout
+   * owns the chrome) so the standard View → Toggle Developer Tools
+   * is unreachable. Wire the conventional accelerators directly:
+   *   ⌘⌥I (mac) / Ctrl+Shift+I (win/linux)  → toggle devtools
+   *   ⌘R / Ctrl+R                            → reload renderer
+   *   F12                                    → toggle devtools (uniform)
+   * Also auto-open in dev mode so the first error is never silent. */
+  mainWindow.webContents.on("before-input-event", (event, input) => {
+    if (input.type !== "keyDown") return;
+    const cmdOrCtrl = input.meta || input.control;
+    const key = input.key.toLowerCase();
+    // Toggle devtools
+    if ((cmdOrCtrl && input.alt && key === "i") || key === "f12") {
+      mainWindow?.webContents.toggleDevTools();
+      event.preventDefault();
+      return;
+    }
+    // Reload (helpful when the renderer paints white from a recoverable
+    // error after a hot-update mismatch)
+    if (cmdOrCtrl && !input.alt && !input.shift && key === "r") {
+      mainWindow?.webContents.reload();
+      event.preventDefault();
+    }
+  });
+
+  if (process.env.VITE_DEV_SERVER_URL || process.env.SMARTNOTE_DEVTOOLS === "1") {
+    mainWindow.webContents.once("did-finish-load", () => {
+      mainWindow?.webContents.openDevTools({ mode: "detach" });
+    });
+  }
+
   const devUrl = process.env.VITE_DEV_SERVER_URL;
   if (devUrl) {
     const u = devUrl.endsWith("/") ? devUrl.slice(0, -1) : devUrl;
@@ -352,13 +383,28 @@ function createWindow() {
   }
 }
 
-app.whenReady().then(() => {
-  // Set dock icon (macOS dev mode)
-  if (process.platform === "darwin" && app.dock) {
+/* Re-applied dock icon. Extracted into a function so we can call
+ * it not just at startup but also when the macOS app activation
+ * state has been disturbed (e.g. after the spotlight window's
+ * transparent+alwaysOnTop frame unsettles the dock and reverts the
+ * icon to Electron's default atom). */
+function applyDockIcon() {
+  if (process.platform !== "darwin" || !app.dock) return;
+  try {
     const iconPath = path.join(__dirname, "..", "public", "icon.png");
     app.dock.setIcon(nativeImage.createFromPath(iconPath));
-  }
+  } catch {}
+}
+
+app.whenReady().then(() => {
+  applyDockIcon();
   createWindow();
+  // Pre-create spotlight (hidden) so the first ⌘K is just as fast
+  // as every later one — no loadURL or React-mount on the first
+  // press. The window does a brief showInactive→hide cycle once
+  // its renderer is ready (see createSpotlightWindow) so Cocoa
+  // pre-allocates the surface, eliminating the first-show flicker.
+  createSpotlightWindow();
   loadHotkeyConfig();
   registerHotkey();
   connectIngestSse();
@@ -586,6 +632,228 @@ ipcMain.handle("native:search:reindex", _wrap((_, p) => nativeSearch.indexFile(p
 ipcMain.handle("native:sync:start",  _wrap(() => nativeSync.start()));
 ipcMain.handle("native:sync:stop",   _wrap(() => nativeSync.stop()));
 ipcMain.handle("native:sync:status", _wrap(() => nativeSync.status()));
+
+/* AI chat completion via the user's local provider (Settings → Chat
+ * provider). OpenAI-compatible /chat/completions only. Returns the
+ * assistant content string + token usage. Renderer calls this via
+ * IPC so the api key never crosses into the browser context. */
+ipcMain.handle("ai_chat", _wrap(async (_e, { system, user, max_tokens, temperature }) => {
+  const creds = _readUserCreds();
+  const baseUrl = (creds.provider_base_url || "").replace(/\/+$/, "");
+  const apiKey = creds.provider_api_key || "";
+  const model = creds.provider_chat_model || "";
+  if (!baseUrl || !apiKey || !model) {
+    throw new Error("local provider not configured (Settings → Chat provider)");
+  }
+  const ctrl = new AbortController();
+  // Reasoner models (DeepSeek-Reasoner / o1 / Qwen-thinking) can take
+  // 30s+ purely on the "thinking" phase before any visible token; bump
+  // the wall-clock cap accordingly. 60s was tight even for chat models.
+  const timer = setTimeout(() => ctrl.abort(), 120_000);
+  try {
+    const isReasoner = /reasoner|o1|o3|thinking/i.test(model);
+    const r = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: String(system || "") },
+          { role: "user", content: String(user || "") },
+        ],
+        // Reasoners burn most of their budget on hidden chain-of-thought
+        // (reasoning_content) before emitting visible content. 600
+        // tokens runs out before they ever finish thinking. Provide a
+        // much larger cap for those, and an OK cap for chat models.
+        max_tokens: max_tokens ?? (isReasoner ? 4096 : 1200),
+        temperature: temperature ?? 0.2,
+        stream: false,
+      }),
+      signal: ctrl.signal,
+    });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => "");
+      throw new Error(`provider ${r.status}: ${txt.slice(0, 200) || "no body"}`);
+    }
+    const j = await r.json();
+    // Provider response shape varies more than the OpenAI spec
+    // implies. Cover four real-world cases:
+    //   1. Standard OpenAI/DeepSeek-chat: choices[0].message.content
+    //   2. DeepSeek-reasoner / o1: reasoning_content + (sometimes empty) content
+    //   3. Anthropic-compatible bridge: choices[0].message.content[].text
+    //   4. Legacy completions: choices[0].text
+    const choice = j?.choices?.[0] || {};
+    const msg = choice.message || {};
+    let content = msg.content;
+    if (Array.isArray(content)) {
+      // OpenAI vision-style content array
+      content = content.map((p) => (typeof p === "string" ? p : p?.text || "")).join("");
+    }
+    if (!content || (typeof content === "string" && !content.trim())) {
+      content = msg.reasoning_content || choice.text || "";
+    }
+    if (!content) {
+      console.warn("[ai_chat] empty content; full response keys:",
+        Object.keys(j || {}), "choice keys:", Object.keys(choice));
+      console.warn("[ai_chat] dump:", JSON.stringify(j).slice(0, 1500));
+    }
+    const usage = j?.usage || {};
+    return {
+      content: String(content || ""),
+      prompt_tokens: usage.prompt_tokens || 0,
+      completion_tokens: usage.completion_tokens || 0,
+      total_tokens: usage.total_tokens || 0,
+      // Diagnostic — surfaces in the renderer if content is empty so
+      // the user can see why nothing rendered.
+      finish_reason: choice.finish_reason || "",
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}));
+
+/* Streaming variant — opens an SSE stream to the provider's
+ * /chat/completions, parses each `data: {...}` line, and pushes
+ * typed chunks back to the renderer via webContents.send.
+ *
+ * Chunk shape (sent on channel "smartnote:ai-chat-chunk"):
+ *   { id, type: "reasoning" | "content", text }
+ *   { id, type: "done", prompt_tokens, completion_tokens,
+ *                       total_tokens, finish_reason }
+ *   { id, type: "error", err }
+ *
+ * The id is generated by the renderer so it can route chunks to the
+ * right pending request when multiple streams overlap.
+ *
+ * DeepSeek-Reasoner / o1 / Qwen-thinking emit reasoning_content
+ * BEFORE the actual content — see chaya-engine's openai_llm.go for
+ * the same dual-stream pattern. Treating them as separate streams
+ * lets the UI render a "thinking" block above the answer.
+ */
+const _aiStreamCtrls = new Map();  // id → AbortController
+
+ipcMain.handle("ai_chat_stream:cancel", (_e, id) => {
+  const c = _aiStreamCtrls.get(id);
+  if (c) { try { c.abort(); } catch {} _aiStreamCtrls.delete(id); }
+  return { cancelled: !!c };
+});
+
+ipcMain.handle("ai_chat_stream", async (event, { id, system, user, max_tokens, temperature }) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const send = (chunk) => {
+    try { win?.webContents.send("smartnote:ai-chat-chunk", { id, ...chunk }); } catch {}
+  };
+  const creds = _readUserCreds();
+  const baseUrl = (creds.provider_base_url || "").replace(/\/+$/, "");
+  const apiKey = creds.provider_api_key || "";
+  const model = creds.provider_chat_model || "";
+  if (!baseUrl || !apiKey || !model) {
+    send({ type: "error", err: "local provider not configured (Settings → Chat provider)" });
+    return { started: false };
+  }
+
+  const ctrl = new AbortController();
+  _aiStreamCtrls.set(id, ctrl);
+  const isReasoner = /reasoner|o1|o3|thinking/i.test(model);
+  const timer = setTimeout(() => ctrl.abort(), 180_000);
+
+  // Run async without awaiting — return started:true so the renderer
+  // knows IPC handshake worked. Chunks land via the chunk channel.
+  (async () => {
+    try {
+      const r = await fetch(`${baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+          "Accept": "text/event-stream",
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: "system", content: String(system || "") },
+            { role: "user", content: String(user || "") },
+          ],
+          max_tokens: max_tokens ?? (isReasoner ? 4096 : 1200),
+          temperature: temperature ?? 0.2,
+          stream: true,
+        }),
+        signal: ctrl.signal,
+      });
+      if (!r.ok) {
+        const txt = await r.text().catch(() => "");
+        send({ type: "error", err: `provider ${r.status}: ${txt.slice(0, 200) || "no body"}` });
+        return;
+      }
+      if (!r.body) {
+        send({ type: "error", err: "provider returned no stream body" });
+        return;
+      }
+
+      // SSE parser — accumulate by lines, split on \n\n event boundaries.
+      // Each event is one or more `data: {...}` lines; we only consume
+      // the JSON payload and ignore everything else.
+      let usage = null;
+      let finish_reason = "";
+      let buffered = "";
+      const reader = r.body.getReader();
+      const decoder = new TextDecoder();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffered += decoder.decode(value, { stream: true });
+        // Process complete events — split on double-newline boundary.
+        let idx;
+        while ((idx = buffered.indexOf("\n\n")) !== -1) {
+          const evt = buffered.slice(0, idx);
+          buffered = buffered.slice(idx + 2);
+          for (const line of evt.split("\n")) {
+            if (!line.startsWith("data:")) continue;
+            const payload = line.slice(5).trim();
+            if (!payload || payload === "[DONE]") continue;
+            let j;
+            try { j = JSON.parse(payload); } catch { continue; }
+            const choice = j?.choices?.[0] || {};
+            const delta = choice.delta || {};
+            // DeepSeek-Reasoner / o1 / Qwen-thinking
+            if (delta.reasoning_content) {
+              send({ type: "reasoning", text: String(delta.reasoning_content) });
+            }
+            // Standard
+            if (delta.content) {
+              if (Array.isArray(delta.content)) {
+                const t = delta.content.map((p) => typeof p === "string" ? p : p?.text || "").join("");
+                if (t) send({ type: "content", text: t });
+              } else {
+                send({ type: "content", text: String(delta.content) });
+              }
+            }
+            if (choice.finish_reason) finish_reason = choice.finish_reason;
+            if (j.usage) usage = j.usage;
+          }
+        }
+      }
+      send({
+        type: "done",
+        prompt_tokens: usage?.prompt_tokens || 0,
+        completion_tokens: usage?.completion_tokens || 0,
+        total_tokens: usage?.total_tokens || 0,
+        finish_reason,
+      });
+    } catch (e) {
+      const msg = e?.name === "AbortError" ? "cancelled" : (e?.message || String(e));
+      send({ type: "error", err: msg });
+    } finally {
+      clearTimeout(timer);
+      _aiStreamCtrls.delete(id);
+    }
+  })();
+
+  return { started: true };
+});
 
 ipcMain.handle("get_mvp_status", async () => ({
   gateway_online: await isGatewayOnline(),
@@ -862,13 +1130,30 @@ ipcMain.handle("shell_open_path", async (_, { path: target }) => {
 // ── Global Hotkey: Clipboard → Paste to raw → Save → Incremental ingest ──
 
 const HOTKEY_CONFIG_FILE = path.join(serverRoot(), "data", "hotkey.json");
-let currentHotkey = "CommandOrControl+Shift+V";
+// Spotlight-style global hotkey. ⌘K matches the convention of every
+// modern command palette (Linear, Raycast, GitHub, Slack), and is
+// the most muscle-memory'd shortcut for "search anything from
+// anywhere". The previous Cmd+Shift+V → paste-clipboard-to-raw flow
+// has been retired — that affordance now lives inside Note as part
+// of the editor, not as a global hotkey.
+let currentHotkey = "CommandOrControl+K";
 
 function loadHotkeyConfig() {
   try {
     if (fs.existsSync(HOTKEY_CONFIG_FILE)) {
       const data = JSON.parse(fs.readFileSync(HOTKEY_CONFIG_FILE, "utf8"));
-      if (data.hotkey) currentHotkey = data.hotkey;
+      if (data.hotkey) {
+        // Migrate the legacy default — Cmd+Shift+V was the old paste-
+        // to-raw shortcut, which has been retired in favor of the ⌘K
+        // Spotlight palette. If the user customized to something else,
+        // honor it; only sweep the literal old default.
+        if (data.hotkey === "CommandOrControl+Shift+V") {
+          currentHotkey = "CommandOrControl+K";
+          saveHotkeyConfig(currentHotkey);
+        } else {
+          currentHotkey = data.hotkey;
+        }
+      }
     }
   } catch {}
 }
@@ -932,10 +1217,172 @@ function pasteClipboardToRaw() {
   }
 }
 
+/* Spotlight is a SEPARATE window — frameless, transparent, always
+ * on top, doesn't open or focus the main app window. Click a result
+ * inside Spotlight → main window comes up navigated to that source.
+ *
+ * The Spotlight renderer lives at the same Vite URL with a `?spotlight=1`
+ * query param so main.tsx can branch and mount only the palette
+ * component (no rail, no canvas — just the floating panel).
+ *
+ * Lazy-created on first ⌘K, then reused on subsequent presses. Hidden
+ * on blur or Esc; never destroyed during the app lifetime. */
+let spotlightWindow = null;
+
+/* Build the Spotlight window ONCE at app startup (after mainWindow)
+ * and keep it alive forever. ⌘K only toggles visibility — no
+ * loadURL, no React mount, no animation churn. First press is just
+ * as fast as every subsequent press.
+ *
+ * The macOS-side hazards (dock icon revert, alwaysOnTop residue
+ * eating clicks) are addressed at the show/hide boundary rather
+ * than by destroy: see openSpotlight / closeSpotlight. */
+function createSpotlightWindow() {
+  if (spotlightWindow && !spotlightWindow.isDestroyed()) return spotlightWindow;
+  spotlightWindow = new BrowserWindow({
+    width: 720,
+    height: 480,
+    frame: false,
+    transparent: true,
+    // Start NOT alwaysOnTop. Only flip the bit when shown so the
+    // dormant window can't intercept clicks or steal activation.
+    alwaysOnTop: false,
+    skipTaskbar: true,
+    resizable: false,
+    movable: true,
+    fullscreenable: false,
+    minimizable: false,
+    maximizable: false,
+    show: false,
+    // No native shadow — the CSS panel handles rounded corners and
+    // we don't want a double-shadow look (native + box-shadow). The
+    // CSS box-shadow stays since it scales with our radius.
+    hasShadow: false,
+    backgroundColor: "#00000000",
+    webPreferences: {
+      preload: path.join(__dirname, "preload.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+
+  const devUrl = process.env.VITE_DEV_SERVER_URL;
+  if (devUrl) {
+    const u = devUrl.endsWith("/") ? devUrl.slice(0, -1) : devUrl;
+    spotlightWindow.loadURL(`${u}/?spotlight=1`).catch(() => {});
+  } else {
+    const indexHtml = path.join(__dirname, "..", "dist", "index.html");
+    spotlightWindow.loadFile(indexHtml, { query: { spotlight: "1" } }).catch(() => {});
+  }
+
+  // Pre-warm: when the renderer finishes its first paint, this
+  // resolves and subsequent show()s have no first-paint cost.
+  spotlightWindow.webContents.once("did-finish-load", () => {
+    if (!spotlightWindow || spotlightWindow.isDestroyed()) return;
+    // Force a cycle of show+hide to make Cocoa allocate the window
+    // surface ahead of time. show() with focus pulled to mainWindow
+    // immediately so the user never sees the warm-up frame.
+    try {
+      spotlightWindow.showInactive();
+      setImmediate(() => {
+        if (spotlightWindow && !spotlightWindow.isDestroyed()) {
+          spotlightWindow.hide();
+        }
+      });
+    } catch {}
+  });
+
+  spotlightWindow.on("blur", () => {
+    // Only hide if currently visible AND the user hasn't just
+    // clicked one of our action buttons (which fires its own
+    // close path). isVisible guard catches both.
+    if (spotlightWindow && !spotlightWindow.isDestroyed() && spotlightWindow.isVisible()) {
+      closeSpotlight();
+    }
+  });
+
+  spotlightWindow.on("closed", () => { spotlightWindow = null; });
+  return spotlightWindow;
+}
+
+function ensureSpotlightWindow() {
+  if (!spotlightWindow || spotlightWindow.isDestroyed()) {
+    return createSpotlightWindow();
+  }
+  return spotlightWindow;
+}
+
+function openSpotlight() {
+  const w = ensureSpotlightWindow();
+  // Flip alwaysOnTop ON only while shown — otherwise the dormant
+  // hidden window can interfere with the main window's activation
+  // (dock icon, click-through layer).
+  w.setAlwaysOnTop(true);
+  w.center();
+  w.show();
+  w.focus();
+  try { w.webContents.send("smartnote:spotlight-open"); } catch {}
+}
+
+/* Hide (don't destroy) for instant re-open. The window-server side
+ * effects we used to fight by destroying — dock-icon revert,
+ * alwaysOnTop residue, activation-cycle confusion — are addressed
+ * by:
+ *   1. Toggling alwaysOnTop OFF when hiding (kills the invisible
+ *      click-intercept layer).
+ *   2. Re-applying the dock icon defensively (macOS sometimes
+ *      reverts it after a transparent-window state change).
+ */
+function closeSpotlight() {
+  if (!spotlightWindow || spotlightWindow.isDestroyed()) return;
+  try {
+    spotlightWindow.setAlwaysOnTop(false);
+    if (spotlightWindow.isVisible()) spotlightWindow.hide();
+  } catch {}
+  applyDockIcon();
+}
+
+/* Spotlight → main: a result was picked. Bring up the main window
+ * navigated to the selected source. Spotlight hides itself first
+ * so the focus transfer feels instant.
+ *
+ * macOS quirks worked around here:
+ *   - .show() on a hidden, non-foreground window doesn't always
+ *     raise it above the dock — call app.show() too.
+ *   - moveTop() forces the window above the spotlight's previous
+ *     "floating" alwaysOnTop layer in case macOS still has it
+ *     ranked above us mid-transition.
+ *   - Send the navigation IPC AFTER the window is visible so the
+ *     renderer's listener (which only mounts once App is up) has
+ *     a chance to catch it. The window's already alive in our
+ *     case so this is belt-and-suspenders.
+ */
+ipcMain.handle("spotlight:pick", (_e, { channel }) => {
+  closeSpotlight();
+  // Re-create main window if user closed it — they pressed ⌘K
+  // expecting SmartNote to come back, not silently no-op.
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    try { mainWindow.webContents.send("smartnote:open-source", { channel }); } catch {}
+  }
+  return { ok: true };
+});
+
+ipcMain.handle("spotlight:close", () => {
+  closeSpotlight();
+  return { ok: true };
+});
+
 function registerHotkey() {
   globalShortcut.unregisterAll();
   try {
-    const ok = globalShortcut.register(currentHotkey, pasteClipboardToRaw);
+    const ok = globalShortcut.register(currentHotkey, openSpotlight);
     if (!ok) console.warn(`[hotkey] Failed to register ${currentHotkey}`);
     else console.log(`[hotkey] Registered: ${currentHotkey}`);
   } catch (err) {

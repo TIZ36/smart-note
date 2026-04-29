@@ -66,3 +66,15 @@ def require_scope(scope: str):
         return identity
 
     return _check
+
+
+async def require_billing_scope(identity: Identity) -> None:
+    """Gate for paid (LLM-burning) operations triggered with `force=True`.
+
+    Today this is a no-op — billing/quotas land in P0-* with the cost
+    ledger. Defined here so callers (`/v1/processing/run`) can be written
+    against the final shape without conditional imports. When billing
+    is real, this raises 402 (or 403) on insufficient credit / scope.
+    """
+    # Intentionally permissive until the cost ledger is wired.
+    return None

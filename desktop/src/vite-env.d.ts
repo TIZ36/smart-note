@@ -29,6 +29,21 @@ declare global {
       onHotkeyPasted: (
         callback: (data: { rawPath: string; lineCount: number }) => void
       ) => () => void;
+      onWsEvent?: (callback: (data: unknown) => void) => () => void;
+      onSpotlightOpen?: (callback: () => void) => () => void;
+      onOpenSource?: (callback: (data: { channel: string }) => void) => () => void;
+      onAiChatChunk?: (
+        callback: (chunk: {
+          id: string;
+          type: "reasoning" | "content" | "done" | "error";
+          text?: string;
+          err?: string;
+          prompt_tokens?: number;
+          completion_tokens?: number;
+          total_tokens?: number;
+          finish_reason?: string;
+        }) => void
+      ) => () => void;
     };
   }
 }

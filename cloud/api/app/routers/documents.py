@@ -322,6 +322,137 @@ async def get_document(
     }
 
 
+@router.get("/{document_id}/kn", dependencies=[Depends(require_scope("documents:read"))])
+async def get_document_kn(
+    document_id: str,
+    identity: Identity = Depends(require_scope("documents:read")),
+) -> dict:
+    """Knowledge view of a document — what's been computed for it:
+    chunks (chunk + embed pass), tag_segments (LLM enrich pass),
+    enrich_jobs history. One round-trip for the desktop's Library
+    KN tab so it can render the actual processed state instead of
+    placeholders.
+    """
+    ws = UUID(identity.workspace_id)
+    doc = UUID(document_id)
+    async with pool().acquire() as conn:
+        # Confirm doc belongs to this workspace + read kind so we can
+        # decide which downstream tables to consult (wiki_chapters for
+        # wiki_topic, tag_segments for everything else).
+        meta_row = await conn.fetchrow(
+            "SELECT metadata FROM documents WHERE id=$1 AND workspace_id=$2",
+            doc, ws,
+        )
+        if not meta_row:
+            raise HTTPException(404, "document not found")
+        import json as _json
+        meta = meta_row["metadata"] or {}
+        if isinstance(meta, str):
+            try:
+                meta = _json.loads(meta)
+            except Exception:
+                meta = {}
+        kind = (meta.get("smartnote_type") or "")
+        chunks = await conn.fetch(
+            "SELECT id, dimension, line_start, line_end, text, keywords, "
+            "       source_ref "
+            "FROM chunks WHERE document_id=$1 AND workspace_id=$2 "
+            "ORDER BY line_start ASC LIMIT 200",
+            doc, ws,
+        )
+        # Wiki docs don't write tag_segments (chapter summary replaces
+        # line-range tags); skip the query so we don't show stale rows
+        # from a pre-fix run either.
+        if kind == "wiki_topic":
+            tag_segs = []
+            wiki_chapters = await conn.fetch(
+                "SELECT id, ord, level, anchor, title, line_start, line_end, "
+                "       summary, keywords, summary_sha, updated_at "
+                "FROM wiki_chapters WHERE document_id=$1 "
+                "ORDER BY ord ASC",
+                doc,
+            )
+        else:
+            tag_segs = await conn.fetch(
+                "SELECT id, start_line, end_line, tag, confidence, summary, meta "
+                "FROM tag_segments WHERE document_id=$1 AND workspace_id=$2 "
+                "ORDER BY start_line ASC LIMIT 200",
+                doc, ws,
+            )
+            wiki_chapters = []
+        jobs = await conn.fetch(
+            "SELECT id, status, executor, attempts, error, created_at, "
+            "       dispatched_at, finished_at, result "
+            "FROM enrich_jobs WHERE document_id=$1 "
+            "ORDER BY created_at DESC LIMIT 10",
+            doc,
+        )
+    return {
+        "document_id": str(doc),
+        "kind": kind or "doc",
+        "wiki_chapters": [
+            {
+                "id": str(ch["id"]),
+                "ord": int(ch["ord"]),
+                "level": int(ch["level"]),
+                "anchor": ch["anchor"],
+                "title": ch["title"],
+                "line_start": int(ch["line_start"]),
+                "line_end": int(ch["line_end"]),
+                "summary": ch["summary"] or "",
+                "keywords": (
+                    list(ch["keywords"]) if isinstance(ch["keywords"], list)
+                    else (_json.loads(ch["keywords"]) if ch["keywords"] else [])
+                ),
+                "summarized": bool(ch["summary_sha"]),
+                "updated_at": ch["updated_at"].isoformat() if ch["updated_at"] else None,
+            } for ch in wiki_chapters
+        ],
+        "chunks": [
+            {
+                "id": str(c["id"]),
+                "dimension": c["dimension"],
+                "line_start": int(c["line_start"]),
+                "line_end": int(c["line_end"]),
+                "text": c["text"],
+                "keywords": list(c["keywords"]) if c["keywords"] else [],
+                "source_ref": c["source_ref"],
+            } for c in chunks
+        ],
+        "tag_segments": [
+            {
+                "id": str(t["id"]),
+                "line_start": int(t["start_line"]),
+                "line_end": int(t["end_line"]),
+                "tag": t["tag"],
+                "confidence": float(t["confidence"] or 0),
+                "summary": t["summary"] or "",
+                "meta": (t["meta"] if isinstance(t["meta"], dict) else (
+                    _json.loads(t["meta"]) if t["meta"] else {}
+                )),
+            } for t in tag_segs
+        ],
+        "enrich_jobs": [
+            {
+                "id": str(j["id"]),
+                "status": j["status"],
+                "executor": j["executor"],
+                "attempts": int(j["attempts"] or 0),
+                "error": j["error"],
+                "created_at": j["created_at"].isoformat() if j["created_at"] else None,
+                "dispatched_at": j["dispatched_at"].isoformat() if j["dispatched_at"] else None,
+                "finished_at": j["finished_at"].isoformat() if j["finished_at"] else None,
+                "tokens_total": (
+                    (j["result"] if isinstance(j["result"], dict) else (
+                        _json.loads(j["result"]) if j["result"] else {}
+                    )).get("total_tokens", 0)
+                    if j["result"] else 0
+                ),
+            } for j in jobs
+        ],
+    }
+
+
 def _chunk_text(text: str, target_size: int = 600, overlap: int = 80) -> list[str]:
     """Split on blank lines, then greedily pack into ~target_size-char
     chunks with a small overlap so a sentence straddling the boundary

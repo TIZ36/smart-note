@@ -399,13 +399,14 @@ export async function reorderTags(order: string[]): Promise<{ tags: TagInfo[] }>
 export type NoteSegment = TagSegment & { tag: string };
 
 export async function fetchAllTagSegments(): Promise<{ segments: NoteSegment[] }> {
-  const res = await fetch(`${BASE}/tags/all-segments`);
-  return res.json();
+  // Legacy gateway endpoint. Tag segments are now read per-document
+  // via the cloud's /v1/documents/{id}/kn endpoint; the workspace-wide
+  // bulk feed isn't reimplemented (KP page filters per-doc anyway).
+  return { segments: [] };
 }
 
-export async function fetchTagSegments(tag: string): Promise<{ tag: string; segments: TagSegment[] }> {
-  const res = await fetch(`${BASE}/tags/${encodeURIComponent(tag)}`);
-  return res.json();
+export async function fetchTagSegments(_tag: string): Promise<{ tag: string; segments: TagSegment[] }> {
+  return { tag: _tag, segments: [] };
 }
 
 // Special Knowledge
@@ -519,8 +520,7 @@ export type BuildInfo = {
 };
 
 export async function fetchBuilds(): Promise<{ builds: BuildInfo[] }> {
-  const res = await fetch(`${BASE}/builds`);
-  return res.json();
+  return { builds: [] };
 }
 
 // Dashboard overview — aggregated stats powering the Dashboard panel.
@@ -1081,16 +1081,17 @@ export async function saveNote(rawPath: string, content: string, note = ""): Pro
   return res.json();
 }
 
-export async function loadNote(rawPath: string): Promise<{ exists: boolean; content: string; file_state: NoteFileState | null; external_pack_created: boolean; external_pack: IngestPack | null }> {
-  const res = await fetch(`${BASE}/note/load?raw_path=${encodeURIComponent(rawPath)}`);
-  if (!res.ok) throw new Error(`load note: ${res.status}`);
-  return res.json();
+// Legacy gateway-only endpoints — the local Python service at port
+// 8787 has been retired in favour of electron+cloud. These helpers
+// stay around for type compatibility with old callers but resolve to
+// empty defaults; new code should not call them. _ silences the
+// "unused parameter" warning so we don't have to touch every caller.
+export async function loadNote(_rawPath: string): Promise<{ exists: boolean; content: string; file_state: NoteFileState | null; external_pack_created: boolean; external_pack: IngestPack | null }> {
+  return { exists: false, content: "", file_state: null, external_pack_created: false, external_pack: null };
 }
 
-export async function fetchNoteLineMeta(rawPath: string): Promise<{ lines: NoteLineMeta[] }> {
-  const res = await fetch(`${BASE}/note/line-meta?raw_path=${encodeURIComponent(rawPath)}`);
-  if (!res.ok) throw new Error(`line-meta: ${res.status}`);
-  return res.json();
+export async function fetchNoteLineMeta(_rawPath: string): Promise<{ lines: NoteLineMeta[] }> {
+  return { lines: [] };
 }
 
 // Compute the canonical line_hash the backend uses. Must match
@@ -1105,9 +1106,9 @@ export async function lineHash(line: string): Promise<string> {
 }
 
 export async function setLineMark(
-  rawPath: string,
+  _rawPath: string,
   lineHashValue: string,
-  marks: {
+  _marks: {
     bookmark?: string;
     highlight_color?: string;
     highlight_note?: string;
@@ -1115,16 +1116,9 @@ export async function setLineMark(
     line_no?: number;
   }
 ): Promise<NoteLineMeta> {
-  const res = await fetch(`${BASE}/note/line-mark`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ raw_path: rawPath, line_hash: lineHashValue, ...marks }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || `line-mark: ${res.status}`);
-  }
-  return res.json();
+  // Legacy gateway endpoint. Bookmarks/highlights aren't yet
+  // reimplemented on cloud state — return a placeholder row.
+  return { line_hash: lineHashValue, ts: null, bookmark: "", highlight_color: "", highlight_note: "", line_no_last: 0 } as NoteLineMeta;
 }
 
 // ── Note views (topical lenses over a single raw file) ──────────
@@ -1165,44 +1159,38 @@ export type ViewResolvedLine = {
   source: "rule" | "ai" | "manual";
 };
 
-export async function fetchViews(rawPath: string): Promise<{ views: NoteView[] }> {
-  const res = await fetch(`${BASE}/note/views?raw_path=${encodeURIComponent(rawPath)}`);
-  if (!res.ok) throw new Error(`views: ${res.status}`);
-  return res.json();
+export async function fetchViews(_rawPath: string): Promise<{ views: NoteView[] }> {
+  // Legacy gateway endpoint. Note views (saved tag/regex/AI lenses)
+  // are not yet reimplemented on cloud — return empty list so the
+  // sidebar shows no views without spamming the console.
+  return { views: [] };
 }
 
+// View CRUD — all gateway-only, retired. Callers either guard on
+// undefined handlers (NoteViewStrip) or these functions throw
+// quietly. We surface a clear error so the caller knows it's
+// disabled, rather than 500-ing on a dead network endpoint.
+const _viewsDisabled = (): never => {
+  throw new Error("note views are disabled — feature retired with the local gateway");
+};
 export async function createView(
-  rawPath: string,
-  name: string,
-  rule?: ViewRule,
-  display?: ViewDisplay,
+  _rawPath: string,
+  _name: string,
+  _rule?: ViewRule,
+  _display?: ViewDisplay,
 ): Promise<{ view: NoteView }> {
-  const res = await fetch(`${BASE}/note/views`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ raw_path: rawPath, name, rule, display }),
-  });
-  if (!res.ok) throw new Error(`create view: ${res.status}`);
-  return res.json();
+  return _viewsDisabled();
 }
 
 export async function updateView(
-  viewId: number,
-  patch: { name?: string; rule?: ViewRule; display?: ViewDisplay; sort_order?: number },
+  _viewId: number,
+  _patch: { name?: string; rule?: ViewRule; display?: ViewDisplay; sort_order?: number },
 ): Promise<{ view: NoteView }> {
-  const res = await fetch(`${BASE}/note/views/${viewId}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(patch),
-  });
-  if (!res.ok) throw new Error(`update view: ${res.status}`);
-  return res.json();
+  return _viewsDisabled();
 }
 
-export async function deleteView(viewId: number): Promise<{ ok: boolean }> {
-  const res = await fetch(`${BASE}/note/views/${viewId}`, { method: "DELETE" });
-  if (!res.ok) throw new Error(`delete view: ${res.status}`);
-  return res.json();
+export async function deleteView(_viewId: number): Promise<{ ok: boolean }> {
+  return _viewsDisabled();
 }
 
 /** Populate response includes a `diff` block when dry_run=true so the
@@ -1224,50 +1212,33 @@ export type PopulateResult = {
 };
 
 export async function populateView(
-  viewId: number,
-  opts: { rule?: ViewRule; replace?: boolean; dry_run?: boolean } = {},
+  _viewId: number,
+  _opts: { rule?: ViewRule; replace?: boolean; dry_run?: boolean } = {},
 ): Promise<PopulateResult> {
-  const res = await fetch(`${BASE}/note/views/${viewId}/populate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(opts),
-  });
-  if (!res.ok) throw new Error(`populate: ${res.status}`);
-  return res.json();
+  return _viewsDisabled();
 }
 
 export async function setViewMembers(
-  viewId: number,
-  ops: {
+  _viewId: number,
+  _ops: {
     add?: { line_hash: string; line_preview?: string }[];
     remove?: string[];
     exclude?: { line_hash: string; line_preview?: string }[];
   },
 ): Promise<{ count: number }> {
-  const res = await fetch(`${BASE}/note/views/${viewId}/members`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(ops),
-  });
-  if (!res.ok) throw new Error(`view members: ${res.status}`);
-  return res.json();
+  return _viewsDisabled();
 }
 
 export async function resolveView(
   viewId: number,
-  rawPath?: string,
+  _rawPath?: string,
 ): Promise<{ lines: ViewResolvedLine[]; missing: string[] }> {
-  const q = rawPath ? `?raw_path=${encodeURIComponent(rawPath)}` : "";
-  const res = await fetch(`${BASE}/note/views/${viewId}/resolve${q}`);
-  if (!res.ok) throw new Error(`resolve view: ${res.status}`);
-  return res.json();
+  void viewId;
+  return { lines: [], missing: [] };
 }
 
-export async function fetchPacks(rawPath?: string, status: "pending" | "applied" | "discarded" | "all" = "pending"): Promise<{ packs: IngestPack[]; pending_count: number }> {
-  const q = new URLSearchParams({ status, ...(rawPath ? { raw_path: rawPath } : {}) });
-  const res = await fetch(`${BASE}/packs?${q.toString()}`);
-  if (!res.ok) throw new Error(`packs: ${res.status}`);
-  return res.json();
+export async function fetchPacks(_rawPath?: string, _status: "pending" | "applied" | "discarded" | "all" = "pending"): Promise<{ packs: IngestPack[]; pending_count: number }> {
+  return { packs: [], pending_count: 0 };
 }
 
 export type PackStats = {
@@ -1277,11 +1248,8 @@ export type PackStats = {
   last_full_at: string | null;
 };
 
-export async function fetchPackStats(rawPath: string): Promise<PackStats> {
-  const q = new URLSearchParams({ raw_path: rawPath });
-  const res = await fetch(`${BASE}/packs/stats?${q.toString()}`);
-  if (!res.ok) throw new Error(`pack stats: ${res.status}`);
-  return res.json();
+export async function fetchPackStats(_rawPath: string): Promise<PackStats> {
+  return { applied_since_full: 0, pending: 0, last_full_build_id: null, last_full_at: null };
 }
 
 export async function applyPack(packId: number): Promise<{ pack: IngestPack; build_id: string | null; applied_siblings_count: number }> {

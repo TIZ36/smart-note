@@ -200,11 +200,29 @@ async def run_enrich(
 
     async with pool().acquire() as conn:
         doc = await conn.fetchrow(
-            "SELECT id, content FROM documents WHERE id=$1 AND workspace_id=$2",
+            "SELECT id, content, metadata FROM documents WHERE id=$1 AND workspace_id=$2",
             doc_uuid, ws_uuid,
         )
         if not doc:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "document not found")
+        # Wiki documents have their own enrich path — Phase B chapter
+        # summarization writes wiki_chapters.summary, which is the
+        # natural unit for a topic-shaped doc. Running the line-range
+        # classifier on top would produce tag_segments that duplicate
+        # (and disagree with) the chapter abstracts. Reject early so
+        # callers route through /v1/processing/{id}/run kind=wiki_abstract.
+        meta = doc["metadata"] or {}
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except Exception:
+                meta = {}
+        if (meta.get("smartnote_type") or "") == "wiki_topic":
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "wiki_topic documents enrich via /v1/processing/{id}/run "
+                "kind=wiki_abstract — chapter summarization replaces tag_segments",
+            )
         job = await conn.fetchrow(
             "INSERT INTO enrich_jobs (workspace_id, document_id, status) "
             "VALUES ($1, $2, 'queued') RETURNING *",

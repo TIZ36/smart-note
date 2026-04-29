@@ -835,6 +835,54 @@
   color: var(--color-text-primary);
 }
 
+/* Settings module card — quiet bordered surface that groups related
+   options. Replaces the noisy divider-between-sections flow so the
+   page reads as a stack of self-contained modules. */
+.proto-settings-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-proto);
+  background: var(--color-bg-elevated);
+  padding: 18px 20px;
+  margin-bottom: 14px;
+}
+
+.proto-settings-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.proto-settings-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  letter-spacing: -0.005em;
+}
+
+.proto-settings-card-sub {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.proto-settings-card .proto-form-field:last-child {
+  margin-bottom: 0;
+}
+
+/* Sticky save bar — sits at the bottom of the scroll surface so the
+   user always knows where Save lives without it taking visual weight
+   in the middle of the page. */
+.proto-settings-savebar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0 4px;
+  margin-top: 8px;
+  background: linear-gradient(to bottom, transparent, var(--color-bg-primary) 30%);
+}
+
 .proto-form-field {
   margin-bottom: 16px;
 }
