@@ -235,6 +235,15 @@ async def ingest_document(workspace_id: str, document_id: str) -> dict:
                 "finished_at=now() WHERE id=$1",
                 run_id, inserted,
             )
+            # Mark the document as ingested so list_documents /
+            # console_overview reflect post-embed state. Without this
+            # the desktop UI never lights its E (embedded) badge —
+            # documents.ingested_at stays NULL even though chunks are
+            # populated.
+            await conn.execute(
+                "UPDATE documents SET ingested_at = now() WHERE id = $1",
+                doc_uuid,
+            )
     return {
         "ingest_run_id": str(run_id),
         "chunk_count": inserted,
