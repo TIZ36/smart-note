@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   FolderOpen, Shuffle, ArrowDownToLine, PanelLeft, Save,
-  Database, Sparkles, Plus, Minus,
+  Plus, Minus,
 } from "lucide-react";
 import { NoteEditor, type LineMeta } from "../editor/NoteEditor";
 import { IngestDialog } from "./IngestDialog";
@@ -13,7 +13,7 @@ import { QuickSearch } from "./QuickSearch";
 import { NoteViewDialog } from "./NoteViewDialog";
 import { NoteViewSidebar, type SidebarViewItem } from "./NoteViewSidebar";
 import { cn } from "@/lib/cn";
-import { pickRawFile, saveRawPathForHotkey, installSampleNote, ingestRawAsync } from "@/lib/electron";
+import { pickRawFile, saveRawPathForHotkey, installSampleNote } from "@/lib/electron";
 import * as api from "@/lib/api";
 import type { IngestStep } from "@/App";
 
@@ -495,26 +495,10 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
     }
   }
 
-  // ── Ingest pipeline triggers ──────────────────────────────────
-  // Embedding (non-LLM): re-chunks the raw file and regenerates
-  // embeddings. No AI calls — cheap to run after every save. Fires
-  // ingestRawAsync directly; toast surfaces progress, no dialog.
-  async function handleEmbedding() {
-    if (!rawPath) return;
-    try {
-      await ingestRawAsync(rawPath, notePath, false);
-    } catch {
-      /* silent — toast subscriber emits errors */
-    }
-  }
-
-  // Enrich (LLM): opens the IngestDialog where the user can scope
-  // a full re-classification (full reset + AI tag generation +
-  // segment summary). Distinct entry because LLM costs $$ and
-  // usually wants a confirmation surface.
-  function handleEnrich() {
-    setShowIngest(true);
-  }
+  // Note is read/write only — embedding + enrich live on the RAG
+  // surface (rail icon → Network glyph). Saved files become candidate
+  // sources there, where the user picks them and triggers AI capabilities
+  // explicitly. This keeps the editor focused on writing.
 
   // Trigger the editor's native ⌘S save by synthesizing a keydown.
   // CodeMirror's keymap picks it up so save flows through the same
@@ -612,25 +596,6 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
               </motion.button>
             )}
           </AnimatePresence>
-
-          <button
-            type="button"
-            onClick={handleEmbedding}
-            className="proto-note-v3-btn"
-            disabled={ingestBusy}
-            title="Re-chunk + re-embed this note (no LLM, cheap to run)"
-          >
-            <Database size={12} strokeWidth={2} /> Embedding
-          </button>
-
-          <button
-            type="button"
-            onClick={handleEnrich}
-            className="proto-note-v3-btn"
-            title="Run AI classifier + tag generation + segment summaries (LLM)"
-          >
-            <Sparkles size={12} strokeWidth={2} /> Enrich
-          </button>
 
           <button
             type="button"

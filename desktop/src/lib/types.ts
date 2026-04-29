@@ -144,11 +144,14 @@ export type ActiveServer = "kb" | "settings";
 
 /* v3 stream-centric routes. Closed union so the router catches typos.
  *
- *   stream             default home — RAG召回 + 历史 + agent行为 (Stream surface)
- *   note               full-canvas markdown editor
+ *   stream             default home — Stream surface (RAG queries + history + agent activity)
+ *   note               full-canvas markdown editor (read/write only — no AI triggers)
  *   library:docs       Library tab — wiki documents (was "special-knowledge")
  *   library:memories   Library tab — agent-proposed + daily-digest memories
  *   library:skills     Library tab — claude/cursor/opencode skill files + workflows
+ *   rag                Knowledge processing center — pick notes/wiki sources, trigger
+ *                      embedding/enrich/tag/graph, manage 6-path retrieval + tag CRUD.
+ *                      Note + Library stay read-only; this is where AI capabilities fire.
  *   settings           full-canvas settings (200px sub-nav inside)
  *   source:<path>      raw markdown viewer for a single source file
  *
@@ -160,5 +163,6 @@ export type ChannelId =
   | "library:docs"
   | "library:memories"
   | "library:skills"
+  | "rag"
   | "settings"
   | `source:${string}`;

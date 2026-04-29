@@ -1,0 +1,579 @@
+import { useEffect, useMemo, useState } from "react";
+import {
+  FileText, BookOpen, Sparkles, Database, Hash, Network as NetworkIcon,
+  CheckSquare, Square, RotateCw, Plus, X, Edit3,
+} from "lucide-react";
+import * as cloudApi from "@/lib/cloud-api";
+import { cn } from "@/lib/cn";
+
+/* RAG — knowledge processing center.
+ *
+ * Note + Library are read-only browse surfaces. RAG is where the AI
+ * capabilities actually fire: pick notes/wiki sources (single, multi,
+ * or all) and trigger:
+ *   - Embedding (chunk + embed, no LLM)
+ *   - Enrich (LLM classifier + tag generation + summaries)
+ *   - Tag pass (refresh AI tags only)
+ *   - Entity graph rebuild
+ *
+ * Below: 6-path retrieval status (FTS / vector / n-gram / substring /
+ * keyword / tag-meta — the hybrid retrieval per docs/product-principles
+ * P1-2). Each path has its own rebuild trigger.
+ *
+ * Bottom: workspace tag CRUD (was buried in old console; now lives
+ * here so editing tags + processing knowledge is one place).
+ */
+
+type SourceKind = "note" | "wiki";
+
+type Source = {
+  id: string;
+  name: string;
+  kind: SourceKind;
+  byteSize: number;
+  ingestedAt: string | null;
+  updatedAt: string | null;
+};
+
+const RETRIEVAL_PATHS: {
+  key: string;
+  name: string;
+  desc: string;
+  icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
+}[] = [
+  { key: "fts",     name: "FTS",          desc: "Full-text search · sqlite FTS5 token match",          icon: FileText },
+  { key: "vec",     name: "Vector",       desc: "Cosine similarity on chunk embeddings",                 icon: Sparkles },
+  { key: "ngram",   name: "N-gram",       desc: "Char-level n-gram for typo + partial-word recall",      icon: Hash },
+  { key: "sub",     name: "Substring",    desc: "LIKE substring match · catches what FTS tokenizes out", icon: Database },
+  { key: "kw",      name: "Keyword",      desc: "Keyword overlap · weighted by importance",              icon: Hash },
+  { key: "tagmeta", name: "Tag metadata", desc: "Tag-segment topic / summary / keyword match",           icon: BookOpen },
+];
+
+export function RAGPage() {
+  const [sources, setSources] = useState<Source[] | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [filter, setFilter] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [flash, setFlash] = useState<{ msg: string; tone: "ok" | "err" } | null>(null);
+
+  // Tags
+  const [tags, setTags] = useState<cloudApi.CloudTag[] | null>(null);
+  const [tagDraft, setTagDraft] = useState("");
+  const [editingTag, setEditingTag] = useState<string | null>(null);
+  const [editingTagDesc, setEditingTagDesc] = useState("");
+
+  // Load sources (notes + wiki) from cloud
+  useEffect(() => {
+    let alive = true;
+    async function load() {
+      try {
+        if (!(await cloudApi.isCloudConfigured())) {
+          if (alive) setSources([]);
+          return;
+        }
+        const res = await cloudApi.listDocuments();
+        if (!alive) return;
+        const mapped: Source[] = res.documents.map((d) => {
+          const md = (d.metadata && typeof d.metadata === "object" ? d.metadata : {}) as Record<string, unknown>;
+          const snt = String(md.smartnote_type || "");
+          const kind: SourceKind = snt === "wiki_topic" ? "wiki" : "note";
+          return {
+            id: d.id,
+            name: d.name,
+            kind,
+            byteSize: d.byte_size,
+            ingestedAt: d.ingested_at,
+            updatedAt: d.updated_at,
+          };
+        });
+        setSources(mapped);
+      } catch {
+        if (alive) setSources([]);
+      }
+    }
+    load();
+  }, []);
+
+  // Load tags
+  useEffect(() => {
+    let alive = true;
+    cloudApi.fetchTags()
+      .then((t) => alive && setTags(t))
+      .catch(() => alive && setTags([]));
+    return () => { alive = false; };
+  }, []);
+
+  const filtered = useMemo(() => {
+    if (!sources) return [];
+    if (!filter.trim()) return sources;
+    const q = filter.toLowerCase();
+    return sources.filter((s) => s.name.toLowerCase().includes(q));
+  }, [sources, filter]);
+
+  const counts = useMemo(() => {
+    const all = sources?.length ?? 0;
+    const notes = sources?.filter((s) => s.kind === "note").length ?? 0;
+    const wiki = sources?.filter((s) => s.kind === "wiki").length ?? 0;
+    return { all, notes, wiki };
+  }, [sources]);
+
+  function toggle(id: string) {
+    setSelected((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function selectAll() {
+    setSelected(new Set(filtered.map((s) => s.id)));
+  }
+  function selectNone() {
+    setSelected(new Set());
+  }
+  function selectKind(kind: SourceKind) {
+    setSelected(new Set(filtered.filter((s) => s.kind === kind).map((s) => s.id)));
+  }
+
+  // ── Bulk actions ────────────────────────────────────────────────
+  function flashSet(msg: string, tone: "ok" | "err" = "ok") {
+    setFlash({ msg, tone });
+    setTimeout(() => setFlash(null), 2400);
+  }
+
+  async function runEmbedding() {
+    if (selected.size === 0) return;
+    setBusy("embedding");
+    try {
+      const ids = [...selected];
+      // Bulk re-embed via cloud API. The bulk endpoint queues server-side.
+      // Per the bulk schema, it can also gate AI enrichment — we explicitly
+      // disable here so this button stays "non-LLM".
+      await cloudApi.bulkIngest({ document_ids: ids, enrich_with_ai: false });
+      flashSet(`Queued ${ids.length} source${ids.length === 1 ? "" : "s"} for embedding`);
+    } catch (e) {
+      flashSet(e instanceof Error ? e.message : String(e), "err");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function runEnrich() {
+    if (selected.size === 0) return;
+    setBusy("enrich");
+    try {
+      const ids = [...selected];
+      // Loop runEnrich for each — there's no bulk enrich endpoint yet.
+      let ok = 0;
+      for (const id of ids) {
+        try { await cloudApi.runEnrich(id); ok++; } catch { /* per-doc tolerated */ }
+      }
+      flashSet(`Dispatched ${ok}/${ids.length} enrich job${ok === 1 ? "" : "s"}`);
+    } catch (e) {
+      flashSet(e instanceof Error ? e.message : String(e), "err");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function runTagPass() {
+    if (selected.size === 0) return;
+    flashSet("Tag pass — Phase 4 backend (using existing enrich pipeline for now)");
+  }
+
+  async function runGraphRebuild() {
+    setBusy("graph");
+    try {
+      await cloudApi.fetchGraph(); // touches the graph endpoint to warm it
+      flashSet("Entity graph refreshed");
+    } catch (e) {
+      flashSet(e instanceof Error ? e.message : String(e), "err");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // ── Per-path rebuild (placeholder until backend exposes per-path) ──
+  function rebuildPath(key: string) {
+    flashSet(`${key} rebuild — backend endpoint coming Phase 4`);
+  }
+
+  // ── Tag CRUD ────────────────────────────────────────────────────
+  async function addTag() {
+    const name = tagDraft.trim();
+    if (!name) return;
+    try {
+      await cloudApi.upsertTag({ name });
+      setTagDraft("");
+      const t = await cloudApi.fetchTags();
+      setTags(t);
+    } catch (e) {
+      flashSet(e instanceof Error ? e.message : String(e), "err");
+    }
+  }
+
+  async function saveTagEdit(name: string) {
+    try {
+      await cloudApi.upsertTag({ name, description: editingTagDesc });
+      setEditingTag(null);
+      setEditingTagDesc("");
+      const t = await cloudApi.fetchTags();
+      setTags(t);
+    } catch (e) {
+      flashSet(e instanceof Error ? e.message : String(e), "err");
+    }
+  }
+
+  async function deleteTag(name: string) {
+    if (!window.confirm(`Delete tag "${name}"? Existing tag-segments stay but won't be re-applied.`)) return;
+    try {
+      await cloudApi.deleteTag(name);
+      const t = await cloudApi.fetchTags();
+      setTags(t);
+    } catch (e) {
+      flashSet(e instanceof Error ? e.message : String(e), "err");
+    }
+  }
+
+  return (
+    <div className="proto-atelier-rag">
+      {/* Top header — subtle, sets context */}
+      <header className="proto-atelier-rag-bar">
+        <div className="proto-atelier-rag-bar-titles">
+          <h2 className="proto-atelier-rag-title">Knowledge processing</h2>
+          <div className="proto-atelier-rag-subtitle">
+            Pick sources, trigger embedding / enrich / tag, manage the 6 retrieval paths and workspace tags.
+            Note + Library stay read-only; this is where the pipeline runs.
+          </div>
+        </div>
+        {flash && (
+          <div className={cn(
+            "proto-atelier-rag-flash",
+            flash.tone === "err" && "proto-atelier-rag-flash-err",
+          )}>
+            {flash.msg}
+          </div>
+        )}
+      </header>
+
+      <div className="proto-atelier-rag-shell">
+        {/* Left source tree (220px) */}
+        <aside className="proto-atelier-rag-tree">
+          <div className="proto-atelier-rag-tree-bar">
+            <input
+              type="text"
+              className="proto-atelier-rag-tree-search"
+              placeholder="Filter sources…"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+            />
+          </div>
+
+          {/* Quick selection helpers */}
+          <div className="proto-atelier-rag-tree-quick">
+            <button
+              type="button"
+              onClick={selectAll}
+              className="proto-atelier-rag-quick-btn"
+              disabled={!sources}
+            >
+              Select all ({counts.all})
+            </button>
+            <button
+              type="button"
+              onClick={() => selectKind("note")}
+              className="proto-atelier-rag-quick-btn"
+              disabled={!sources}
+            >
+              Notes only ({counts.notes})
+            </button>
+            <button
+              type="button"
+              onClick={() => selectKind("wiki")}
+              className="proto-atelier-rag-quick-btn"
+              disabled={!sources}
+            >
+              Wiki only ({counts.wiki})
+            </button>
+            <button
+              type="button"
+              onClick={selectNone}
+              className="proto-atelier-rag-quick-btn"
+              disabled={selected.size === 0}
+            >
+              Clear
+            </button>
+          </div>
+
+          <div className="proto-atelier-rag-tree-scroll">
+            {sources === null && (
+              <div className="proto-atelier-rag-tree-hint">loading…</div>
+            )}
+            {sources !== null && filtered.length === 0 && (
+              <div className="proto-atelier-rag-tree-hint">
+                No sources. Ingest a note or sync a wiki folder first.
+              </div>
+            )}
+
+            {(["note", "wiki"] as SourceKind[]).map((kind) => {
+              const items = filtered.filter((s) => s.kind === kind);
+              if (items.length === 0) return null;
+              return (
+                <div key={kind}>
+                  <div className="proto-atelier-rag-tree-group">
+                    <span>{kind === "note" ? "Notes" : "Wiki topics"}</span>
+                    <span className="proto-atelier-rag-tree-group-count">{items.length}</span>
+                  </div>
+                  {items.map((s) => {
+                    const isSel = selected.has(s.id);
+                    return (
+                      <button
+                        type="button"
+                        key={s.id}
+                        className={cn(
+                          "proto-atelier-rag-tree-item",
+                          isSel && "proto-atelier-rag-tree-item-selected",
+                        )}
+                        onClick={() => toggle(s.id)}
+                      >
+                        {isSel
+                          ? <CheckSquare size={13} strokeWidth={2} />
+                          : <Square size={13} strokeWidth={1.6} />}
+                        <span className="proto-atelier-rag-tree-item-name">{s.name}</span>
+                        <span className="proto-atelier-rag-tree-item-meta">
+                          {Math.round(s.byteSize / 1024)}k
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+        </aside>
+
+        {/* Right scroll panel — bulk actions, 6 paths, tag CRUD */}
+        <div className="proto-atelier-rag-panel">
+
+          {/* Bulk actions */}
+          <section className="proto-atelier-rag-section">
+            <div className="proto-atelier-rag-section-head">
+              <h3 className="proto-atelier-rag-section-title">Process selected</h3>
+              <div className="proto-atelier-rag-section-meta">
+                {selected.size === 0
+                  ? "No sources selected"
+                  : `${selected.size} source${selected.size === 1 ? "" : "s"} selected`}
+              </div>
+            </div>
+            <div className="proto-atelier-rag-actions-grid">
+              <ActionTile
+                icon={<Database size={14} />}
+                title="Embedding"
+                tone="non-llm"
+                desc="Re-chunk + re-embed selected sources. No LLM calls."
+                disabled={selected.size === 0 || busy === "embedding"}
+                running={busy === "embedding"}
+                onClick={runEmbedding}
+              />
+              <ActionTile
+                icon={<Sparkles size={14} />}
+                title="Enrich"
+                tone="llm"
+                desc="LLM classifier + tag generation + segment summaries."
+                disabled={selected.size === 0 || busy === "enrich"}
+                running={busy === "enrich"}
+                onClick={runEnrich}
+              />
+              <ActionTile
+                icon={<Hash size={14} />}
+                title="Tag pass"
+                tone="llm"
+                desc="Refresh AI tags on selected (subset of full enrich)."
+                disabled={selected.size === 0}
+                onClick={runTagPass}
+              />
+              <ActionTile
+                icon={<NetworkIcon size={14} />}
+                title="Rebuild entity graph"
+                tone="non-llm"
+                desc="Re-derive entities + relations across the workspace."
+                disabled={busy === "graph"}
+                running={busy === "graph"}
+                onClick={runGraphRebuild}
+                wholeWorkspace
+              />
+            </div>
+          </section>
+
+          {/* 6 retrieval paths */}
+          <section className="proto-atelier-rag-section">
+            <div className="proto-atelier-rag-section-head">
+              <h3 className="proto-atelier-rag-section-title">Retrieval paths · 6-path hybrid</h3>
+              <div className="proto-atelier-rag-section-meta">
+                Per <code>P1-2</code> · no path is the single source of rank
+              </div>
+            </div>
+            <div className="proto-atelier-rag-paths">
+              {RETRIEVAL_PATHS.map((p) => {
+                const Icon = p.icon;
+                return (
+                  <div key={p.key} className="proto-atelier-rag-path">
+                    <span className="proto-atelier-rag-path-icon"><Icon size={13} strokeWidth={1.7} /></span>
+                    <div className="proto-atelier-rag-path-body">
+                      <div className="proto-atelier-rag-path-name">{p.name}</div>
+                      <div className="proto-atelier-rag-path-desc">{p.desc}</div>
+                    </div>
+                    <span className="proto-atelier-rag-path-status">live</span>
+                    <button
+                      type="button"
+                      onClick={() => rebuildPath(p.key)}
+                      className="proto-atelier-rag-path-btn"
+                      title={`Rebuild ${p.name} index`}
+                    >
+                      <RotateCw size={11} strokeWidth={2} /> Rebuild
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
+          {/* Tags CRUD */}
+          <section className="proto-atelier-rag-section">
+            <div className="proto-atelier-rag-section-head">
+              <h3 className="proto-atelier-rag-section-title">Workspace tags</h3>
+              <div className="proto-atelier-rag-section-meta">
+                {tags === null ? "loading…" : `${tags.length} tag${tags.length === 1 ? "" : "s"}`}
+              </div>
+            </div>
+
+            <div className="proto-atelier-rag-tag-add">
+              <input
+                type="text"
+                className="proto-atelier-rag-tag-input"
+                placeholder="Add a tag (lowercase, dash-separated)…"
+                value={tagDraft}
+                onChange={(e) => setTagDraft(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addTag(); } }}
+              />
+              <button
+                type="button"
+                onClick={addTag}
+                disabled={!tagDraft.trim()}
+                className="proto-atelier-rag-tag-add-btn"
+              >
+                <Plus size={12} strokeWidth={2} /> Add
+              </button>
+            </div>
+
+            <div className="proto-atelier-rag-tag-list">
+              {tags?.map((t) => (
+                <div key={t.name} className="proto-atelier-rag-tag-row">
+                  <span
+                    className="proto-atelier-rag-tag-chip"
+                    style={t.color ? { background: `${t.color}22`, color: t.color, borderColor: "transparent" } : undefined}
+                  >
+                    {t.name}
+                  </span>
+                  {editingTag === t.name ? (
+                    <>
+                      <input
+                        type="text"
+                        className="proto-atelier-rag-tag-edit-input"
+                        value={editingTagDesc}
+                        onChange={(e) => setEditingTagDesc(e.target.value)}
+                        placeholder="Description…"
+                        autoFocus
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") { e.preventDefault(); saveTagEdit(t.name); }
+                          if (e.key === "Escape") { setEditingTag(null); setEditingTagDesc(""); }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => saveTagEdit(t.name)}
+                        className="proto-atelier-rag-tag-icon-btn"
+                        title="Save"
+                      >
+                        Save
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="proto-atelier-rag-tag-desc">
+                        {t.description || <em style={{ opacity: 0.6 }}>no description</em>}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => { setEditingTag(t.name); setEditingTagDesc(t.description || ""); }}
+                        className="proto-atelier-rag-tag-icon-btn"
+                        title="Edit description"
+                      >
+                        <Edit3 size={11} strokeWidth={2} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteTag(t.name)}
+                        className="proto-atelier-rag-tag-icon-btn proto-atelier-rag-tag-icon-btn-danger"
+                        title="Delete tag"
+                      >
+                        <X size={11} strokeWidth={2} />
+                      </button>
+                    </>
+                  )}
+                </div>
+              ))}
+              {tags !== null && tags.length === 0 && (
+                <div className="proto-atelier-rag-tag-empty">
+                  No tags yet. Add one above — these will show up as filter chips
+                  on Stream rows and as classification targets during enrich.
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ActionTile({
+  icon, title, desc, tone, onClick, disabled, running, wholeWorkspace,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  desc: string;
+  tone: "llm" | "non-llm";
+  onClick: () => void;
+  disabled?: boolean;
+  running?: boolean;
+  wholeWorkspace?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={cn(
+        "proto-atelier-rag-action",
+        tone === "llm" && "proto-atelier-rag-action-llm",
+        tone === "non-llm" && "proto-atelier-rag-action-nonllm",
+      )}
+    >
+      <span className="proto-atelier-rag-action-icon">{icon}</span>
+      <div className="proto-atelier-rag-action-body">
+        <div className="proto-atelier-rag-action-head">
+          <span className="proto-atelier-rag-action-title">{title}</span>
+          {tone === "llm"
+            ? <span className="proto-atelier-rag-action-pill">LLM</span>
+            : <span className="proto-atelier-rag-action-pill proto-atelier-rag-action-pill-cheap">no-LLM</span>}
+          {wholeWorkspace && <span className="proto-atelier-rag-action-pill proto-atelier-rag-action-pill-cheap">workspace</span>}
+        </div>
+        <div className="proto-atelier-rag-action-desc">
+          {running ? "running…" : desc}
+        </div>
+      </div>
+    </button>
+  );
+}

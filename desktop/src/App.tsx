@@ -3,6 +3,7 @@ import { AnimatePresence } from "framer-motion";
 import { AtelierShell } from "./components/atelier/AtelierShell";
 import { StreamHome } from "./components/atelier/StreamHome";
 import { LibraryShell } from "./components/library/LibraryShell";
+import { RAGPage } from "./components/rag/RAGPage";
 import { NihoParticles } from "./components/layout/NihoParticles";
 import { SettingsPanel } from "./components/settings/SettingsPanel";
 import { Toast } from "./components/layout/Toast";
@@ -241,6 +242,9 @@ export default function App() {
           pendingMemoryCount={pendingMemoryCount}
         />
       );
+    }
+    if (activeChannel === "rag") {
+      return <RAGPage />;
     }
     if (activeChannel.startsWith("source:")) {
       const filePath = activeChannel.slice("source:".length);

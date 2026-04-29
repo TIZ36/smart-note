@@ -1,4 +1,4 @@
-import { FileEdit, Library, Cloud, Settings, Loader2 } from "lucide-react";
+import { FileEdit, Library, Network, Cloud, Settings, Loader2 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { ChannelId } from "@/lib/types";
 
@@ -80,6 +80,14 @@ export function IconRail({
         }
       >
         <Library size={16} strokeWidth={1.7} />
+      </RailButton>
+
+      <RailButton
+        active={activeChannel === "rag"}
+        onClick={() => onSelect("rag")}
+        title="RAG — knowledge processing (embedding · enrich · 6-path retrieval · tags)"
+      >
+        <Network size={16} strokeWidth={1.7} />
       </RailButton>
 
       <div className="proto-atelier-rail-spacer" />
