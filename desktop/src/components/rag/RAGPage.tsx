@@ -107,16 +107,14 @@ export function RAGPage() {
         const mapped: Source[] = docs.documents.map((d) => {
           const md = (d.metadata && typeof d.metadata === "object" ? d.metadata : {}) as Record<string, unknown>;
           const snt = String(md.smartnote_type || "");
-          // Kind heuristic — explicit smartnote_type wins; else infer
-          // from name (path-like or .md → note from desktop sync;
-          // bare title → wiki topic). Desktop sync uses
-          // `name = relPath` (e.g., "2026-04-29.md"), wiki upload
-          // uses `name = topic title`.
-          const kind: SourceKind = snt === "wiki_topic"
-            ? "wiki"
-            : snt === "note"
-              ? "note"
-              : (d.name.endsWith(".md") || d.name.includes("/")) ? "note" : "wiki";
+          // Kind heuristic. Wiki only when explicitly classified
+          // (smartnote_type === "wiki_topic"). Everything else —
+          // including MCP add_document ad-hoc uploads, untyped legacy
+          // docs, anything without explicit metadata — defaults to
+          // note. Notes is the inclusive home; wiki is the explicit
+          // taxonomy bucket. Earlier heuristic (default wiki) caused
+          // ad-hoc docs to never appear under Notes group.
+          const kind: SourceKind = snt === "wiki_topic" ? "wiki" : "note";
 
           // For note kind, prefer the basename so the tree shows the
           // file name, not a full relative path. For wiki, the title
