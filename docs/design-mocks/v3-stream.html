@@ -1,0 +1,2250 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SmartNote — v3 · Stream-Centric</title>
+<style>
+  /* ── Tokens — light (warm-paper, default) ──────────────────── */
+  :root {
+    --page-bg:       oklch(0.94 0.005 80);
+    --bg-primary:    oklch(0.97 0.005 80);
+    --bg-elevated:   oklch(0.95 0.005 80);
+    --bg-hover:      oklch(0.93 0.005 80);
+    --bg-surface:    oklch(0.99 0.005 80);
+    --text-primary:  oklch(0.22 0.005 80);
+    --text-secondary:oklch(0.42 0.005 80);
+    --text-muted:    oklch(0.58 0.005 80);
+    --border:        oklch(0.88 0.005 80);
+    --border-strong: oklch(0.78 0.005 80);
+    --accent:        oklch(0.55 0.15 250);
+    --accent-soft:   color-mix(in oklab, var(--accent) 14%, transparent);
+    --success:       oklch(0.55 0.13 155);
+    --warning:       oklch(0.62 0.14 70);
+    --danger:        oklch(0.55 0.18 25);
+    --scrim:         color-mix(in oklab, oklch(0.22 0.005 80) 24%, transparent);
+    --radius-sm: 4px; --radius: 6px; --radius-lg: 10px;
+    --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", system-ui, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, monospace;
+    --easing: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  /* ── Tokens — dark (cool-blue OKLCH per .impeccable.md) ────── */
+  :root[data-theme="dark"] {
+    --page-bg:       oklch(0.13 0.012 250);
+    --bg-primary:    oklch(0.18 0.012 250);
+    --bg-elevated:   oklch(0.22 0.012 250);
+    --bg-hover:      oklch(0.26 0.014 250);
+    --bg-surface:    oklch(0.16 0.012 250);
+    --text-primary:  oklch(0.94 0.006 250);
+    --text-secondary:oklch(0.74 0.010 250);
+    --text-muted:    oklch(0.55 0.012 250);
+    --border:        oklch(0.30 0.014 250);
+    --border-strong: oklch(0.42 0.018 250);
+    --accent:        oklch(0.72 0.14 250);
+    --accent-soft:   color-mix(in oklab, var(--accent) 18%, transparent);
+    --success:       oklch(0.66 0.13 155);
+    --warning:       oklch(0.74 0.14 70);
+    --danger:        oklch(0.66 0.18 25);
+    --scrim:         color-mix(in oklab, oklch(0 0 0) 56%, transparent);
+  }
+  html { color-scheme: light dark; }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--page-bg); transition: background 200ms var(--easing); }
+  body {
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+    padding: 24px 24px 48px;
+  }
+  button { font-family: inherit; }
+
+  /* ── Top label + state chips (demo only) ───────────────────── */
+  .label-row { max-width: 1240px; margin: 0 auto 10px; display: flex; align-items: center; gap: 12px; }
+  .label-eyebrow { color: var(--accent); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; }
+  .label-meta { color: var(--text-muted); font-size: 11px; flex: 1; min-width: 0; }
+  .theme-toggle {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: color 160ms var(--easing), border-color 160ms var(--easing);
+  }
+  .theme-toggle:hover { color: var(--text-primary); border-color: var(--border-strong); }
+  .theme-toggle svg { width: 12px; height: 12px; }
+  .theme-toggle .theme-label-light,
+  :root[data-theme="dark"] .theme-toggle .theme-label-dark { display: none; }
+  :root[data-theme="dark"] .theme-toggle .theme-label-light { display: inline; }
+  .theme-toggle .icon-sun,
+  :root[data-theme="dark"] .theme-toggle .icon-moon { display: none; }
+  :root[data-theme="dark"] .theme-toggle .icon-sun { display: inline-block; }
+  .state-chips {
+    max-width: 1240px;
+    margin: 0 auto 16px;
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .state-chip {
+    padding: 5px 11px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    color: var(--text-secondary);
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .state-chip[aria-selected="true"] {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-color: transparent;
+  }
+
+  /* ── Frame ─────────────────────────────────────────────────── */
+  .frame {
+    position: relative;
+    max-width: 1240px;
+    margin: 0 auto;
+    height: 820px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+  }
+
+  /* ── Rail (left, 48px) ─────────────────────────────────────── */
+  .rail {
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 48px;
+    border-right: 1px solid var(--border);
+    background: var(--bg-elevated);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 10px 0;
+    gap: 4px;
+    z-index: 2;
+  }
+  .rail-logo {
+    width: 28px; height: 28px;
+    border-radius: var(--radius);
+    background: var(--text-primary);
+    color: var(--bg-primary);
+    display: grid; place-items: center;
+    font-weight: 600; font-size: 12px;
+    margin-bottom: 6px;
+    letter-spacing: -0.02em;
+    cursor: pointer;
+  }
+  .rail-logo:hover { background: var(--accent); }
+  .rail-btn {
+    width: 32px; height: 32px;
+    border-radius: var(--radius);
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    display: grid; place-items: center;
+    cursor: pointer;
+    position: relative;
+    transition: background 160ms var(--easing), color 160ms var(--easing);
+  }
+  .rail-btn:hover { background: var(--bg-hover); color: var(--text-secondary); }
+  .rail-btn[data-active="true"] { background: var(--accent-soft); color: var(--accent); }
+  .rail-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .rail-spacer { flex: 1; }
+  .rail-badge {
+    position: absolute; top: -1px; right: -1px;
+    background: var(--accent);
+    color: var(--bg-primary);
+    font-size: 9px;
+    font-variant-numeric: tabular-nums;
+    height: 13px; min-width: 13px;
+    border-radius: 7px;
+    padding: 0 3px;
+    display: grid; place-items: center;
+    line-height: 1;
+  }
+
+  /* ── Canvas (right of rail, above ambient) ─────────────────── */
+  .canvas {
+    position: absolute;
+    left: 48px; right: 0; top: 0; bottom: 32px;
+    overflow: hidden;
+  }
+
+  /* Each surface fills the canvas absolutely; only one visible at a time. */
+  .surface {
+    position: absolute;
+    inset: 0;
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .surface[data-active="true"] {
+    display: flex;
+    animation: surface-in 220ms var(--easing);
+  }
+  @keyframes surface-in {
+    from { opacity: 0; transform: translateY(2px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ── Ambient bar (always visible) ──────────────────────────── */
+  .ambient {
+    position: absolute;
+    left: 48px; right: 0; bottom: 0;
+    height: 32px;
+    border-top: 1px solid var(--border);
+    background: var(--bg-elevated);
+    display: flex; align-items: center; gap: 14px;
+    padding: 0 16px;
+    font-size: 11px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    z-index: 2;
+  }
+  .ambient-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--success);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--success) 18%, transparent);
+  }
+  .ambient-dot.active {
+    background: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 22%, transparent);
+    animation: ambient-pulse 1.6s var(--easing) infinite;
+  }
+  @keyframes ambient-pulse {
+    0%, 100% { box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 22%, transparent); }
+    50%      { box-shadow: 0 0 0 6px color-mix(in oklab, var(--accent) 12%, transparent); }
+  }
+  .ambient-item { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .ambient-sep { color: var(--border-strong); }
+  .ambient-agent {
+    color: var(--accent);
+    align-items: center; gap: 6px;
+  }
+  .ambient-agent:not([hidden]) { display: inline-flex; }
+  .ambient-cmdk { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); white-space: nowrap; }
+  .ambient-kbd, .kbd {
+    font-family: inherit; font-size: 10.5px;
+    border: 1px solid var(--border);
+    padding: 1px 5px; border-radius: 3px;
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ambient-dot.active { animation: none; }
+    .surface[data-active="true"] { animation: none; }
+    * { transition: none !important; }
+  }
+
+  /* ════════════════════════════════════════════════════════════ */
+  /* Surface: STREAM (the home — RAG + history + agent activity)  */
+  /* ════════════════════════════════════════════════════════════ */
+
+  .stream-scroll {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+  }
+  .stream-inner {
+    max-width: 880px;
+    margin: 0 auto;
+    width: 100%;
+    padding: 0 24px;
+  }
+
+  /* sticky ask bar */
+  .ask-wrap {
+    position: sticky; top: 0;
+    background: linear-gradient(to bottom, var(--bg-primary) 88%, transparent);
+    padding: 20px 0 12px;
+    z-index: 1;
+  }
+  .ask {
+    display: flex; align-items: center; gap: 10px;
+    width: 100%;
+    padding: 9px 14px 9px 16px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 13.5px;
+    color: var(--text-muted);
+    cursor: text;
+    transition: border-color 160ms var(--easing), background 160ms var(--easing);
+  }
+  .ask:hover, .ask:focus-within {
+    border-color: var(--border-strong);
+    background: var(--bg-surface);
+  }
+  .ask svg { flex-shrink: 0; color: var(--text-muted); }
+  .ask input {
+    flex: 1; min-width: 0;
+    background: transparent;
+    border: none; outline: none;
+    font-family: inherit; font-size: 13.5px;
+    color: var(--text-primary);
+  }
+  .ask input::placeholder { color: var(--text-muted); }
+
+  /* inline answer (B1: pushes feed down) */
+  .inline-answer {
+    display: none;
+    margin: 4px 0 16px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-elevated);
+    overflow: hidden;
+    animation: answer-in 220ms var(--easing);
+  }
+  .inline-answer[data-active="true"] { display: block; }
+  @keyframes answer-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .answer-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    font-size: 10.5px;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+  .answer-head .dot {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: var(--accent);
+  }
+  .answer-head .spacer { flex: 1; }
+  .answer-head .meta { letter-spacing: 0; text-transform: none; font-weight: 400; font-variant-numeric: tabular-nums; }
+  .answer-body {
+    padding: 12px 16px 14px;
+    font-size: 13px; line-height: 1.65;
+    color: var(--text-secondary);
+  }
+  .answer-body em { font-style: italic; color: var(--text-primary); }
+  .answer-body sup { font-size: 9.5px; color: var(--accent); cursor: pointer; padding: 0 2px; }
+  .answer-body code { font-family: var(--font-mono); font-size: 11.5px; padding: 0 4px; border-radius: 3px; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border); }
+  .answer-chunks {
+    display: flex; flex-direction: column;
+    border-top: 1px solid var(--border);
+    background: var(--bg-primary);
+  }
+  .answer-chunk { padding: 10px 16px; display: flex; gap: 12px; align-items: flex-start; cursor: pointer; transition: background 160ms var(--easing); }
+  .answer-chunk + .answer-chunk { border-top: 1px dashed var(--border); }
+  .answer-chunk:hover { background: var(--bg-elevated); }
+  .answer-chunk-num { font-size: 10.5px; color: var(--accent); font-weight: 500; padding-top: 1px; min-width: 14px; }
+  .answer-chunk-body { flex: 1; min-width: 0; }
+  .answer-chunk-snippet { font-size: 12px; color: var(--text-secondary); line-height: 1.55; }
+  .answer-chunk-snippet mark { background: color-mix(in oklab, var(--accent) 16%, transparent); color: var(--text-primary); padding: 0 2px; border-radius: 2px; }
+  .answer-chunk-meta { display: flex; gap: 10px; margin-top: 4px; font-size: 10.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+  /* feed */
+  .day {
+    display: flex; align-items: center; gap: 12px;
+    padding: 22px 0 8px;
+    font-size: 10.5px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 500;
+  }
+  .day::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+
+  .row {
+    display: grid;
+    grid-template-columns: 14px minmax(0, 1fr) auto;
+    column-gap: 14px;
+    align-items: flex-start;
+    padding: 12px 8px 12px 0;
+    border-top: 1px solid transparent;
+    cursor: pointer;
+    transition: background 160ms var(--easing);
+  }
+  .row + .row { border-top-color: var(--border); }
+  .row:hover { background: color-mix(in oklab, var(--text-primary) 3%, transparent); }
+  .row[data-active-agent="true"] {
+    background: color-mix(in oklab, var(--accent) 5%, transparent);
+    border-top-color: color-mix(in oklab, var(--accent) 20%, transparent);
+  }
+  .row[data-active-agent="true"] + .row { border-top-color: color-mix(in oklab, var(--accent) 20%, transparent); }
+  .row-icon {
+    width: 14px; height: 14px;
+    margin-top: 4px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+  .row-icon.accent { color: var(--accent); }
+  .row-body { min-width: 0; }
+  .row-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    letter-spacing: -0.005em;
+    margin-bottom: 2px;
+  }
+  .row-actor { color: var(--accent); font-weight: 500; }
+  .row-actor.you { color: var(--text-primary); }
+  .row-snippet {
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.55;
+    max-width: 64ch;
+  }
+  .row-snippet em { font-style: italic; color: var(--text-primary); }
+  .row-snippet code { font-family: var(--font-mono); font-size: 11.5px; padding: 0 4px; border-radius: 3px; background: var(--bg-elevated); color: var(--text-primary); border: 1px solid var(--border); }
+  .row-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 6px;
+    font-size: 10.5px;
+    color: var(--text-muted);
+    align-items: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .row-meta strong { color: var(--text-secondary); font-weight: 500; }
+  .tag {
+    display: inline-flex;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 10px;
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+  }
+  .tag.accent { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+  .row-actions { display: inline-flex; gap: 4px; margin-left: 4px; }
+  .row-action {
+    height: 22px;
+    padding: 0 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+  .row-action:hover { color: var(--text-primary); border-color: var(--text-muted); }
+  .row-action.accept { color: var(--accent); border-color: color-mix(in oklab, var(--accent) 30%, var(--border)); }
+  .row-action.accept:hover { background: var(--accent-soft); }
+  .row-aside { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+  .row-time {
+    font-size: 10.5px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    margin-top: 4px;
+    white-space: nowrap;
+  }
+  .row-mcp {
+    width: 22px; height: 22px;
+    border-radius: 4px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: grid; place-items: center;
+    transition: all 160ms var(--easing);
+    opacity: 0;
+  }
+  .row:hover .row-mcp { opacity: 1; }
+  .row-mcp:hover { color: var(--accent); border-color: var(--border); background: var(--bg-primary); }
+  .row-mcp svg { width: 12px; height: 12px; }
+
+  /* Agent-reading top callout (only in agent-reading state) */
+  .agent-banner {
+    display: none;
+    padding: 10px 14px;
+    border: 1px solid color-mix(in oklab, var(--accent) 28%, var(--border));
+    border-radius: 8px;
+    background: color-mix(in oklab, var(--accent) 6%, transparent);
+    margin-bottom: 8px;
+    align-items: center;
+    gap: 10px;
+    font-size: 12.5px;
+    color: var(--text-primary);
+  }
+  .agent-banner[data-active="true"] { display: flex; }
+  .agent-banner-pulse {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent);
+    animation: ambient-pulse 1.6s var(--easing) infinite;
+    flex-shrink: 0;
+  }
+  .agent-banner-text { flex: 1; min-width: 0; }
+  .agent-banner-text strong { font-weight: 500; }
+  .agent-banner-link { font-size: 11.5px; color: var(--accent); cursor: pointer; }
+
+  /* ════════════════════════════════════════════════════════════ */
+  /* Surface: NOTE (full-screen editor)                           */
+  /* ════════════════════════════════════════════════════════════ */
+  .note-bar {
+    padding: 12px 24px;
+    display: flex; align-items: center; gap: 12px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-primary);
+  }
+  .note-crumbs { font-size: 11.5px; color: var(--text-muted); }
+  .note-crumbs strong { color: var(--text-primary); font-weight: 500; }
+  .note-actions { margin-left: auto; display: flex; gap: 6px; }
+  .note-btn {
+    height: 28px;
+    padding: 0 11px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--bg-primary);
+    font-size: 11.5px;
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+  .note-btn:hover { color: var(--text-primary); border-color: var(--text-muted); }
+  .note-btn-primary {
+    background: var(--accent);
+    color: var(--bg-primary);
+    border-color: var(--accent);
+    font-weight: 500;
+  }
+  .note-btn-primary:hover { color: var(--bg-primary); opacity: 0.92; }
+  .note-scroll {
+    flex: 1; overflow-y: auto; min-height: 0;
+  }
+  .note-editor {
+    max-width: 720px; margin: 0 auto;
+    padding: 28px 32px 64px;
+  }
+  .note-h1 { font-size: 22px; font-weight: 500; letter-spacing: -0.01em; margin-bottom: 4px; }
+  .note-meta-line { font-size: 11.5px; color: var(--text-muted); margin-bottom: 22px; }
+  .note-p { font-size: 14px; color: var(--text-primary); line-height: 1.65; margin-bottom: 14px; }
+  .note-p em { font-style: italic; }
+  .note-h2 { font-size: 16px; font-weight: 500; margin: 22px 0 10px; letter-spacing: -0.005em; }
+  .note-li {
+    font-size: 14px; line-height: 1.65;
+    padding-left: 20px; position: relative; margin-bottom: 4px;
+  }
+  .note-li::before {
+    content: "·"; position: absolute;
+    left: 8px; color: var(--text-muted);
+  }
+  .note-callout {
+    border-left: 2px solid var(--accent);
+    padding: 8px 12px;
+    background: var(--accent-soft);
+    color: var(--text-primary);
+    font-size: 12.5px;
+    border-radius: 0 4px 4px 0;
+    margin: 14px 0;
+  }
+  .note-callout strong { font-weight: 500; }
+  .note-callout-link { color: var(--accent); cursor: pointer; }
+
+  /* ════════════════════════════════════════════════════════════ */
+  /* Surface: WIKI (left AI-topic tree + right content)           */
+  /* ════════════════════════════════════════════════════════════ */
+  .wiki-shell {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
+  .wiki-tree {
+    width: 220px;
+    flex-shrink: 0;
+    border-right: 1px solid var(--border);
+    background: var(--bg-elevated);
+    display: flex; flex-direction: column;
+    min-height: 0;
+  }
+  .wiki-tree-bar {
+    padding: 12px 14px 8px;
+    display: flex; align-items: center; gap: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .wiki-tree-mode {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    overflow: hidden;
+    font-size: 10.5px;
+    background: var(--bg-primary);
+  }
+  .wiki-tree-mode button {
+    padding: 3px 8px;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+  .wiki-tree-mode button[aria-pressed="true"] {
+    background: var(--text-primary);
+    color: var(--bg-primary);
+  }
+  .wiki-tree-search {
+    flex: 1;
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    font-size: 11px;
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    font-family: inherit;
+  }
+  .wiki-tree-search:focus { outline: none; border-color: var(--accent); }
+  .wiki-tree-scroll { flex: 1; overflow-y: auto; padding: 6px 4px 12px; }
+  .wiki-topic-group {
+    padding: 6px 8px 2px 12px;
+    font-size: 10.5px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 500;
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: 8px;
+  }
+  .wiki-topic-group:first-of-type { margin-top: 0; }
+  .wiki-topic-group-count {
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: none;
+    letter-spacing: 0;
+    font-variant-numeric: tabular-nums;
+    font-weight: 400;
+  }
+  .wiki-topic {
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 12px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    border-radius: 4px;
+    margin: 1px 4px;
+  }
+  .wiki-topic:hover { background: var(--bg-hover); color: var(--text-primary); }
+  .wiki-topic[aria-current="true"] {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+  }
+  .wiki-topic[aria-current="true"]::before {
+    content: ""; width: 3px; height: 14px; border-radius: 2px;
+    background: var(--accent);
+    margin-left: -6px;
+    margin-right: 3px;
+  }
+  .wiki-topic-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wiki-topic-count { font-size: 10px; color: var(--text-muted); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+
+  .wiki-content {
+    flex: 1;
+    display: flex; flex-direction: column;
+    min-width: 0; min-height: 0;
+  }
+  .wiki-content-bar {
+    padding: 12px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 12px;
+  }
+  .wiki-content-title { font-size: 14px; font-weight: 500; letter-spacing: -0.005em; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wiki-content-meta { font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .wiki-content-actions { display: flex; gap: 4px; }
+  .wiki-content-scroll {
+    flex: 1; overflow-y: auto; min-height: 0;
+    padding: 16px 24px 32px;
+  }
+  .wiki-doc-list { display: flex; flex-direction: column; gap: 10px; }
+  .wiki-doc {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-primary);
+    padding: 14px 16px;
+    cursor: pointer;
+    transition: border-color 160ms var(--easing);
+  }
+  .wiki-doc:hover { border-color: var(--border-strong); }
+  .wiki-doc-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; }
+  .wiki-doc-title { font-size: 13px; font-weight: 500; color: var(--text-primary); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wiki-doc-meta { font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+  .wiki-doc-snippet { font-size: 12px; color: var(--text-secondary); line-height: 1.55; max-width: 70ch; }
+  .wiki-doc-tags { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
+
+  /* Library top tabs (Docs / Memories / Skills) ─────────────── */
+  .library-shell { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .library-tabs {
+    display: flex;
+    padding: 12px 24px 0;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-primary);
+    flex-shrink: 0;
+  }
+  .library-tab {
+    padding: 6px 4px 9px;
+    margin-right: 22px;
+    font-size: 12.5px;
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    border-bottom: 1.5px solid transparent;
+    margin-bottom: -1px;
+    font-family: inherit;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    transition: color 160ms var(--easing);
+  }
+  .library-tab:hover { color: var(--text-secondary); }
+  .library-tab[aria-pressed="true"] {
+    color: var(--text-primary);
+    border-bottom-color: var(--text-primary);
+    font-weight: 500;
+  }
+  .library-tab-count {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    font-weight: 400;
+  }
+  .library-tab[aria-pressed="true"] .library-tab-count { color: var(--text-secondary); }
+  .library-tab-pending {
+    font-size: 10.5px;
+    color: var(--accent);
+    font-weight: 500;
+    margin-left: 4px;
+  }
+  .library-pane {
+    flex: 1; min-height: 0;
+    display: none;
+  }
+  .library-pane[data-active="true"] { display: flex; }
+
+  /* Memory cards (used inside Memories pane) ─────────────────── */
+  .memory-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-primary);
+    padding: 13px 16px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .memory-card[data-pending="true"] {
+    background: color-mix(in oklab, var(--accent) 4%, var(--bg-primary));
+    border-color: color-mix(in oklab, var(--accent) 22%, var(--border));
+  }
+  .memory-quote {
+    font-size: 13px;
+    color: var(--text-primary);
+    line-height: 1.55;
+    font-style: italic;
+  }
+  .memory-quote::before { content: "\201C"; color: var(--text-muted); margin-right: 1px; }
+  .memory-quote::after  { content: "\201D"; color: var(--text-muted); margin-left: 1px; }
+  .memory-source {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10.5px;
+    color: var(--text-muted);
+    flex-wrap: wrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .memory-source-agent {
+    color: var(--accent);
+    font-weight: 500;
+    font-style: normal;
+  }
+  .memory-source-conv {
+    color: var(--text-secondary);
+    font-style: italic;
+    max-width: 42ch;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .memory-card-actions {
+    display: flex;
+    gap: 4px;
+    margin-top: 2px;
+  }
+
+  /* Skill cards (used inside Skills pane) ────────────────────── */
+  .skill-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-primary);
+    padding: 13px 16px;
+    cursor: pointer;
+    transition: border-color 160ms var(--easing);
+  }
+  .skill-card:hover { border-color: var(--border-strong); }
+  .skill-card-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 6px;
+    flex-wrap: wrap;
+  }
+  .skill-card-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    letter-spacing: -0.01em;
+  }
+  .skill-card-trigger {
+    font-size: 10.5px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    font-family: var(--font-mono);
+  }
+  .skill-card-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    margin-left: auto;
+  }
+  .skill-card-desc {
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.55;
+    max-width: 70ch;
+  }
+  .skill-card-tags {
+    display: flex;
+    gap: 4px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+  }
+
+  /* ════════════════════════════════════════════════════════════ */
+  /* Surface: SETTINGS (200px sub-nav + content)                  */
+  /* ════════════════════════════════════════════════════════════ */
+  .settings-shell {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
+  .settings-nav {
+    width: 200px;
+    flex-shrink: 0;
+    border-right: 1px solid var(--border);
+    background: var(--bg-elevated);
+    padding: 16px 8px;
+    display: flex; flex-direction: column; gap: 2px;
+    overflow-y: auto;
+  }
+  .settings-nav-item {
+    padding: 7px 12px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    background: transparent;
+    border: none;
+    border-radius: 5px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .settings-nav-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+  .settings-nav-item[aria-current="true"] {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+  }
+  .settings-pane-wrap {
+    flex: 1; overflow-y: auto;
+    min-width: 0; min-height: 0;
+  }
+  .settings-pane {
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 32px 40px 64px;
+  }
+  .settings-section-title { font-size: 16px; font-weight: 500; letter-spacing: -0.01em; margin-bottom: 4px; }
+  .settings-section-desc { font-size: 12px; color: var(--text-muted); margin-bottom: 20px; }
+  .settings-field {
+    display: flex; flex-direction: column; gap: 4px;
+    padding: 14px 0;
+    border-top: 1px solid var(--border);
+  }
+  .settings-field:first-of-type { border-top: none; padding-top: 4px; }
+  .settings-field-row { display: flex; align-items: center; gap: 12px; }
+  .settings-field-label { font-size: 12.5px; color: var(--text-primary); font-weight: 500; flex: 1; }
+  .settings-field-help { font-size: 11.5px; color: var(--text-muted); }
+  .settings-input {
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    font-size: 12px;
+    background: var(--bg-primary);
+    width: 240px;
+    font-family: inherit;
+    color: var(--text-primary);
+  }
+  .settings-input:focus { outline: none; border-color: var(--accent); }
+  .toggle {
+    width: 32px; height: 18px;
+    border-radius: 999px;
+    background: var(--border);
+    position: relative;
+    cursor: pointer;
+    border: none;
+    padding: 0;
+    flex-shrink: 0;
+  }
+  .toggle::after {
+    content: "";
+    position: absolute;
+    left: 2px; top: 2px;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--bg-primary);
+    transition: transform 160ms var(--easing);
+  }
+  .toggle[aria-checked="true"] { background: var(--accent); }
+  .toggle[aria-checked="true"]::after { transform: translateX(14px); }
+
+  /* ════════════════════════════════════════════════════════════ */
+  /* Cloud — center MODAL (D3) — overlays current surface         */
+  /* ════════════════════════════════════════════════════════════ */
+  .modal-backdrop {
+    position: absolute; inset: 0;
+    display: none;
+    background: var(--scrim);
+    z-index: 4;
+    align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  .modal-backdrop[data-active="true"] {
+    display: flex;
+    animation: backdrop-in 200ms var(--easing);
+  }
+  @keyframes backdrop-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+  .modal {
+    width: 100%; max-width: 540px;
+    max-height: 100%;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    display: flex; flex-direction: column;
+    animation: modal-in 220ms var(--easing);
+  }
+  @keyframes modal-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .modal-bar {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: baseline; gap: 12px;
+  }
+  .modal-title { font-size: 13.5px; font-weight: 500; color: var(--text-primary); }
+  .modal-meta { font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .modal-close {
+    margin-left: auto;
+    width: 24px; height: 24px;
+    border: none; background: transparent;
+    color: var(--text-muted);
+    border-radius: 4px;
+    cursor: pointer;
+    display: grid; place-items: center;
+  }
+  .modal-close:hover { background: var(--bg-hover); color: var(--text-primary); }
+  .modal-body {
+    padding: 16px 18px 18px;
+    overflow-y: auto;
+    display: flex; flex-direction: column; gap: 16px;
+  }
+  .modal-section { display: flex; flex-direction: column; gap: 6px; }
+  .modal-section-title {
+    font-size: 10.5px;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+  .modal-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    padding: 10px 0 4px;
+  }
+  .stat-num { font-size: 18px; font-weight: 500; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+  .stat-lbl { font-size: 10.5px; color: var(--text-muted); margin-top: 2px; }
+  .modal-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 0;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .modal-row:first-of-type { border-top: none; }
+  .modal-row-name { flex: 1; color: var(--text-primary); font-weight: 500; }
+  .modal-row-meta { color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .modal-pill {
+    font-size: 10.5px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+  }
+  .modal-pill.success {
+    background: color-mix(in oklab, var(--success) 14%, transparent);
+    color: var(--success);
+    border-color: transparent;
+  }
+  .modal-pill.warning {
+    background: color-mix(in oklab, var(--warning) 18%, transparent);
+    color: var(--warning);
+    border-color: transparent;
+  }
+  .modal-actions {
+    display: flex; gap: 8px;
+    padding-top: 4px;
+  }
+  .modal-action {
+    flex: 1;
+    padding: 9px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-primary);
+    font-size: 12px;
+    color: var(--text-primary);
+    cursor: pointer;
+    text-align: left;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .modal-action:hover { border-color: var(--border-strong); background: var(--bg-elevated); }
+  .modal-action-icon { color: var(--text-muted); flex-shrink: 0; }
+  .modal-action-label { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+  .modal-action-title { font-size: 12px; color: var(--text-primary); }
+  .modal-action-help { font-size: 10.5px; color: var(--text-muted); }
+  .modal-line {
+    display: flex; align-items: center; gap: 12px;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+  }
+  .modal-line-help { font-size: 11px; color: var(--text-muted); margin-top: -2px; }
+  .modal-mcp {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-elevated);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--text-primary);
+  }
+  .modal-mcp-copy {
+    margin-left: auto;
+    border: none; background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 10.5px;
+    padding: 2px 8px;
+    border-radius: 4px;
+  }
+  .modal-mcp-copy:hover { color: var(--accent); background: var(--bg-primary); }
+
+  /* ════════════════════════════════════════════════════════════ */
+  /* Annotations (page footer)                                    */
+  /* ════════════════════════════════════════════════════════════ */
+  .annotations {
+    max-width: 1240px;
+    margin: 24px auto 0;
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.7;
+  }
+  .annotations h2 {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin: 16px 0 6px;
+  }
+  .annotations h2:first-of-type { margin-top: 0; }
+  .annotations ul { list-style: none; padding: 0; }
+  .annotations li {
+    padding-left: 14px;
+    position: relative;
+  }
+  .annotations li::before {
+    content: "·";
+    position: absolute;
+    left: 4px;
+    color: var(--text-muted);
+  }
+  .annotations code {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    padding: 0 4px; border-radius: 3px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+  }
+</style>
+</head>
+<body>
+
+<!-- ── Top label + state chips ─────────────────────────────────── -->
+<div class="label-row">
+  <span class="label-eyebrow">v3 · Stream-Centric</span>
+  <span class="label-meta">RAG召回 + 历史 + agent行为 三合一首页 · toC锚点 · 按钮触发反馈不分柱</span>
+  <button class="theme-toggle" id="themeToggle" type="button" title="Toggle theme">
+    <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+    <span class="theme-label-dark">Dark</span>
+    <span class="theme-label-light">Light</span>
+  </button>
+</div>
+
+<div class="state-chips" role="tablist" aria-label="Demo state">
+  <button class="state-chip" role="tab" aria-selected="true"  data-state="stream-default">Stream · 默认</button>
+  <button class="state-chip" role="tab" aria-selected="false" data-state="stream-asking">Stream · 问 (inline 答案 B1)</button>
+  <button class="state-chip" role="tab" aria-selected="false" data-state="stream-agent">Stream · agent 在读 (E3)</button>
+  <button class="state-chip" role="tab" aria-selected="false" data-state="note">② Note 编辑</button>
+  <button class="state-chip" role="tab" aria-selected="false" data-state="library-docs">③a Library · Docs</button>
+  <button class="state-chip" role="tab" aria-selected="false" data-state="library-memories">③b Library · Memories</button>
+  <button class="state-chip" role="tab" aria-selected="false" data-state="library-skills">③c Library · Skills</button>
+  <button class="state-chip" role="tab" aria-selected="false" data-state="cloud">④ Cloud · center modal (D3)</button>
+  <button class="state-chip" role="tab" aria-selected="false" data-state="settings">⑤ Settings</button>
+</div>
+
+<!-- ── App frame ────────────────────────────────────────────────── -->
+<div class="frame" id="frame">
+
+  <!-- LEFT RAIL ───────────────────────────────────────────────── -->
+  <aside class="rail" aria-label="Primary navigation">
+    <div class="rail-logo" data-rail="stream-default" title="SmartNote — back to Stream">SN</div>
+
+    <button class="rail-btn" data-rail="note" title="Notes">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z"/>
+      </svg>
+    </button>
+
+    <button class="rail-btn" data-rail="library" title="Library — Docs · Memories · Skills">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 4v16"/>
+        <path d="M8 8v12"/>
+        <path d="M12 6v14"/>
+        <path d="M16 6l4 14"/>
+      </svg>
+      <span class="rail-badge" title="5 memories awaiting review (2 from AI CLIs · 3 from today's digest)">5</span>
+    </button>
+
+    <div class="rail-spacer"></div>
+
+    <button class="rail-btn" data-rail="cloud" title="Workspace · Cloud">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M17.5 19a4.5 4.5 0 1 0-1.5-8.74 6 6 0 0 0-11.74 1.74A4 4 0 0 0 6 19h11.5z"/>
+      </svg>
+    </button>
+
+    <button class="rail-btn" data-rail="settings" title="Settings">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3 1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8c.2.5.3 1.1.3 1.7v.7c0 .6-.1 1.1-.3 1.6z"/>
+      </svg>
+    </button>
+  </aside>
+
+  <!-- CANVAS ──────────────────────────────────────────────────── -->
+  <main class="canvas">
+
+    <!-- ════ Stream ════════════════════════════════════════════ -->
+    <section class="surface" data-surface="stream" data-active="true">
+      <div class="stream-scroll">
+        <div class="stream-inner">
+
+          <!-- Sticky ask -->
+          <div class="ask-wrap">
+            <label class="ask">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+              <input id="askInput" type="text" placeholder="Ask, search, or jot a memory…" />
+              <span class="kbd">⌘K</span>
+            </label>
+          </div>
+
+          <!-- Inline composed answer (only Stream-asking) -->
+          <div class="inline-answer" id="inlineAnswer">
+            <div class="answer-head">
+              <span class="dot"></span>
+              <span>Composed answer</span>
+              <span class="spacer"></span>
+              <span class="meta">4 sources · 0.84 top · 1.2s</span>
+            </div>
+            <div class="answer-body">
+              DAP callback strategy retries failed rows at the iceberg-table level via <em>dap_attr_dap_callback_strategy_log_iceberg</em>, where each failed callback row is re-attempted up to 3 times within 24h before moving to the dead-letter queue<sup>[1][3]</sup>. Retry timing is governed by the <code>retry_jitter_seconds</code> column<sup>[2]</sup>; downstream consumers see only successful rows.
+            </div>
+            <div class="answer-chunks">
+              <div class="answer-chunk">
+                <span class="answer-chunk-num">[1]</span>
+                <div class="answer-chunk-body">
+                  <div class="answer-chunk-snippet">Failed rows are written to <mark>dap_attr_dap_callback_strategy_log_iceberg</mark> with <code>status = 'pending_retry'</code>. The retry orchestrator scans every 15 minutes…</div>
+                  <div class="answer-chunk-meta"><span>wiki · 回传数仓表速查</span><span>chap 3 · §retries</span><span>0.91</span></div>
+                </div>
+              </div>
+              <div class="answer-chunk">
+                <span class="answer-chunk-num">[2]</span>
+                <div class="answer-chunk-body">
+                  <div class="answer-chunk-snippet">Each row carries a <mark>retry_jitter_seconds</mark> value to spread reattempts across the cluster — default 30s ± 50%.</div>
+                  <div class="answer-chunk-meta"><span>wiki · 回传数仓表速查</span><span>chap 3 · §jitter</span><span>0.78</span></div>
+                </div>
+              </div>
+              <div class="answer-chunk">
+                <span class="answer-chunk-num">[3]</span>
+                <div class="answer-chunk-body">
+                  <div class="answer-chunk-snippet">Saw 4.2k <mark>callback retries</mark> in last 24h — most resolved on attempt 2, dead-letter rate stable at 0.3%.</div>
+                  <div class="answer-chunk-meta"><span>note · 2026-04-20 ad attribution debrief</span><span>line 47–52</span><span>0.71</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Agent-reading callout (only Stream-agent) -->
+          <div class="agent-banner" id="agentBanner">
+            <span class="agent-banner-pulse"></span>
+            <div class="agent-banner-text">
+              <strong>Claude Code</strong> is reading your knowledge — pulled <em>"自定义回传策略"</em> via <code>search_memory</code> 6s ago
+            </div>
+            <span class="agent-banner-link">See what →</span>
+          </div>
+
+          <!-- Feed -->
+          <div class="day">Today</div>
+
+          <!-- Row: agent (this row also doubles as the "active" highlight in agent state) -->
+          <article class="row" id="rowAgentNow">
+            <svg class="row-icon accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 8V4M4.93 19.07l2.83-2.83M2 12h4M19.07 19.07l-2.83-2.83M22 12h-4M19.07 4.93l-2.83 2.83M4.93 4.93l2.83 2.83M12 16v4"/>
+            </svg>
+            <div class="row-body">
+              <div class="row-title"><span class="row-actor">Claude Code</span> referenced your DAP callback note in 3 conversations</div>
+              <div class="row-snippet">Pulled <em>"自定义回传策略"</em> twice and <em>"回传业务流程"</em> once via <code>search_memory</code>. Read-only — no edits.</div>
+              <div class="row-meta">
+                <strong>3 reads</strong> · <span class="tag">cli · cc</span> <span class="tag">mcp</span>
+                <span class="row-actions">
+                  <button class="row-action">Open thread</button>
+                </span>
+              </div>
+            </div>
+            <div class="row-aside">
+              <button class="row-mcp" title="Copy as MCP context">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              </button>
+              <span class="row-time">2m</span>
+            </div>
+          </article>
+
+          <article class="row">
+            <svg class="row-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+            <div class="row-body">
+              <div class="row-title"><span class="row-actor you">You</span> asked: <em>"how does dap callback handle table-level retries?"</em></div>
+              <div class="row-snippet">RAG returned 4 chunks across 2 sources. Composed answer cited <code>retry_jitter_seconds</code>.</div>
+              <div class="row-meta">
+                <span class="tag">rag</span> <span class="tag">2 sources</span> · <strong>0.84 top</strong>
+                <span class="row-actions">
+                  <button class="row-action">Re-open</button>
+                </span>
+              </div>
+            </div>
+            <div class="row-aside">
+              <button class="row-mcp" title="Copy as MCP context"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+              <span class="row-time">8m</span>
+            </div>
+          </article>
+
+          <article class="row">
+            <svg class="row-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z"/></svg>
+            <div class="row-body">
+              <div class="row-title"><span class="row-actor you">You</span> edited <em>2026-04-29 · enrich queue UX</em></div>
+              <div class="row-snippet">+27 / −3 · classifier moved 5 segments from <em>todo</em> to <em>技术方案</em> after re-running.</div>
+              <div class="row-meta">
+                <span class="tag">note</span> <span class="tag">re-enriched</span>
+                <span class="row-actions">
+                  <button class="row-action">Open</button>
+                  <button class="row-action">Re-enrich</button>
+                </span>
+              </div>
+            </div>
+            <div class="row-aside">
+              <button class="row-mcp" title="Copy as MCP context"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+              <span class="row-time">14m</span>
+            </div>
+          </article>
+
+          <article class="row">
+            <svg class="row-icon accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+            <div class="row-body">
+              <div class="row-title"><span class="row-actor">Cursor</span> proposed a memory — review (1)</div>
+              <div class="row-snippet"><em>"User prefers chunk-level dedup over doc-level for wiki-edit cost reasons."</em></div>
+              <div class="row-meta">
+                <span class="tag">draft</span> <span class="tag">preference</span> · <strong>0.6 confidence</strong>
+                <span class="row-actions">
+                  <button class="row-action accept">Accept</button>
+                  <button class="row-action">Edit</button>
+                  <button class="row-action">Reject</button>
+                </span>
+              </div>
+            </div>
+            <div class="row-aside">
+              <button class="row-mcp" title="Copy as MCP context"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+              <span class="row-time">38m</span>
+            </div>
+          </article>
+
+          <article class="row">
+            <svg class="row-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z"/></svg>
+            <div class="row-body">
+              <div class="row-title"><span class="row-actor you">You</span> ingested <em>回传数仓表速查 — 自定义回传日志落库</em></div>
+              <div class="row-snippet">New wiki topic. 9 chunks · 3 chapters auto-summarized.</div>
+              <div class="row-meta">
+                <strong>9 chunks</strong> · <span class="tag accent">wiki</span> <span class="tag">技术方案</span>
+                <span class="row-actions">
+                  <button class="row-action">Open</button>
+                </span>
+              </div>
+            </div>
+            <div class="row-aside">
+              <button class="row-mcp" title="Copy as MCP context"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+              <span class="row-time">52m</span>
+            </div>
+          </article>
+
+          <div class="day">Yesterday</div>
+
+          <article class="row">
+            <svg class="row-icon accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4M4.93 19.07l2.83-2.83M2 12h4M19.07 19.07l-2.83-2.83M22 12h-4M19.07 4.93l-2.83 2.83M4.93 4.93l2.83 2.83M12 16v4"/></svg>
+            <div class="row-body">
+              <div class="row-title"><span class="row-actor">Claude Code</span> called <code>queue_enrich_jobs</code> for 4 wiki topics</div>
+              <div class="row-snippet">Triggered re-enrichment after a wiki edit. 4 jobs dispatched on cloud_pool, all succeeded.</div>
+              <div class="row-meta">
+                <span class="tag">cli · cc</span> <span class="tag">mcp</span> <span class="tag">batch</span>
+              </div>
+            </div>
+            <div class="row-aside">
+              <button class="row-mcp" title="Copy as MCP context"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+              <span class="row-time">19h</span>
+            </div>
+          </article>
+
+          <article class="row">
+            <svg class="row-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+            <div class="row-body">
+              <div class="row-title">12 wiki chapters re-summarized</div>
+              <div class="row-snippet">Phase B ran in 24s on cloud_pool · ¥0.12 spend.</div>
+              <div class="row-meta">
+                <span class="tag">cloud</span> <span class="tag">batch</span> <span class="tag">cloud_pool</span>
+              </div>
+            </div>
+            <div class="row-aside">
+              <span class="row-time">21h</span>
+            </div>
+          </article>
+
+          <div class="day">Earlier this week</div>
+
+          <article class="row">
+            <svg class="row-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+            <div class="row-body">
+              <div class="row-title"><span class="row-actor you">You</span> asked: <em>"chunk dedup vs doc dedup tradeoff"</em></div>
+              <div class="row-snippet">3 chunks from <em>retrieval.md</em>. Top score 0.92 — answer cited cost-of-edit reasoning.</div>
+              <div class="row-meta">
+                <span class="tag">rag</span>
+                <span class="row-actions"><button class="row-action">Re-open</button></span>
+              </div>
+            </div>
+            <div class="row-aside">
+              <button class="row-mcp" title="Copy as MCP context"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+              <span class="row-time">3d</span>
+            </div>
+          </article>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ════ Note ══════════════════════════════════════════════ -->
+    <section class="surface" data-surface="note">
+      <div class="note-bar">
+        <span class="note-crumbs">Notes / <strong>2026-04-29 · enrich queue UX</strong></span>
+        <div class="note-actions">
+          <button class="note-btn">Re-ingest</button>
+          <button class="note-btn">Copy as MCP</button>
+          <button class="note-btn note-btn-primary">Save</button>
+        </div>
+      </div>
+      <div class="note-scroll">
+        <div class="note-editor">
+          <h1 class="note-h1">Enrich queue — surfacing what the agent is doing</h1>
+          <div class="note-meta-line">edited 2m ago · 27 lines · auto-tagged 技术方案</div>
+          <p class="note-p">The classifier moved 5 segments from <em>todo</em> to <em>技术方案</em> after re-running. The user feedback was that the queue was opaque — <em>"I don't know what's enriching when."</em></p>
+          <h2 class="note-h2">What changed</h2>
+          <p class="note-li">Each enrich job now carries <em>type · source · originator</em> labels in the sync feed.</p>
+          <p class="note-li">Bulk ingest fires enrich automatically (was a separate manual step).</p>
+          <p class="note-li">Provider concurrency is configurable per-workspace.</p>
+          <div class="note-callout">
+            <strong>AI tag suggestion</strong> — three new memories propose adding "queue UX" as a tag.
+            <span class="note-callout-link">Review in Stream →</span>
+          </div>
+          <h2 class="note-h2">Open</h2>
+          <p class="note-li">Should we expose per-segment classifier confidence in the editor margin, or only when the user filters by tag?</p>
+          <p class="note-li">Cost per re-enrich on cloud_pool is ~¥0.04 — does it deserve a confirm dialog at &gt;¥1?</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════ Library (Docs · Memories · Skills) ════════════════ -->
+    <section class="surface" data-surface="library">
+      <div class="library-shell">
+
+        <!-- Top sub-tabs -->
+        <nav class="library-tabs" role="tablist" aria-label="Library kind">
+          <button class="library-tab" data-tab="docs" aria-pressed="true">
+            Docs <span class="library-tab-count">17</span>
+          </button>
+          <button class="library-tab" data-tab="memories" aria-pressed="false">
+            Memories <span class="library-tab-count">47</span>
+            <span class="library-tab-pending">· 2 pending</span>
+          </button>
+          <button class="library-tab" data-tab="skills" aria-pressed="false">
+            Skills <span class="library-tab-count">5</span>
+          </button>
+        </nav>
+
+        <!-- Pane: Docs (= former Wiki content) ─────────────────── -->
+        <div class="library-pane" data-pane="docs" data-active="true">
+          <div class="wiki-shell">
+
+            <aside class="wiki-tree">
+              <div class="wiki-tree-bar">
+                <input class="wiki-tree-search" placeholder="Filter topics…" />
+                <span class="wiki-tree-mode" role="tablist" aria-label="Tree mode">
+                  <button aria-pressed="true" title="AI-classified topics">AI</button>
+                  <button aria-pressed="false" title="Filesystem mirror">Files</button>
+                </span>
+              </div>
+              <div class="wiki-tree-scroll">
+
+                <div class="wiki-topic-group">DAP / 回传 <span class="wiki-topic-group-count">6</span></div>
+                <div class="wiki-topic" aria-current="true">
+                  <span class="wiki-topic-name">回传数仓表速查 — 落库</span>
+                  <span class="wiki-topic-count">9</span>
+                </div>
+                <div class="wiki-topic">
+                  <span class="wiki-topic-name">自定义回传配置 + 下游分析</span>
+                  <span class="wiki-topic-count">14</span>
+                </div>
+                <div class="wiki-topic">
+                  <span class="wiki-topic-name">DAP attribution model — Iceberg</span>
+                  <span class="wiki-topic-count">6</span>
+                </div>
+                <div class="wiki-topic">
+                  <span class="wiki-topic-name">回传业务流程</span>
+                  <span class="wiki-topic-count">8</span>
+                </div>
+
+                <div class="wiki-topic-group">Architecture <span class="wiki-topic-group-count">4</span></div>
+                <div class="wiki-topic">
+                  <span class="wiki-topic-name">Cloud pool · concurrent LLM</span>
+                  <span class="wiki-topic-count">5</span>
+                </div>
+                <div class="wiki-topic">
+                  <span class="wiki-topic-name">Sync bundle protocol</span>
+                  <span class="wiki-topic-count">3</span>
+                </div>
+                <div class="wiki-topic">
+                  <span class="wiki-topic-name">Entity graph (Stage C)</span>
+                  <span class="wiki-topic-count">7</span>
+                </div>
+
+                <div class="wiki-topic-group">Retrieval <span class="wiki-topic-group-count">3</span></div>
+                <div class="wiki-topic">
+                  <span class="wiki-topic-name">Hybrid retrieval — 6 paths</span>
+                  <span class="wiki-topic-count">11</span>
+                </div>
+                <div class="wiki-topic">
+                  <span class="wiki-topic-name">Rerank from +1 signal</span>
+                  <span class="wiki-topic-count">4</span>
+                </div>
+
+                <div class="wiki-topic-group">Product / Notes <span class="wiki-topic-group-count">4</span></div>
+                <div class="wiki-topic">
+                  <span class="wiki-topic-name">SmartNote release notes — 2026.04</span>
+                  <span class="wiki-topic-count">4</span>
+                </div>
+                <div class="wiki-topic">
+                  <span class="wiki-topic-name">Tag system principles</span>
+                  <span class="wiki-topic-count">6</span>
+                </div>
+
+              </div>
+            </aside>
+
+            <div class="wiki-content">
+              <div class="wiki-content-bar">
+                <div class="wiki-content-title">回传数仓表速查 — 自定义回传日志落库</div>
+                <div class="wiki-content-meta">9 chunks · 3 chapters · edited 14m ago</div>
+                <div class="wiki-content-actions">
+                  <button class="note-btn" title="Open the raw source (original markdown / wiki page) this topic was ingested from">View raw ↗</button>
+                  <button class="note-btn">Re-enrich</button>
+                  <button class="note-btn">Copy as MCP</button>
+                </div>
+              </div>
+              <div class="wiki-content-scroll">
+                <div class="wiki-doc-list">
+
+                  <div class="wiki-doc">
+                    <div class="wiki-doc-head">
+                      <div class="wiki-doc-title">Chapter 1 · 表结构与触发链路</div>
+                      <div class="wiki-doc-meta">3 chunks · 0.91 anchor</div>
+                    </div>
+                    <div class="wiki-doc-snippet">回传策略产生失败行后会写入 <code>dap_attr_dap_callback_strategy_log_iceberg</code>。每条记录附带 retry_jitter_seconds，调度器以 15 分钟为周期扫描 pending_retry 状态…</div>
+                    <div class="wiki-doc-tags">
+                      <span class="tag accent">技术方案</span><span class="tag">回传</span><span class="tag">iceberg</span>
+                    </div>
+                  </div>
+
+                  <div class="wiki-doc">
+                    <div class="wiki-doc-head">
+                      <div class="wiki-doc-title">Chapter 2 · 重试策略 (jitter + dead-letter)</div>
+                      <div class="wiki-doc-meta">4 chunks · 0.86 anchor</div>
+                    </div>
+                    <div class="wiki-doc-snippet">同一行最多重试 3 次，跨度 24h；每次重试间隔由 retry_jitter_seconds 控制，默认 30s ± 50% 随机偏移以避免雪崩。三次失败后入 dead-letter 队列…</div>
+                    <div class="wiki-doc-tags">
+                      <span class="tag accent">技术方案</span><span class="tag">重试</span>
+                    </div>
+                  </div>
+
+                  <div class="wiki-doc">
+                    <div class="wiki-doc-head">
+                      <div class="wiki-doc-title">Chapter 3 · 下游可见性 + 监控</div>
+                      <div class="wiki-doc-meta">2 chunks · 0.79 anchor</div>
+                    </div>
+                    <div class="wiki-doc-snippet">下游消费者只看到 status='success' 行；retry / dead-letter 仅出现在监控视图。看板：dap_callback_retries_24h、dead_letter_rate…</div>
+                    <div class="wiki-doc-tags">
+                      <span class="tag accent">监控</span><span class="tag">回传</span>
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Pane: Memories ─────────────────────────────────────── -->
+        <div class="library-pane" data-pane="memories">
+          <div class="wiki-shell">
+
+            <aside class="wiki-tree">
+              <div class="wiki-tree-bar">
+                <input class="wiki-tree-search" placeholder="Filter memories…" />
+                <span class="wiki-tree-mode" role="tablist" aria-label="Group mode">
+                  <button aria-pressed="true" title="By source agent">Source</button>
+                  <button aria-pressed="false" title="By kind">Kind</button>
+                </span>
+              </div>
+              <div class="wiki-tree-scroll">
+
+                <div class="wiki-topic-group">Pending review <span class="wiki-topic-group-count">5</span></div>
+                <div class="wiki-topic" aria-current="true">
+                  <span class="wiki-topic-name">All pending</span>
+                  <span class="wiki-topic-count">5</span>
+                </div>
+                <div class="wiki-topic">
+                  <span class="wiki-topic-name">From AI CLIs (MCP)</span>
+                  <span class="wiki-topic-count">2</span>
+                </div>
+                <div class="wiki-topic">
+                  <span class="wiki-topic-name">From today's digest</span>
+                  <span class="wiki-topic-count">3</span>
+                </div>
+
+                <div class="wiki-topic-group">From Claude Code <span class="wiki-topic-group-count">28</span></div>
+                <div class="wiki-topic">
+                  <span class="wiki-topic-name">DAP / 回传 sessions</span>
+                  <span class="wiki-topic-count">12</span>
+                </div>
+                <div class="wiki-topic">
+                  <span class="wiki-topic-name">Architecture decisions</span>
+                  <span class="wiki-topic-count">9</span>
+                </div>
+                <div class="wiki-topic">
+                  <span class="wiki-topic-name">Coding preferences</span>
+                  <span class="wiki-topic-count">7</span>
+                </div>
+
+                <div class="wiki-topic-group">From Cursor <span class="wiki-topic-group-count">12</span></div>
+                <div class="wiki-topic">
+                  <span class="wiki-topic-name">Frontend tweaks</span>
+                  <span class="wiki-topic-count">6</span>
+                </div>
+                <div class="wiki-topic">
+                  <span class="wiki-topic-name">UX feedback</span>
+                  <span class="wiki-topic-count">6</span>
+                </div>
+
+                <div class="wiki-topic-group">Daily digests <span class="wiki-topic-group-count">14</span></div>
+                <div class="wiki-topic">
+                  <span class="wiki-topic-name">Today · 04-29 (3 new)</span>
+                  <span class="wiki-topic-count">3</span>
+                </div>
+                <div class="wiki-topic">
+                  <span class="wiki-topic-name">04-28</span>
+                  <span class="wiki-topic-count">5</span>
+                </div>
+                <div class="wiki-topic">
+                  <span class="wiki-topic-name">Week of 04-21</span>
+                  <span class="wiki-topic-count">6</span>
+                </div>
+
+                <div class="wiki-topic-group">From you <span class="wiki-topic-group-count">5</span></div>
+                <div class="wiki-topic">
+                  <span class="wiki-topic-name">Manually added</span>
+                  <span class="wiki-topic-count">5</span>
+                </div>
+
+              </div>
+            </aside>
+
+            <div class="wiki-content">
+              <div class="wiki-content-bar">
+                <div class="wiki-content-title">All pending memories</div>
+                <div class="wiki-content-meta">5 awaiting review · 2 from AI CLIs · 3 from today's digest</div>
+                <div class="wiki-content-actions">
+                  <button class="note-btn">Run digest now</button>
+                  <button class="note-btn">Accept all</button>
+                  <button class="note-btn">Mark reviewed</button>
+                </div>
+              </div>
+              <div class="wiki-content-scroll">
+                <div class="wiki-doc-list">
+
+                  <!-- Pending #1 -->
+                  <div class="memory-card" data-pending="true">
+                    <div class="memory-quote">User prefers chunk-level dedup over doc-level for wiki-edit cost reasons.</div>
+                    <div class="memory-source">
+                      <span class="memory-source-agent">Cursor</span>
+                      <span>·</span>
+                      <span>conversation:</span>
+                      <span class="memory-source-conv">"refactor wiki ingest to skip unchanged chunks"</span>
+                      <span>·</span>
+                      <span>0.6 confidence · 38m ago</span>
+                    </div>
+                    <div class="memory-card-actions">
+                      <button class="row-action accept">Accept</button>
+                      <button class="row-action">Edit</button>
+                      <button class="row-action">Reject</button>
+                    </div>
+                  </div>
+
+                  <!-- Pending #2 -->
+                  <div class="memory-card" data-pending="true">
+                    <div class="memory-quote">When user mentions "MCP-friendly", they mean output portable to any agent context, not Anthropic-specific.</div>
+                    <div class="memory-source">
+                      <span class="memory-source-agent">Claude Code</span>
+                      <span>·</span>
+                      <span>conversation:</span>
+                      <span class="memory-source-conv">"add Copy-as-MCP affordance to stream rows"</span>
+                      <span>·</span>
+                      <span>0.74 confidence · 2h ago</span>
+                    </div>
+                    <div class="memory-card-actions">
+                      <button class="row-action accept">Accept</button>
+                      <button class="row-action">Edit</button>
+                      <button class="row-action">Reject</button>
+                    </div>
+                  </div>
+
+                  <!-- Pending #3 — daily digest synthesis -->
+                  <div class="memory-card" data-pending="true">
+                    <div class="memory-quote">User consistently chose chunk-level dedup over doc-level when reviewing wiki-edit cost decisions today — preference is stable across 3 conversations.</div>
+                    <div class="memory-source">
+                      <span class="memory-source-agent">Daily digest · 2026-04-29</span>
+                      <span>·</span>
+                      <span>synthesized from 5 stream events</span>
+                      <span>·</span>
+                      <span>0.85 confidence · just now</span>
+                    </div>
+                    <div class="memory-card-actions">
+                      <button class="row-action accept">Accept</button>
+                      <button class="row-action">Edit</button>
+                      <button class="row-action">Reject</button>
+                    </div>
+                  </div>
+
+                  <!-- Pending #4 — daily digest -->
+                  <div class="memory-card" data-pending="true">
+                    <div class="memory-quote">Today's design work centered on Stream-as-home (RAG + history + agent activity merged) — recurring rejection of "5 柱" tab navigation.</div>
+                    <div class="memory-source">
+                      <span class="memory-source-agent">Daily digest · 2026-04-29</span>
+                      <span>·</span>
+                      <span>synthesized from 12 stream events</span>
+                      <span>·</span>
+                      <span>0.78 confidence · just now</span>
+                    </div>
+                    <div class="memory-card-actions">
+                      <button class="row-action accept">Accept</button>
+                      <button class="row-action">Edit</button>
+                      <button class="row-action">Reject</button>
+                    </div>
+                  </div>
+
+                  <!-- Pending #5 — daily digest -->
+                  <div class="memory-card" data-pending="true">
+                    <div class="memory-quote">Memory entries from AI CLI propose tend to be concrete; from daily digest tend to be patterns — user accepts both but at different review depth.</div>
+                    <div class="memory-source">
+                      <span class="memory-source-agent">Daily digest · 2026-04-29</span>
+                      <span>·</span>
+                      <span>synthesized from 8 review actions</span>
+                      <span>·</span>
+                      <span>0.62 confidence · just now</span>
+                    </div>
+                    <div class="memory-card-actions">
+                      <button class="row-action accept">Accept</button>
+                      <button class="row-action">Edit</button>
+                      <button class="row-action">Reject</button>
+                    </div>
+                  </div>
+
+                  <!-- Already accepted (sample to show steady-state) -->
+                  <div class="memory-card">
+                    <div class="memory-quote">User dogfoods SmartNote with Cursor + Claude Code personally before any toB external launch.</div>
+                    <div class="memory-source">
+                      <span class="memory-source-agent">Claude Code</span>
+                      <span>·</span>
+                      <span class="memory-source-conv">accepted · "toB launch plan" · 3d ago</span>
+                    </div>
+                  </div>
+
+                  <div class="memory-card">
+                    <div class="memory-quote">In this codebase, integration tests must hit a real database, not mocks — past incident from mock/prod divergence.</div>
+                    <div class="memory-source">
+                      <span class="memory-source-agent">Claude Code</span>
+                      <span>·</span>
+                      <span class="memory-source-conv">accepted · "test suite review" · 1w ago</span>
+                    </div>
+                  </div>
+
+                  <div class="memory-card">
+                    <div class="memory-quote">Prefer one bundled PR over many small ones for refactors in cloud/api/services area.</div>
+                    <div class="memory-source">
+                      <span class="memory-source-agent">Cursor</span>
+                      <span>·</span>
+                      <span class="memory-source-conv">accepted · "merge strategy chat" · 2w ago</span>
+                    </div>
+                  </div>
+
+                  <div class="memory-card">
+                    <div class="memory-quote">User answers ⌘K with intent verbs ("ingest X", "ask Y") — interpret as command, not search.</div>
+                    <div class="memory-source">
+                      <span class="memory-source-agent">Claude Code</span>
+                      <span>·</span>
+                      <span class="memory-source-conv">accepted · "v3 stream design" · today</span>
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Pane: Skills ───────────────────────────────────────── -->
+        <div class="library-pane" data-pane="skills">
+          <div class="wiki-shell">
+
+            <aside class="wiki-tree">
+              <div class="wiki-tree-bar">
+                <input class="wiki-tree-search" placeholder="Filter skills…" />
+                <span class="wiki-tree-mode" role="tablist" aria-label="Group mode">
+                  <button aria-pressed="true" title="By agent">Agent</button>
+                  <button aria-pressed="false" title="By use case">Use</button>
+                </span>
+              </div>
+              <div class="wiki-tree-scroll">
+
+                <div class="wiki-topic-group">Claude Code <span class="wiki-topic-group-count">2</span></div>
+                <div class="wiki-topic" aria-current="true">
+                  <span class="wiki-topic-name">claude-skill</span>
+                  <span class="wiki-topic-count">324</span>
+                </div>
+                <div class="wiki-topic">
+                  <span class="wiki-topic-name">dap-callback-developer</span>
+                  <span class="wiki-topic-count">17</span>
+                </div>
+
+                <div class="wiki-topic-group">Cursor <span class="wiki-topic-group-count">1</span></div>
+                <div class="wiki-topic">
+                  <span class="wiki-topic-name">cursor-skill</span>
+                  <span class="wiki-topic-count">98</span>
+                </div>
+
+                <div class="wiki-topic-group">Opencode <span class="wiki-topic-group-count">1</span></div>
+                <div class="wiki-topic">
+                  <span class="wiki-topic-name">opencode-skill</span>
+                  <span class="wiki-topic-count">12</span>
+                </div>
+
+                <div class="wiki-topic-group">Custom workflows <span class="wiki-topic-group-count">1</span></div>
+                <div class="wiki-topic">
+                  <span class="wiki-topic-name">common-developer</span>
+                  <span class="wiki-topic-count">5</span>
+                </div>
+
+              </div>
+            </aside>
+
+            <div class="wiki-content">
+              <div class="wiki-content-bar">
+                <div class="wiki-content-title">All skills · invoked by AI CLIs through MCP</div>
+                <div class="wiki-content-meta">5 skills · 456 calls total</div>
+                <div class="wiki-content-actions">
+                  <button class="note-btn">+ New skill</button>
+                  <button class="note-btn">Open in editor</button>
+                </div>
+              </div>
+              <div class="wiki-content-scroll">
+                <div class="wiki-doc-list">
+
+                  <div class="skill-card">
+                    <div class="skill-card-head">
+                      <div class="skill-card-name">claude-skill</div>
+                      <span class="skill-card-trigger">on agent boot</span>
+                      <span class="skill-card-meta">324 calls · last 2m</span>
+                    </div>
+                    <div class="skill-card-desc">
+                      Loaded into Claude Code on session start. Tells the agent how to use SmartNote MCP — <code>search_memory</code>, <code>propose_memory</code>, <code>queue_enrich_jobs</code> — and when to read vs. write.
+                    </div>
+                    <div class="skill-card-tags">
+                      <span class="tag accent">claude-code</span><span class="tag">mcp</span><span class="tag">core</span>
+                    </div>
+                  </div>
+
+                  <div class="skill-card">
+                    <div class="skill-card-head">
+                      <div class="skill-card-name">dap-callback-developer</div>
+                      <span class="skill-card-trigger">on 飞书需求单 link</span>
+                      <span class="skill-card-meta">17 calls · last 3d</span>
+                    </div>
+                    <div class="skill-card-desc">
+                      DAP 回传需求开发全流程。给定飞书需求单链接，自动完成需求解析、代码分析、分支创建、技术文档撰写、GitLab MR 创建（description 首行 m-{单号}）。
+                    </div>
+                    <div class="skill-card-tags">
+                      <span class="tag accent">claude-code</span><span class="tag">workflow</span><span class="tag">回传</span>
+                    </div>
+                  </div>
+
+                  <div class="skill-card">
+                    <div class="skill-card-head">
+                      <div class="skill-card-name">cursor-skill</div>
+                      <span class="skill-card-trigger">on agent boot</span>
+                      <span class="skill-card-meta">98 calls · last 2h</span>
+                    </div>
+                    <div class="skill-card-desc">
+                      Cursor variant of SmartNote integration. Same MCP surface, slightly different prompt for Cursor's editor-agent context.
+                    </div>
+                    <div class="skill-card-tags">
+                      <span class="tag accent">cursor</span><span class="tag">mcp</span>
+                    </div>
+                  </div>
+
+                  <div class="skill-card">
+                    <div class="skill-card-head">
+                      <div class="skill-card-name">opencode-skill</div>
+                      <span class="skill-card-trigger">on agent boot</span>
+                      <span class="skill-card-meta">12 calls · last 1w</span>
+                    </div>
+                    <div class="skill-card-desc">
+                      Opencode integration. Lower invocation rate — keep around for cross-agent compatibility check.
+                    </div>
+                    <div class="skill-card-tags">
+                      <span class="tag">opencode</span><span class="tag">mcp</span>
+                    </div>
+                  </div>
+
+                  <div class="skill-card">
+                    <div class="skill-card-head">
+                      <div class="skill-card-name">common-developer</div>
+                      <span class="skill-card-trigger">on 工作项 link</span>
+                      <span class="skill-card-meta">5 calls · last 1w</span>
+                    </div>
+                    <div class="skill-card-desc">
+                      通用需求开发模板。给定任意工作项/需求单链接，完成解析、分析、修改、文档、MR 创建、字段回填。
+                    </div>
+                    <div class="skill-card-tags">
+                      <span class="tag">workflow</span><span class="tag">generic</span>
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ════ Settings ══════════════════════════════════════════ -->
+    <section class="surface" data-surface="settings">
+      <div class="settings-shell">
+        <nav class="settings-nav" aria-label="Settings sections">
+          <button class="settings-nav-item" aria-current="true">Profile</button>
+          <button class="settings-nav-item">Storage paths</button>
+          <button class="settings-nav-item">AI providers</button>
+          <button class="settings-nav-item">MCP servers</button>
+          <button class="settings-nav-item">Hotkeys</button>
+          <button class="settings-nav-item">Theme</button>
+          <button class="settings-nav-item">Diagnostics</button>
+        </nav>
+        <div class="settings-pane-wrap">
+          <div class="settings-pane">
+            <div class="settings-section-title">Profile</div>
+            <div class="settings-section-desc">How SmartNote identifies you across devices and to your AI agents.</div>
+
+            <div class="settings-field">
+              <div class="settings-field-row">
+                <span class="settings-field-label">Display name</span>
+                <input class="settings-input" value="lilithgames" />
+              </div>
+            </div>
+
+            <div class="settings-field">
+              <div class="settings-field-row">
+                <span class="settings-field-label">Email</span>
+                <input class="settings-input" value="mokkjeddy444@gmail.com" />
+              </div>
+              <div class="settings-field-help">Used by Cloud for billing and sign-in.</div>
+            </div>
+
+            <div class="settings-field">
+              <div class="settings-field-row">
+                <span class="settings-field-label">Send anonymous diagnostics</span>
+                <button class="toggle" aria-checked="false"></button>
+              </div>
+              <div class="settings-field-help">Crash reports only. No content, no per-note telemetry.</div>
+            </div>
+
+            <div class="settings-field">
+              <div class="settings-field-row">
+                <span class="settings-field-label">Auto-pair new devices</span>
+                <button class="toggle" aria-checked="true"></button>
+              </div>
+              <div class="settings-field-help">Devices on this network can claim the workspace without a pairing code.</div>
+            </div>
+
+            <div class="settings-field">
+              <div class="settings-field-row">
+                <span class="settings-field-label">Show MCP-context affordances on each row</span>
+                <button class="toggle" aria-checked="true"></button>
+              </div>
+              <div class="settings-field-help">Adds the Copy-as-MCP button on Stream rows; off if you don't use Claude / Cursor.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- AMBIENT BAR ─────────────────────────────────────────────── -->
+  <div class="ambient" id="ambient">
+    <span class="ambient-item"><span class="ambient-dot" id="ambientDot"></span><span id="ambientStatus">2 devices online</span></span>
+    <span class="ambient-sep">·</span>
+    <span class="ambient-item">1,303 chunks · 4 ai tags</span>
+    <span class="ambient-sep">·</span>
+    <span class="ambient-item">last enriched 4m ago</span>
+    <span class="ambient-agent" id="ambientAgent" hidden>
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8V4M4.93 19.07l2.83-2.83M2 12h4M19.07 19.07l-2.83-2.83M22 12h-4M19.07 4.93l-2.83 2.83M4.93 4.93l2.83 2.83M12 16v4"/></svg>
+      Now reading: <strong>Claude Code</strong>
+    </span>
+    <span class="ambient-cmdk">⌘K to ask <span class="ambient-kbd">⌘K</span></span>
+  </div>
+
+  <!-- CLOUD MODAL (D3 — center modal, lightweight) ────────────── -->
+  <div class="modal-backdrop" id="cloudModal" data-active="false">
+    <div class="modal" role="dialog" aria-label="Workspace">
+      <div class="modal-bar">
+        <div class="modal-title">Workspace</div>
+        <div class="modal-meta">live · refreshed 4s ago</div>
+        <button class="modal-close" data-close>×</button>
+      </div>
+      <div class="modal-body">
+
+        <div class="modal-section">
+          <div class="modal-section-title">Inventory</div>
+          <div class="modal-stats">
+            <div><div class="stat-num">1,303</div><div class="stat-lbl">chunks</div></div>
+            <div><div class="stat-num">18</div><div class="stat-lbl">documents</div></div>
+            <div><div class="stat-num">47</div><div class="stat-lbl">memories</div></div>
+            <div><div class="stat-num">4</div><div class="stat-lbl">ai tags</div></div>
+          </div>
+        </div>
+
+        <div class="modal-section">
+          <div class="modal-section-title">Devices · plan</div>
+          <div class="modal-row">
+            <span class="modal-row-name">macbook · primary</span>
+            <span class="modal-row-meta">last sync 4s</span>
+            <span class="modal-pill success">online</span>
+          </div>
+          <div class="modal-row">
+            <span class="modal-row-name">mini · home</span>
+            <span class="modal-row-meta">last sync 12m</span>
+            <span class="modal-pill success">online</span>
+          </div>
+          <div class="modal-row">
+            <span class="modal-row-name">Plan · creator (¥9.9 / mo)</span>
+            <span class="modal-row-meta">¥0.32 spent today</span>
+            <span class="modal-pill warning">28 days left</span>
+          </div>
+        </div>
+
+        <div class="modal-section">
+          <div class="modal-section-title">Actions</div>
+          <div class="modal-actions" style="flex-direction: column;">
+            <button class="modal-action">
+              <svg class="modal-action-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              <span class="modal-action-label">
+                <span class="modal-action-title">Upload note → wiki</span>
+                <span class="modal-action-help">Pick a note, classify into an AI topic, embed.</span>
+              </span>
+            </button>
+            <button class="modal-action">
+              <svg class="modal-action-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              <span class="modal-action-label">
+                <span class="modal-action-title">Trigger enrich now</span>
+                <span class="modal-action-help">Re-classify everything pending · ~¥0.04 / 1k tokens.</span>
+              </span>
+            </button>
+            <button class="modal-action">
+              <svg class="modal-action-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+              <span class="modal-action-label">
+                <span class="modal-action-title">Run AI tag pass</span>
+                <span class="modal-action-help">Generate / refresh tags across all chunks.</span>
+              </span>
+            </button>
+            <button class="modal-action">
+              <svg class="modal-action-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              <span class="modal-action-label">
+                <span class="modal-action-title">Run today's digest</span>
+                <span class="modal-action-help">Synthesize today's stream into candidate memories · auto-runs nightly.</span>
+              </span>
+            </button>
+          </div>
+        </div>
+
+        <div class="modal-section">
+          <div class="modal-section-title">Auto-enrich</div>
+          <div class="modal-line">
+            <button class="toggle" aria-checked="true"></button>
+            <span>Re-enrich on note edit · classifier + AI tags</span>
+          </div>
+          <div class="modal-line-help" style="padding-left: 44px;">¥0.32 spent today / ¥9.9 plan budget</div>
+        </div>
+
+        <div class="modal-section">
+          <div class="modal-section-title">Agent endpoint (MCP)</div>
+          <div class="modal-mcp">
+            <span>https://api.smartnote.cloud/mcp/wsk_ab12…</span>
+            <button class="modal-mcp-copy">Copy</button>
+          </div>
+          <div class="modal-line-help">Paste into Claude Code / Cursor settings · read+write scoped to this workspace.</div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+</div><!-- /frame -->
+
+<!-- ── Annotations ─────────────────────────────────────────────── -->
+<aside class="annotations">
+  <h2>What changed from v2 — and why</h2>
+  <ul>
+    <li><strong>Stream is the home, not a tab.</strong> RAG召回 + 历史 + agent行为 全部一条流，不再拆成 6 个 surface 切换 (your "5 柱不要").</li>
+    <li><strong>Rail down from 6 to 4 icons.</strong> Notes / Wiki / Cloud / Settings 是低频跳转入口；Stream 没有 rail 按钮——点 logo 回家。</li>
+    <li><strong>Asking is inline (B1).</strong> Enter 后 composed answer + chunks 在输入框正下方展开，下面 stream 被推下去——没有"提交-跳转-再返回"的硬切换。</li>
+    <li><strong>Agent-reading is visible (E3).</strong> ambient bar 显示 "Now reading: Claude Code" + 顶 banner + 那条 stream 行高亮——三处一致地表达"agent 正在用你的记忆"。</li>
+    <li><strong>Each row is actionable.</strong> Open / Re-enrich / Accept / Reject inline；hover 才显 Copy-as-MCP（不抢戏）.</li>
+    <li><strong>Library = Docs · Memories · Skills (3 sub-tabs).</strong> rail 标签从 Wiki 升级成 Library — 三种知识资产同源（agent/你 长期积累、被 MCP 调用），共用左树+右内容 chrome：
+      <br>　· <strong>Docs</strong> — 你 ingest 的长文，左树按 AI topic 归类（C2 · 可切 Files）；右上 <code>View raw ↗</code> 直达原始 markdown 源（topic 是知识化的，原文随时可回查）
+      <br>　· <strong>Memories</strong> — <em>双入口</em>：(a) AI CLI 通过 MCP <code>propose_memory</code> 上传的对话经验；(b) <em>每天定时把当天 Stream 整合成候选 memory</em>（synthesize from N events，confidence 通常更高因为多源验证）。左树有独立 "Daily digests" 分组按日维护，pending 列表区分两种来源
+      <br>　· <strong>Skills</strong> — 给 AI CLIs 用的 SmartNote skill 文件 + 自定义 workflow（claude-skill / dap-callback-developer / …），按 agent 分组，含调用次数</li>
+    <li><strong>Rail badge 从总数 → pending count (5).</strong> badge 只在"需要你看"时出现（earn every accent）— 总数无行动力，pending（含 AI CLI propose + 每日 digest 候选）才有。</li>
+    <li><strong>Cloud modal 加第 4 个 action: Run today's digest.</strong> 默认每天定时跑，但用户可手动早一点触发——本质是个 algorithm trigger，跟 Trigger enrich / Run AI tag pass 同类。</li>
+    <li><strong>Cloud = lightweight center modal (D3).</strong> 不是独立 page、不是 4 tab console——只放：库存 / 设备 + plan / 3 个一键动作 / auto-enrich 开关 / MCP endpoint。</li>
+  </ul>
+
+  <h2>Try this</h2>
+  <ul>
+    <li>Click the chips at the top to step through states: <code>Stream</code> → <code>asking</code> → <code>agent reading</code>.</li>
+    <li>Click the cloud icon ☁ in the rail (or the chip "Cloud · center modal") to open Workspace; click ✕ or backdrop to close.</li>
+    <li>Click <code>SN</code> logo from any surface — back to Stream.</li>
+    <li>Click <code>⌘K</code> kbd or focus the ask input — it's wired to receive text (just to feel the input mode).</li>
+  </ul>
+
+  <h2>Anti-references honored</h2>
+  <ul>
+    <li>No drop shadow, no glassmorphism, no gradient text, no left-stripe accent.</li>
+    <li>Single blue accent appears only when an agent reads (banner + ambient pulse) or you must act (Accept / inline answer dot).</li>
+    <li>Information is dense via 4-multiple spacing, not via cramming.</li>
+  </ul>
+</aside>
+
+<script>
+  // State management — chips + rail + cloud modal share one switch.
+  const stateChips  = document.querySelectorAll(".state-chip");
+  const railBtns    = document.querySelectorAll(".rail-btn[data-rail]");
+  const railLogo    = document.querySelector(".rail-logo");
+  const surfaces    = document.querySelectorAll(".surface");
+  const inlineAns   = document.getElementById("inlineAnswer");
+  const agentBanner = document.getElementById("agentBanner");
+  const agentRow    = document.getElementById("rowAgentNow");
+  const ambientDot  = document.getElementById("ambientDot");
+  const ambientStatus = document.getElementById("ambientStatus");
+  const ambientAgent  = document.getElementById("ambientAgent");
+  const cloudModal  = document.getElementById("cloudModal");
+  const askInput    = document.getElementById("askInput");
+
+  function setSurface(name) {
+    surfaces.forEach((s) => s.setAttribute("data-active", s.dataset.surface === name ? "true" : "false"));
+    railBtns.forEach((b) => b.setAttribute("data-active", b.dataset.rail === name ? "true" : "false"));
+  }
+
+  function applyState(state) {
+    // Reset overlays
+    inlineAns.setAttribute("data-active", "false");
+    agentBanner.setAttribute("data-active", "false");
+    agentRow.removeAttribute("data-active-agent");
+    ambientDot.classList.remove("active");
+    ambientAgent.hidden = true;
+    ambientStatus.textContent = "2 devices online";
+    cloudModal.setAttribute("data-active", "false");
+
+    switch (state) {
+      case "stream-default":
+        setSurface("stream");
+        break;
+      case "stream-asking":
+        setSurface("stream");
+        inlineAns.setAttribute("data-active", "true");
+        if (askInput) askInput.value = "how does dap callback strategy handle table-level retries?";
+        break;
+      case "stream-agent":
+        setSurface("stream");
+        agentBanner.setAttribute("data-active", "true");
+        agentRow.setAttribute("data-active-agent", "true");
+        ambientDot.classList.add("active");
+        ambientAgent.hidden = false;
+        ambientStatus.textContent = "2 devices online · agent reading";
+        break;
+      case "note":
+        setSurface("note");
+        break;
+      case "library-docs":
+        setSurface("library");
+        setLibraryTab("docs");
+        break;
+      case "library-memories":
+        setSurface("library");
+        setLibraryTab("memories");
+        break;
+      case "library-skills":
+        setSurface("library");
+        setLibraryTab("skills");
+        break;
+      case "cloud":
+        // Cloud modal sits over whatever surface is showing.
+        // Default to stream behind it.
+        setSurface("stream");
+        cloudModal.setAttribute("data-active", "true");
+        break;
+      case "settings":
+        setSurface("settings");
+        break;
+    }
+
+    // Update chips
+    stateChips.forEach((c) => c.setAttribute("aria-selected", c.dataset.state === state ? "true" : "false"));
+  }
+
+  function setLibraryTab(name) {
+    document.querySelectorAll(".library-tab").forEach((b) =>
+      b.setAttribute("aria-pressed", b.dataset.tab === name ? "true" : "false"));
+    document.querySelectorAll(".library-pane").forEach((p) =>
+      p.setAttribute("data-active", p.dataset.pane === name ? "true" : "false"));
+  }
+
+  // In-app library tab clicks (clicking the top tabs inside Library surface)
+  document.querySelectorAll(".library-tab").forEach((b) =>
+    b.addEventListener("click", () => {
+      const name = b.dataset.tab;
+      setLibraryTab(name);
+      const stateName = `library-${name}`;
+      stateChips.forEach((c) =>
+        c.setAttribute("aria-selected", c.dataset.state === stateName ? "true" : "false"));
+    })
+  );
+
+  stateChips.forEach((c) => c.addEventListener("click", () => applyState(c.dataset.state)));
+
+  railBtns.forEach((b) => b.addEventListener("click", () => {
+    const rail = b.dataset.rail;
+    if (rail === "cloud") applyState("cloud");
+    else if (rail === "library") applyState("library-docs");
+    else applyState(rail); // note / settings
+  }));
+
+  railLogo.addEventListener("click", () => applyState("stream-default"));
+
+  // Cloud modal close affordances
+  cloudModal.addEventListener("click", (e) => {
+    if (e.target === cloudModal || e.target.matches("[data-close]")) {
+      applyState("stream-default");
+    }
+  });
+
+  // ⌘K / Ctrl+K → focus ask input (no real palette in this mock)
+  document.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      e.preventDefault();
+      applyState("stream-default");
+      askInput?.focus();
+    }
+    if (e.key === "Escape") {
+      cloudModal.setAttribute("data-active", "false");
+      askInput?.blur();
+    }
+  });
+
+  // Theme toggle (persists to localStorage)
+  const themeToggle = document.getElementById("themeToggle");
+  function applyTheme(name) {
+    if (name === "dark") document.documentElement.setAttribute("data-theme", "dark");
+    else document.documentElement.removeAttribute("data-theme");
+    try { localStorage.setItem("v3-theme", name); } catch (e) {}
+  }
+  const savedTheme = (() => { try { return localStorage.getItem("v3-theme"); } catch (e) { return null; } })();
+  if (savedTheme === "dark") applyTheme("dark");
+  themeToggle.addEventListener("click", () => {
+    const isDark = document.documentElement.getAttribute("data-theme") === "dark";
+    applyTheme(isDark ? "light" : "dark");
+  });
+
+  // Initialize
+  applyState("stream-default");
+</script>
+
+</body>
+</html>

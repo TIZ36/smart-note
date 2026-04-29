@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SmartNote — Direction A · The Stream</title>
+<style>
+  /* ── Tokens (mirror prototype.css) ─────────────────────── */
+  :root {
+    --bg-primary:    oklch(0.97 0.005 80);
+    --bg-elevated:   oklch(0.95 0.005 80);
+    --bg-hover:      oklch(0.92 0.005 80);
+    --text-primary:  oklch(0.22 0.005 80);
+    --text-secondary:oklch(0.42 0.005 80);
+    --text-muted:    oklch(0.58 0.005 80);
+    --border:        oklch(0.88 0.005 80);
+    --accent:        oklch(0.55 0.15 250);
+    --accent-soft:   color-mix(in oklab, var(--accent) 14%, transparent);
+    --success:       oklch(0.55 0.13 155);
+    --warning:       oklch(0.62 0.14 70);
+
+    --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+    --space-6: 24px; --space-8: 32px; --space-12: 48px;
+
+    --radius-sm: 4px; --radius: 6px;
+    --shadow: none;
+
+    --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", system-ui, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-primary);
+    background: var(--bg-primary);
+    -webkit-font-smoothing: antialiased;
+    padding: var(--space-12) var(--space-6);
+  }
+
+  /* ── Page frame: viewport-shaped mock ───────────────── */
+  .frame {
+    max-width: 880px;
+    margin: 0 auto;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    height: 720px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Top: ask/search bar with persistent ambient strip ─ */
+  .topbar {
+    padding: var(--space-4) var(--space-6) var(--space-3);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+  .ask {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-4);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--text-muted);
+    font-size: 14px;
+  }
+  .ask svg { flex-shrink: 0; opacity: 0.6; }
+  .ask kbd {
+    margin-left: auto;
+    font-family: var(--font-sans);
+    font-size: 11px;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: var(--bg-primary);
+  }
+  .ambient {
+    display: flex;
+    gap: var(--space-4);
+    align-items: center;
+    font-size: 11px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .ambient-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--success);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--success) 16%, transparent);
+  }
+  .ambient-item { display: inline-flex; align-items: center; gap: 6px; }
+
+  /* ── Filter chips ───────────────────────────────────── */
+  .chips {
+    display: flex;
+    gap: 4px;
+    padding: var(--space-3) var(--space-6);
+    overflow-x: auto;
+  }
+  .chip {
+    flex-shrink: 0;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    color: var(--text-secondary);
+    background: transparent;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .chip-active {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-color: transparent;
+  }
+  .chip-count {
+    margin-left: 4px;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.6;
+    font-size: 10px;
+  }
+
+  /* ── Stream ─────────────────────────────────────────── */
+  .stream {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 var(--space-6) var(--space-6);
+  }
+  .day-divider {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-6) 0 var(--space-3);
+    font-size: 10.5px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .day-divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  .card {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-4);
+    padding: var(--space-3) 0;
+    border-top: 1px solid transparent;
+  }
+  .card + .card { border-top-color: var(--border); }
+  .card-icon {
+    width: 14px; height: 14px;
+    flex-shrink: 0;
+    margin-top: 3px;
+    color: var(--text-muted);
+  }
+  .card-icon-accent { color: var(--accent); }
+
+  .card-body { flex: 1; min-width: 0; }
+  .card-title {
+    font-size: 13.5px;
+    font-weight: 500;
+    color: var(--text-primary);
+    letter-spacing: -0.005em;
+    margin-bottom: 2px;
+  }
+  .card-snippet {
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    line-height: 1.55;
+    max-width: 65ch;
+  }
+  .card-meta {
+    margin-top: var(--space-2);
+    display: flex;
+    gap: var(--space-3);
+    font-size: 10.5px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .card-meta strong {
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 10px;
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+  }
+  .tag-accent {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-color: transparent;
+  }
+
+  .card-time {
+    font-size: 10.5px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+    margin-top: 3px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── Annotation labels (only on mocks) ─────────────── */
+  .annotations {
+    max-width: 880px;
+    margin: var(--space-6) auto 0;
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.7;
+  }
+  .annotations h2 {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin-bottom: var(--space-2);
+    letter-spacing: -0.005em;
+  }
+  .annotations ul { list-style: none; padding: 0; }
+  .annotations li { padding-left: var(--space-4); position: relative; }
+  .annotations li::before {
+    content: "·";
+    position: absolute;
+    left: var(--space-2);
+    color: var(--text-muted);
+  }
+  .label-wrap {
+    max-width: 880px;
+    margin: 0 auto var(--space-3);
+    color: var(--accent);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+</style>
+</head>
+<body>
+
+<div class="label-wrap">Direction A · The Stream</div>
+
+<div class="frame">
+  <header class="topbar">
+    <div class="ask">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>
+      </svg>
+      <span>Ask, search, or jot down a memory…</span>
+      <kbd>⌘K</kbd>
+    </div>
+    <div class="ambient">
+      <span class="ambient-item"><span class="ambient-dot"></span>2 devices online</span>
+      <span class="ambient-item">·</span>
+      <span class="ambient-item">last enriched 4m ago</span>
+      <span class="ambient-item">·</span>
+      <span class="ambient-item">1,303 chunks · 4 ai tags</span>
+      <span class="ambient-item" style="margin-left: auto; color: var(--accent);">claude code · just now</span>
+    </div>
+  </header>
+
+  <div class="chips">
+    <button class="chip chip-active">Everything <span class="chip-count">68</span></button>
+    <button class="chip">Notes <span class="chip-count">23</span></button>
+    <button class="chip">Wiki <span class="chip-count">17</span></button>
+    <button class="chip">Memories <span class="chip-count">9</span></button>
+    <button class="chip">Agent activity <span class="chip-count">19</span></button>
+    <button class="chip">Drafts <span class="chip-count">3</span></button>
+  </div>
+
+  <div class="stream">
+    <div class="day-divider">Today</div>
+
+    <article class="card">
+      <svg class="card-icon card-icon-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 8V4M4.93 19.07l2.83-2.83M2 12h4M19.07 19.07l-2.83-2.83M22 12h-4M19.07 4.93l-2.83 2.83M4.93 4.93l2.83 2.83M12 16v4"/>
+      </svg>
+      <div class="card-body">
+        <div class="card-title">Claude Code referenced your DAP callback note in 3 conversations</div>
+        <div class="card-snippet">It pulled <em>"自定义回传策略"</em> twice and <em>"回传业务流程"</em> once while answering questions about ad attribution tables. No edits were made; this is your knowledge being read.</div>
+        <div class="card-meta">
+          <span><strong>3 reads</strong></span>
+          <span>·</span>
+          <span class="tag">agent · cc</span>
+          <span class="tag">read-only</span>
+        </div>
+      </div>
+      <span class="card-time">2m ago</span>
+    </article>
+
+    <article class="card">
+      <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M14 3v4a1 1 0 0 0 1 1h4"/>
+        <path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z"/>
+      </svg>
+      <div class="card-body">
+        <div class="card-title">回传数仓表速查 — 自定义回传日志落库</div>
+        <div class="card-snippet">New wiki topic. 9 chunks ingested · 3 chapters auto-summarized · linked to <em>dap_dw.dap_attr_dap_callback_strategy_log_iceberg</em> as the central entity.</div>
+        <div class="card-meta">
+          <span><strong>9 chunks</strong></span>
+          <span>·</span>
+          <span class="tag tag-accent">wiki</span>
+          <span class="tag">技术方案</span>
+        </div>
+      </div>
+      <span class="card-time">14m ago</span>
+    </article>
+
+    <article class="card">
+      <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>
+      </svg>
+      <div class="card-body">
+        <div class="card-title">Cursor proposed a memory — review (1)</div>
+        <div class="card-snippet">"User prefers chunk-level dedup over doc-level for wiki-edit cost reasons. See processing-pipeline.md §1.3.1."</div>
+        <div class="card-meta">
+          <span class="tag">draft</span>
+          <span class="tag">preference</span>
+          <span>·</span>
+          <span><strong>confidence 0.6</strong></span>
+        </div>
+      </div>
+      <span class="card-time">38m ago</span>
+    </article>
+
+    <article class="card">
+      <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+      </svg>
+      <div class="card-body">
+        <div class="card-title">note.txt — 27 lines edited, AI re-tagged</div>
+        <div class="card-snippet">Added a section on enrich queue UX. The classifier moved 5 segments from <em>todo</em> to <em>技术方案</em> after re-running.</div>
+        <div class="card-meta">
+          <span><strong>+27 / −3</strong></span>
+          <span>·</span>
+          <span class="tag">technical</span>
+          <span class="tag">just re-enriched</span>
+        </div>
+      </div>
+      <span class="card-time">1h ago</span>
+    </article>
+
+    <div class="day-divider">Yesterday</div>
+
+    <article class="card">
+      <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+        <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+      </svg>
+      <div class="card-body">
+        <div class="card-title">12 wiki chapters re-summarized</div>
+        <div class="card-snippet">"自定义回传配置及下游回传代码分析" gained 8 chapters. Phase B ran in 24s on cloud_pool.</div>
+        <div class="card-meta">
+          <span><strong>¥0.12</strong></span>
+          <span>·</span>
+          <span class="tag">batch</span>
+          <span class="tag">cloud_pool</span>
+        </div>
+      </div>
+      <span class="card-time">21h ago</span>
+    </article>
+
+    <article class="card">
+      <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
+      </svg>
+      <div class="card-body">
+        <div class="card-title">New device paired — MacBook Pro M4</div>
+        <div class="card-snippet">Now sees the same workspace. Synced 23 wiki topics + 47 memories on first claim.</div>
+        <div class="card-meta">
+          <span class="tag">device</span>
+          <span>·</span>
+          <span>paired by you · ⌘ from Cursor</span>
+        </div>
+      </div>
+      <span class="card-time">23h ago</span>
+    </article>
+  </div>
+</div>
+
+<aside class="annotations">
+  <h2>What you're looking at</h2>
+  <ul>
+    <li>Top bar: <strong>one input</strong> for ask + search + jot. ⌘K invokes it from anywhere; never takes you off the page.</li>
+    <li>Ambient strip: device dot, last enrich time, what your agent is doing right now. Color = meaning; quiet otherwise.</li>
+    <li>Chips: filter the stream. Defaults to "Everything" so the new arrival sees life happening across the whole product.</li>
+    <li>Stream cards: notes you edited, memories agents proposed, AI activity, sync events. Time-ordered, scroll forever.</li>
+    <li>Memories from agents <strong>show up here</strong>—not buried in a Drafts tab. Clicking expands inline; never modal.</li>
+    <li>What's missing on purpose: tabs, sidebars, "go to settings," "go to cloud." There's no <em>there</em>—everything is <em>here</em>.</li>
+  </ul>
+</aside>
+
+</body>
+</html>

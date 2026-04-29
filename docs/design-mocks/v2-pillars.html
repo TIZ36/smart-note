@@ -1,0 +1,876 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SmartNote — v2 · Five-Pillar Redesign</title>
+<style>
+  /* ── Tokens (match prototype.css) ──────────────────────────── */
+  :root {
+    --bg-primary:    oklch(0.97 0.005 80);
+    --bg-elevated:   oklch(0.95 0.005 80);
+    --bg-hover:      oklch(0.93 0.005 80);
+    --text-primary:  oklch(0.22 0.005 80);
+    --text-secondary:oklch(0.42 0.005 80);
+    --text-muted:    oklch(0.58 0.005 80);
+    --border:        oklch(0.88 0.005 80);
+    --border-strong: oklch(0.78 0.005 80);
+    --accent:        oklch(0.55 0.15 250);
+    --accent-soft:   color-mix(in oklab, var(--accent) 14%, transparent);
+    --success:       oklch(0.55 0.13 155);
+    --warning:       oklch(0.62 0.14 70);
+
+    --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+    --space-6: 24px; --space-8: 32px; --space-12: 48px;
+
+    --radius-sm: 4px; --radius: 6px; --radius-lg: 10px;
+    --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", system-ui, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, monospace;
+    --easing: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-primary);
+    background: oklch(0.94 0.005 80);
+    -webkit-font-smoothing: antialiased;
+    padding: 24px;
+  }
+
+  /* ── Frame: shell with rail + canvas + bottom bar ─────────── */
+  .label-wrap { max-width: 1240px; margin: 0 auto 12px; color: var(--accent); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; }
+  .pillar-tabs {
+    max-width: 1240px;
+    margin: 0 auto 16px;
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .pillar-tab {
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    color: var(--text-secondary);
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .pillar-tab[aria-selected="true"] {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-color: transparent;
+  }
+  .frame {
+    max-width: 1240px;
+    margin: 0 auto;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    height: 820px;
+    display: grid;
+    grid-template-columns: 48px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) 32px;
+  }
+  .frame[data-with-context="true"] {
+    grid-template-columns: 48px minmax(0, 1fr) 304px;
+  }
+
+  /* ── Left rail (48px) ─────────────────────────────────────── */
+  .rail {
+    grid-row: 1 / span 2;
+    border-right: 1px solid var(--border);
+    background: var(--bg-elevated);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 10px 0;
+    gap: 4px;
+  }
+  .rail-logo {
+    width: 28px; height: 28px;
+    border-radius: var(--radius);
+    background: var(--text-primary);
+    color: var(--bg-primary);
+    display: grid; place-items: center;
+    font-weight: 600; font-size: 12px;
+    margin-bottom: 6px;
+    letter-spacing: -0.02em;
+  }
+  .rail-btn {
+    width: 32px; height: 32px;
+    border-radius: var(--radius);
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    display: grid; place-items: center;
+    cursor: pointer;
+    position: relative;
+    transition: background 160ms var(--easing), color 160ms var(--easing);
+  }
+  .rail-btn:hover { background: var(--bg-hover); color: var(--text-secondary); }
+  .rail-btn[data-active="true"] {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .rail-spacer { flex: 1; }
+  .rail-badge {
+    position: absolute; top: -2px; right: -2px;
+    background: var(--accent);
+    color: var(--bg-primary);
+    font-size: 9px;
+    font-variant-numeric: tabular-nums;
+    height: 14px; min-width: 14px;
+    border-radius: 7px;
+    padding: 0 4px;
+    display: grid; place-items: center;
+    line-height: 1;
+  }
+
+  /* ── Canvas + ambient bar ─────────────────────────────────── */
+  .canvas {
+    background: var(--bg-primary);
+    overflow: hidden;
+    position: relative;
+    min-width: 0; min-height: 0;
+  }
+  .rail-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .label-wrap span { color: var(--text-muted); margin-left: 6px; text-transform: none; letter-spacing: 0; }
+  .ambient {
+    grid-column: 2 / -1;
+    border-top: 1px solid var(--border);
+    background: var(--bg-elevated);
+    display: flex; align-items: center; gap: 14px;
+    padding: 0 16px;
+    font-size: 11px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .ambient-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--success);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--success) 16%, transparent);
+  }
+  .ambient-item { display: inline-flex; align-items: center; gap: 6px; }
+  .ambient-cmdk { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); }
+  .ambient-kbd { font-family: inherit; font-size: 10.5px; border: 1px solid var(--border); padding: 1px 5px; border-radius: 3px; background: var(--bg-primary); }
+
+  /* ── Right context panel (Notes/Wiki only) ────────────────── */
+  .ctx {
+    grid-row: 1 / span 1;
+    border-left: 1px solid var(--border);
+    background: var(--bg-primary);
+    display: flex; flex-direction: column;
+    overflow-y: auto;
+    min-width: 0; min-height: 0;
+  }
+  .ctx-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    padding: 12px 16px 0;
+  }
+  .ctx-tab {
+    padding: 6px 0;
+    font-size: 11.5px;
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    margin-right: 16px;
+    border-bottom: 1.5px solid transparent;
+    margin-bottom: -1px;
+    font-family: inherit;
+  }
+  .ctx-tab[aria-pressed="true"] {
+    color: var(--text-primary);
+    border-bottom-color: var(--text-primary);
+  }
+  .ctx-body { padding: 16px; display: flex; flex-direction: column; gap: 18px; }
+  .ctx-section { display: flex; flex-direction: column; gap: 8px; }
+  .ctx-section-head {
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    font-weight: 500;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .ctx-section-count { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .ctx-tagrow { display: flex; flex-wrap: wrap; gap: 4px; }
+  .ctx-chip {
+    font-size: 11px; padding: 2px 8px; border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    background: var(--bg-primary);
+    cursor: pointer;
+    display: inline-flex; gap: 5px; align-items: center;
+  }
+  .ctx-chip-count { font-size: 10px; opacity: 0.6; font-variant-numeric: tabular-nums; }
+  .ctx-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    background: var(--bg-primary);
+    display: flex; flex-direction: column; gap: 4px;
+    cursor: pointer;
+  }
+  .ctx-card:hover { border-color: var(--border-strong); }
+  .ctx-card-title { font-size: 12.5px; font-weight: 500; color: var(--text-primary); }
+  .ctx-card-meta { font-size: 10.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .ctx-fact {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    font-size: 11.5px; color: var(--text-secondary); line-height: 1.55;
+  }
+  .ctx-fact strong { color: var(--text-primary); font-weight: 500; display: block; margin-bottom: 2px; }
+
+  /* ── Section helpers ──────────────────────────────────────── */
+  .surface { display: none; height: 100%; flex-direction: column; min-width: 0; min-height: 0; }
+  .surface[data-active="true"] { display: flex; animation: surfaceIn 220ms var(--easing); }
+  @keyframes surfaceIn { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: translateY(0); } }
+  @media (prefers-reduced-motion: reduce) {
+    .surface[data-active="true"] { animation: none; }
+    * { transition: none !important; }
+  }
+  .surface-inner {
+    max-width: 920px;
+    width: 100%;
+    margin: 0 auto;
+    flex: 1;
+    overflow-y: auto;
+    display: flex; flex-direction: column;
+    min-width: 0; min-height: 0;
+  }
+
+  /* ── Surface 1 · Stream ───────────────────────────────────── */
+  .stream-topbar { padding: 20px 24px 12px; border-bottom: 1px solid var(--border); }
+  .stream-ask {
+    display: flex; align-items: center; gap: 12px;
+    width: 100%;
+    padding: 9px 16px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--text-muted);
+    font-size: 13.5px;
+    font-family: inherit;
+    cursor: pointer;
+    text-align: left;
+  }
+  .stream-ask kbd { margin-left: auto; font-family: inherit; font-size: 10.5px; color: var(--text-muted); border: 1px solid var(--border); padding: 1px 6px; border-radius: 3px; background: var(--bg-primary); }
+  .stream-chips { display: flex; gap: 4px; padding: 12px 24px; overflow-x: auto; }
+  .stream-chip { flex-shrink: 0; padding: 4px 10px; border-radius: 999px; font-size: 11.5px; color: var(--text-secondary); background: transparent; border: 1px solid var(--border); cursor: pointer; font-family: inherit; }
+  .stream-chip[aria-selected="true"] { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+  .stream-chip-count { margin-left: 4px; opacity: 0.6; font-size: 10px; }
+  .stream-chip-divider { width: 1px; height: 16px; background: var(--border); align-self: center; margin: 0 4px; flex-shrink: 0; }
+  .stream-feed { padding: 0 24px 24px; }
+  .stream-day { display: flex; align-items: center; gap: 12px; padding: 24px 0 12px; font-size: 10.5px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 500; }
+  .stream-day::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+  .stream-row { display: flex; align-items: flex-start; gap: 16px; padding: 12px 0; border-top: 1px solid transparent; cursor: pointer; }
+  .stream-row + .stream-row { border-top-color: var(--border); }
+  .stream-row:hover { background: color-mix(in oklab, var(--text-primary) 3%, transparent); }
+  .stream-icon { width: 14px; height: 14px; flex-shrink: 0; margin-top: 4px; color: var(--text-muted); }
+  .stream-icon.accent { color: var(--accent); }
+  .stream-body { flex: 1; min-width: 0; }
+  .stream-title { font-size: 13.5px; font-weight: 500; color: var(--text-primary); letter-spacing: -0.005em; margin-bottom: 2px; }
+  .stream-snippet { font-size: 12.5px; color: var(--text-secondary); line-height: 1.55; max-width: 65ch; }
+  .stream-snippet em { font-style: italic; color: var(--text-primary); }
+  .stream-snippet code { font-family: var(--font-mono); font-size: 11.5px; padding: 0 4px; border-radius: 3px; background: var(--bg-elevated); color: var(--text-primary); border: 1px solid var(--border); }
+  .stream-actor { color: var(--accent); font-weight: 500; }
+  .stream-link { color: var(--accent); cursor: pointer; }
+  .stream-link:hover { text-decoration: underline; }
+  .rag-chunk-snippet code { font-family: var(--font-mono); font-size: 11.5px; padding: 1px 5px; border-radius: 3px; background: var(--bg-elevated); border: 1px solid var(--border); color: var(--text-primary); }
+  .stream-row { transition: background 160ms var(--easing); }
+  .stream-meta { margin-top: 8px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 10.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .stream-meta strong { color: var(--text-secondary); font-weight: 500; }
+  .stream-tag { display: inline-flex; padding: 1px 7px; border-radius: 999px; font-size: 10px; background: var(--bg-elevated); color: var(--text-secondary); border: 1px solid var(--border); }
+  .stream-tag.accent { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+  .stream-time { font-size: 10.5px; color: var(--text-muted); flex-shrink: 0; margin-top: 4px; font-variant-numeric: tabular-nums; }
+
+  /* ── Surface 2 · RAG retrieval ────────────────────────────── */
+  .rag-topbar { padding: 20px 24px 12px; border-bottom: 1px solid var(--border); }
+  .rag-input-wrap { display: flex; gap: 8px; align-items: center; }
+  .rag-input {
+    flex: 1; min-width: 0;
+    height: 38px; padding: 0 16px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-family: inherit; font-size: 14px;
+    color: var(--text-primary);
+    outline: none;
+  }
+  .rag-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .rag-btn { height: 38px; padding: 0 16px; border-radius: 8px; font-size: 12.5px; cursor: pointer; font-family: inherit; border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-secondary); }
+  .rag-btn:hover { color: var(--text-primary); border-color: var(--text-muted); }
+  .rag-btn-primary { background: var(--accent); color: var(--bg-primary); border-color: var(--accent); font-weight: 500; }
+  .rag-btn-primary:hover { color: var(--bg-primary); border-color: var(--accent); opacity: 0.92; }
+  .rag-scope { display: flex; gap: 6px; padding: 10px 24px; border-bottom: 1px solid var(--border); }
+  .rag-scope-chip { padding: 3px 9px; border-radius: 999px; font-size: 11px; color: var(--text-secondary); background: transparent; border: 1px solid var(--border); cursor: pointer; font-family: inherit; }
+  .rag-scope-chip[aria-selected="true"] { background: var(--text-primary); color: var(--bg-primary); border-color: var(--text-primary); }
+  .rag-results { padding: 16px 24px 24px; display: flex; flex-direction: column; gap: 12px; }
+  .rag-summary {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-elevated);
+    padding: 12px 16px 14px;
+    font-size: 13px; line-height: 1.6;
+    color: var(--text-secondary);
+  }
+  .rag-summary-eyebrow {
+    font-size: 10px; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.06em;
+    margin-bottom: 6px; font-weight: 500;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .rag-summary-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+  .rag-summary sup { font-size: 9.5px; color: var(--accent); padding: 0 2px; cursor: pointer; }
+  .rag-doc {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-primary);
+    overflow: hidden;
+  }
+  .rag-doc-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--bg-elevated); }
+  .rag-doc-kind { font-size: 10px; padding: 1px 7px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+  .rag-doc-title { font-size: 13px; font-weight: 500; color: var(--text-primary); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rag-doc-score { font-size: 10.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .rag-chunk { padding: 12px 14px; border-top: 1px dashed var(--border); }
+  .rag-chunk:first-of-type { border-top: none; }
+  .rag-chunk-snippet { font-size: 12.5px; color: var(--text-secondary); line-height: 1.6; }
+  .rag-chunk-snippet mark { background: color-mix(in oklab, var(--accent) 18%, transparent); color: var(--text-primary); padding: 0 2px; border-radius: 2px; }
+  .rag-chunk-meta { display: flex; gap: 12px; margin-top: 6px; font-size: 10.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+  /* ── Surface 3 · Note editor ──────────────────────────────── */
+  .note-shell { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+  .note-bar { padding: 12px 24px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--border); }
+  .note-crumbs { font-size: 11.5px; color: var(--text-muted); }
+  .note-crumbs strong { color: var(--text-primary); font-weight: 500; }
+  .note-actions { margin-left: auto; display: flex; gap: 6px; }
+  .note-btn { height: 28px; padding: 0 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-primary); font-size: 11.5px; color: var(--text-secondary); cursor: pointer; font-family: inherit; }
+  .note-btn:hover { color: var(--text-primary); border-color: var(--text-muted); }
+  .note-btn-primary { background: var(--accent); color: var(--bg-primary); border-color: var(--accent); font-weight: 500; }
+  .note-btn-primary:hover { color: var(--bg-primary); border-color: var(--accent); opacity: 0.92; }
+  .note-editor { flex: 1; padding: 24px 32px 48px; overflow-y: auto; max-width: 760px; margin: 0 auto; width: 100%; min-height: 0; }
+  .note-h1 { font-size: 22px; font-weight: 500; letter-spacing: -0.01em; margin-bottom: 4px; }
+  .note-meta { font-size: 11.5px; color: var(--text-muted); margin-bottom: 24px; }
+  .note-p { font-size: 14px; color: var(--text-primary); line-height: 1.65; margin-bottom: 14px; }
+  .note-h2 { font-size: 16px; font-weight: 500; margin: 22px 0 10px; }
+  .note-li { font-size: 14px; line-height: 1.65; padding-left: 20px; position: relative; margin-bottom: 4px; }
+  .note-li::before { content: "·"; position: absolute; left: 8px; color: var(--text-muted); }
+  .note-callout {
+    border-left: 2px solid var(--accent);
+    padding: 6px 12px;
+    background: var(--accent-soft);
+    color: var(--text-primary);
+    font-size: 12.5px;
+    border-radius: 0 4px 4px 0;
+    margin: 12px 0;
+  }
+
+  /* ── Surface 4 · Wiki ─────────────────────────────────────── */
+  .wiki-bar { padding: 8px 24px 0; display: flex; align-items: flex-end; gap: 12px; border-bottom: 1px solid var(--border); }
+  .wiki-tabs { display: flex; gap: 18px; }
+  .wiki-tab { padding: 8px 0; font-size: 12px; color: var(--text-muted); background: transparent; border: none; border-bottom: 1.5px solid transparent; margin-bottom: -1px; font-family: inherit; cursor: pointer; display: inline-flex; align-items: baseline; gap: 6px; }
+  .wiki-tab[aria-pressed="true"] { color: var(--text-primary); border-bottom-color: var(--text-primary); }
+  .wiki-tab-count { font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .wiki-bar-actions { margin-left: auto; display: flex; gap: 6px; align-self: center; }
+  .wiki-grid { padding: 20px 24px; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+  .wiki-topic { padding: 14px 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-primary); cursor: pointer; transition: border-color 160ms var(--easing); }
+  .wiki-topic:hover { border-color: var(--border-strong); }
+  .wiki-topic-title { font-size: 13.5px; font-weight: 500; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wiki-topic-meta { font-size: 11px; color: var(--text-muted); display: flex; gap: 10px; font-variant-numeric: tabular-nums; }
+  .wiki-topic-tags { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
+
+  /* ── Surface 5 · Cloud Console ────────────────────────────── */
+  .cloud-bar { padding: 14px 24px 0; display: flex; gap: 20px; border-bottom: 1px solid var(--border); }
+  .cloud-tab { padding: 8px 0; font-size: 12px; color: var(--text-muted); background: transparent; border: none; border-bottom: 1.5px solid transparent; margin-bottom: -1px; font-family: inherit; cursor: pointer; }
+  .cloud-tab[aria-pressed="true"] { color: var(--text-primary); border-bottom-color: var(--text-primary); }
+  .cloud-content { padding: 20px 24px; max-width: 880px; margin: 0 auto; width: 100%; display: flex; flex-direction: column; gap: 16px; }
+  .cloud-card { border: 1px solid var(--border); border-radius: 8px; background: var(--bg-primary); padding: 16px; }
+  .cloud-card-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 12px; }
+  .cloud-card-title { font-size: 12.5px; font-weight: 500; color: var(--text-primary); }
+  .cloud-card-meta { font-size: 10.5px; color: var(--text-muted); }
+  .cloud-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  .cloud-stat-num { font-size: 22px; font-weight: 500; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+  .cloud-stat-lbl { font-size: 10.5px; color: var(--text-muted); margin-top: 2px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .cloud-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--border); font-size: 12px; }
+  .cloud-row:first-of-type { border-top: none; }
+  .cloud-row-name { flex: 1; color: var(--text-primary); font-weight: 500; }
+  .cloud-row-meta { color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .cloud-row-status { font-size: 11px; padding: 2px 7px; border-radius: 999px; }
+  .cloud-row-status.done    { background: color-mix(in oklab, var(--success) 14%, transparent); color: var(--success); }
+  .cloud-row-status.running { background: color-mix(in oklab, var(--warning) 18%, transparent); color: var(--warning); }
+  .cloud-row-status.offline { background: var(--bg-elevated); color: var(--text-muted); }
+
+  /* ── Surface 6 · Settings ─────────────────────────────────── */
+  .settings-grid { display: grid; grid-template-columns: 200px minmax(0, 1fr); height: 100%; }
+  .settings-nav { border-right: 1px solid var(--border); padding: 16px 8px; display: flex; flex-direction: column; gap: 2px; background: var(--bg-elevated); overflow-y: auto; }
+  .settings-nav-item { padding: 6px 12px; font-size: 12px; color: var(--text-secondary); background: transparent; border: none; border-radius: 5px; text-align: left; cursor: pointer; font-family: inherit; }
+  .settings-nav-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+  .settings-nav-item[aria-current="true"] { background: var(--bg-primary); color: var(--text-primary); }
+  .settings-pane-wrap { overflow-y: auto; min-width: 0; }
+  .settings-pane { padding: 32px 40px 48px; max-width: 640px; margin: 0 auto; }
+  .settings-section-title { font-size: 16px; font-weight: 500; letter-spacing: -0.01em; margin-bottom: 4px; }
+  .settings-section-desc { font-size: 12px; color: var(--text-muted); margin-bottom: 18px; }
+  .settings-field { display: flex; flex-direction: column; gap: 4px; padding: 12px 0; border-top: 1px solid var(--border); }
+  .settings-field:first-of-type { border-top: none; padding-top: 0; }
+  .settings-field-row { display: flex; align-items: center; gap: 12px; }
+  .settings-field-label { font-size: 12.5px; color: var(--text-primary); font-weight: 500; flex: 1; }
+  .settings-field-help { font-size: 11.5px; color: var(--text-muted); }
+  .settings-input { padding: 6px 10px; border: 1px solid var(--border); border-radius: 5px; font-size: 12px; background: var(--bg-primary); width: 240px; font-family: inherit; }
+  .settings-toggle {
+    width: 32px; height: 18px; border-radius: 999px; background: var(--border); position: relative; cursor: pointer; border: none; padding: 0;
+  }
+  .settings-toggle::after { content: ""; position: absolute; left: 2px; top: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--bg-primary); transition: transform 160ms var(--easing); }
+  .settings-toggle[aria-checked="true"] { background: var(--accent); }
+  .settings-toggle[aria-checked="true"]::after { transform: translateX(14px); }
+
+  /* ── Annotations ──────────────────────────────────────────── */
+  .annotations { max-width: 1240px; margin: 24px auto 0; color: var(--text-muted); font-size: 11px; line-height: 1.7; }
+  .annotations h2 { font-size: 14px; font-weight: 500; color: var(--text-secondary); margin-bottom: 8px; }
+  .annotations ul { list-style: none; padding: 0; }
+  .annotations li { padding-left: 16px; position: relative; }
+  .annotations li::before { content: "·"; position: absolute; left: 8px; color: var(--text-muted); }
+</style>
+</head>
+<body>
+
+<div class="label-wrap">v2 · Five-Pillar Hybrid (A primary, B for search, C for context)</div>
+
+<div class="pillar-tabs" role="tablist" aria-label="Surface to preview">
+  <button class="pillar-tab" role="tab" aria-selected="true" data-pillar="stream">Stream (home)</button>
+  <button class="pillar-tab" role="tab" aria-selected="false" data-pillar="rag">① RAG retrieval</button>
+  <button class="pillar-tab" role="tab" aria-selected="false" data-pillar="note">② Note management</button>
+  <button class="pillar-tab" role="tab" aria-selected="false" data-pillar="wiki">③ Wiki management</button>
+  <button class="pillar-tab" role="tab" aria-selected="false" data-pillar="cloud">④ Cloud management</button>
+  <button class="pillar-tab" role="tab" aria-selected="false" data-pillar="settings">⑤ Client settings</button>
+</div>
+
+<div class="frame" id="frame" data-with-context="false">
+  <!-- Rail -->
+  <aside class="rail" aria-label="Primary navigation">
+    <div class="rail-logo">SN</div>
+    <button class="rail-btn" data-active="true" data-rail="stream" title="Stream">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+    </button>
+    <button class="rail-btn" data-rail="rag" title="RAG search">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+    </button>
+    <button class="rail-btn" data-rail="note" title="Notes">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z"/></svg>
+    </button>
+    <button class="rail-btn" data-rail="wiki" title="Wiki">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2zM22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+      <span class="rail-badge">17</span>
+    </button>
+    <button class="rail-btn" data-rail="cloud" title="Cloud Console">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.5 19a4.5 4.5 0 1 0-1.5-8.74 6 6 0 0 0-11.74 1.74A4 4 0 0 0 6 19h11.5z"/></svg>
+    </button>
+    <div class="rail-spacer"></div>
+    <button class="rail-btn" title="Workspace">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5"/></svg>
+    </button>
+    <button class="rail-btn" data-rail="settings" title="Settings">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9 1.65 1.65 0 0 0 4.27 7.18l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6 1.65 1.65 0 0 0 10 3.09V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.214.523.327 1.084.33 1.65v.7c-.003.566-.116 1.127-.33 1.65z"/></svg>
+    </button>
+  </aside>
+
+  <!-- Canvas -->
+  <main class="canvas">
+
+    <!-- ① Stream -->
+    <section class="surface" data-surface="stream" data-active="true">
+      <div class="surface-inner">
+        <div class="stream-topbar">
+          <button class="stream-ask">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+            <span>Ask, search, or jot down a memory…</span>
+            <kbd>⌘K</kbd>
+          </button>
+        </div>
+        <div class="stream-chips" role="tablist">
+          <button class="stream-chip" aria-selected="true">Everything <span class="stream-chip-count">68</span></button>
+          <button class="stream-chip">You <span class="stream-chip-count">14</span></button>
+          <button class="stream-chip">AI CLIs <span class="stream-chip-count">31</span></button>
+          <button class="stream-chip">Cloud <span class="stream-chip-count">23</span></button>
+          <span class="stream-chip-divider" aria-hidden="true"></span>
+          <button class="stream-chip">Notes <span class="stream-chip-count">9</span></button>
+          <button class="stream-chip">Wiki <span class="stream-chip-count">17</span></button>
+          <button class="stream-chip">RAG <span class="stream-chip-count">5</span></button>
+          <button class="stream-chip">Memories <span class="stream-chip-count">9</span></button>
+        </div>
+        <div class="stream-feed">
+          <div class="stream-day">Today</div>
+
+          <article class="stream-row">
+            <svg class="stream-icon accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8V4M4.93 19.07l2.83-2.83M2 12h4M19.07 19.07l-2.83-2.83M22 12h-4M19.07 4.93l-2.83 2.83M4.93 4.93l2.83 2.83M12 16v4"/></svg>
+            <div class="stream-body">
+              <div class="stream-title"><span class="stream-actor">Claude Code</span> referenced your DAP callback note in 3 conversations</div>
+              <div class="stream-snippet">Pulled <em>"自定义回传策略"</em> twice and <em>"回传业务流程"</em> once via <code>search_memory</code>. Read-only — no edits.</div>
+              <div class="stream-meta"><strong>3 reads</strong> · <span class="stream-tag">cli · cc</span> <span class="stream-tag">mcp</span></div>
+            </div>
+            <span class="stream-time">2m ago</span>
+          </article>
+
+          <article class="stream-row">
+            <svg class="stream-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+            <div class="stream-body">
+              <div class="stream-title"><span class="stream-actor">You</span> asked: "how does dap callback handle table-level retries?"</div>
+              <div class="stream-snippet">RAG returned 4 chunks across 2 sources. Composed answer cited <em>retry_jitter_seconds</em>. <span class="stream-link">Re-open ↗</span></div>
+              <div class="stream-meta"><span class="stream-tag">rag</span> <span class="stream-tag">2 sources</span> · <strong>0.84 top score</strong></div>
+            </div>
+            <span class="stream-time">8m ago</span>
+          </article>
+
+          <article class="stream-row">
+            <svg class="stream-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z"/></svg>
+            <div class="stream-body">
+              <div class="stream-title"><span class="stream-actor">You</span> edited <em>2026-04-29 · enrich queue UX</em></div>
+              <div class="stream-snippet">+27 / −3 · Classifier moved 5 segments from <em>todo</em> to <em>技术方案</em> after re-running.</div>
+              <div class="stream-meta"><span class="stream-tag">note</span> <span class="stream-tag">re-enriched</span></div>
+            </div>
+            <span class="stream-time">14m ago</span>
+          </article>
+
+          <article class="stream-row">
+            <svg class="stream-icon accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+            <div class="stream-body">
+              <div class="stream-title"><span class="stream-actor">Cursor</span> proposed a memory — review (1)</div>
+              <div class="stream-snippet"><em>"User prefers chunk-level dedup over doc-level for wiki-edit cost reasons."</em></div>
+              <div class="stream-meta"><span class="stream-tag">draft</span> <span class="stream-tag">preference</span> · <strong>confidence 0.6</strong></div>
+            </div>
+            <span class="stream-time">38m ago</span>
+          </article>
+
+          <article class="stream-row">
+            <svg class="stream-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z"/></svg>
+            <div class="stream-body">
+              <div class="stream-title"><span class="stream-actor">You</span> ingested <em>回传数仓表速查 — 自定义回传日志落库</em></div>
+              <div class="stream-snippet">New wiki topic. 9 chunks · 3 chapters auto-summarized.</div>
+              <div class="stream-meta"><strong>9 chunks</strong> · <span class="stream-tag accent">wiki</span> <span class="stream-tag">技术方案</span></div>
+            </div>
+            <span class="stream-time">52m ago</span>
+          </article>
+
+          <div class="stream-day">Yesterday</div>
+
+          <article class="stream-row">
+            <svg class="stream-icon accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8V4M4.93 19.07l2.83-2.83M2 12h4M19.07 19.07l-2.83-2.83M22 12h-4M19.07 4.93l-2.83 2.83M4.93 4.93l2.83 2.83M12 16v4"/></svg>
+            <div class="stream-body">
+              <div class="stream-title"><span class="stream-actor">Claude Code</span> called <code>queue_enrich_jobs</code> for 4 wiki topics</div>
+              <div class="stream-snippet">Triggered re-enrichment after a wiki edit. 4 jobs dispatched on cloud_pool, all succeeded.</div>
+              <div class="stream-meta"><span class="stream-tag">cli · cc</span> <span class="stream-tag">mcp</span> <span class="stream-tag">batch</span></div>
+            </div>
+            <span class="stream-time">19h ago</span>
+          </article>
+
+          <article class="stream-row">
+            <svg class="stream-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+            <div class="stream-body">
+              <div class="stream-title">12 wiki chapters re-summarized</div>
+              <div class="stream-snippet">Phase B ran in 24s on cloud_pool · ¥0.12 spend.</div>
+              <div class="stream-meta"><span class="stream-tag">cloud</span> <span class="stream-tag">batch</span> <span class="stream-tag">cloud_pool</span></div>
+            </div>
+            <span class="stream-time">21h ago</span>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ② RAG retrieval -->
+    <section class="surface" data-surface="rag">
+      <div class="surface-inner">
+        <div class="rag-topbar">
+          <div class="rag-input-wrap">
+            <input class="rag-input" value="how does dap callback strategy handle table-level retries?" />
+            <button class="rag-btn rag-btn-primary">Ask</button>
+          </div>
+        </div>
+        <div class="rag-scope">
+          <button class="rag-scope-chip" aria-selected="true">All knowledge</button>
+          <button class="rag-scope-chip">Notes only</button>
+          <button class="rag-scope-chip">Wiki only</button>
+          <button class="rag-scope-chip">Memories</button>
+          <button class="rag-scope-chip">+ filter…</button>
+        </div>
+        <div class="rag-results">
+          <div class="rag-summary">
+            <div class="rag-summary-eyebrow"><span class="rag-summary-dot"></span>Composed answer · 4 sources</div>
+            DAP callback strategy retries failed rows at the iceberg table level via <em>dap_attr_dap_callback_strategy_log_iceberg</em>, where each failed callback row is re-attempted up to 3 times within 24h before falling into the dead-letter queue<sup>[1][3]</sup>. Retry timing is governed by the <em>retry_jitter_seconds</em> column<sup>[2]</sup>; downstream consumers see only successful rows.
+          </div>
+
+          <div class="rag-doc">
+            <div class="rag-doc-head">
+              <span class="rag-doc-kind">wiki</span>
+              <span class="rag-doc-title">回传数仓表速查 — 自定义回传日志落库</span>
+              <span class="rag-doc-score">0.84 · 3 chunks</span>
+            </div>
+            <div class="rag-chunk">
+              <div class="rag-chunk-snippet">Failed rows are written to <mark>dap_attr_dap_callback_strategy_log_iceberg</mark> with <code>status = 'pending_retry'</code>. The retry orchestrator scans every 15 minutes…</div>
+              <div class="rag-chunk-meta"><span>chapter 3 · §retries</span><span>0.91</span></div>
+            </div>
+            <div class="rag-chunk">
+              <div class="rag-chunk-snippet">Each row carries a <mark>retry_jitter_seconds</mark> value to spread reattempts across the cluster.</div>
+              <div class="rag-chunk-meta"><span>chapter 3 · §jitter</span><span>0.78</span></div>
+            </div>
+          </div>
+
+          <div class="rag-doc">
+            <div class="rag-doc-head">
+              <span class="rag-doc-kind">note</span>
+              <span class="rag-doc-title">2026-04-20 · ad attribution debrief</span>
+              <span class="rag-doc-score">0.71 · 1 chunk</span>
+            </div>
+            <div class="rag-chunk">
+              <div class="rag-chunk-snippet">Saw 4.2k <mark>callback retries</mark> in last 24h — most resolved on attempt 2, dead-letter rate stable at 0.3%.</div>
+              <div class="rag-chunk-meta"><span>line 47–52</span><span>0.71</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ③ Note -->
+    <section class="surface" data-surface="note">
+      <div class="note-shell">
+        <div class="note-bar">
+          <span class="note-crumbs">Notes / <strong>2026-04-29 · enrich queue UX</strong></span>
+          <div class="note-actions">
+            <button class="note-btn">Re-ingest</button>
+            <button class="note-btn note-btn-primary">Save</button>
+          </div>
+        </div>
+        <div class="note-editor">
+          <h1 class="note-h1">Enrich queue — surfacing what the agent is doing</h1>
+          <div class="note-meta">edited 2m ago · 27 lines · auto-tagged 技术方案</div>
+          <p class="note-p">The classifier moved 5 segments from <em>todo</em> to <em>技术方案</em> after re-running. The user feedback was that the queue was opaque — "I don't know what's enriching when."</p>
+          <h2 class="note-h2">What changed</h2>
+          <p class="note-li">Each enrich job now carries <em>type · source · originator</em> labels in the sync feed.</p>
+          <p class="note-li">Bulk ingest fires enrich automatically (was a separate manual step).</p>
+          <p class="note-li">Provider concurrency is configurable per-workspace.</p>
+          <div class="note-callout">
+            <strong>AI tag suggestion</strong> — three new memories propose adding "queue UX" as a tag. <span style="color:var(--accent); cursor:pointer;">Review →</span>
+          </div>
+          <h2 class="note-h2">Open</h2>
+          <p class="note-li">Should we expose the per-segment classifier confidence in the right panel, or only when the user filters by tag?</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ④ Wiki -->
+    <section class="surface" data-surface="wiki">
+      <div class="surface-inner">
+        <div class="wiki-bar">
+          <div class="wiki-tabs">
+            <button class="wiki-tab" aria-pressed="true">Topics <span class="wiki-tab-count">17</span></button>
+            <button class="wiki-tab">Sources <span class="wiki-tab-count">42</span></button>
+            <button class="wiki-tab">Chapters <span class="wiki-tab-count">183</span></button>
+          </div>
+          <div class="wiki-bar-actions"><button class="note-btn note-btn-primary">+ Import folder</button></div>
+        </div>
+        <div class="wiki-grid">
+          <div class="wiki-topic">
+            <div class="wiki-topic-title">回传数仓表速查 — 自定义回传日志落库</div>
+            <div class="wiki-topic-meta"><span>9 chunks</span><span>3 chapters</span><span>edited 14m ago</span></div>
+            <div class="wiki-topic-tags"><span class="stream-tag accent">技术方案</span><span class="stream-tag">回传</span></div>
+          </div>
+          <div class="wiki-topic">
+            <div class="wiki-topic-title">自定义回传配置及下游回传代码分析</div>
+            <div class="wiki-topic-meta"><span>14 chunks</span><span>8 chapters</span><span>edited 1d ago</span></div>
+            <div class="wiki-topic-tags"><span class="stream-tag accent">技术方案</span><span class="stream-tag">回传</span></div>
+          </div>
+          <div class="wiki-topic">
+            <div class="wiki-topic-title">DAP attribution model — Iceberg sink design</div>
+            <div class="wiki-topic-meta"><span>6 chunks</span><span>2 chapters</span><span>edited 3d ago</span></div>
+            <div class="wiki-topic-tags"><span class="stream-tag accent">架构</span></div>
+          </div>
+          <div class="wiki-topic">
+            <div class="wiki-topic-title">SmartNote release notes — 2026.04</div>
+            <div class="wiki-topic-meta"><span>4 chunks</span><span>1 chapter</span><span>edited 4d ago</span></div>
+            <div class="wiki-topic-tags"><span class="stream-tag">notes</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ⑤ Cloud -->
+    <section class="surface" data-surface="cloud">
+      <div class="surface-inner">
+        <div class="cloud-bar">
+          <button class="cloud-tab" aria-pressed="true">Sync</button>
+          <button class="cloud-tab">Devices</button>
+          <button class="cloud-tab">Subscription</button>
+          <button class="cloud-tab">Memories</button>
+        </div>
+        <div class="cloud-content">
+          <div class="cloud-card">
+            <div class="cloud-card-head"><span class="cloud-card-title">Inventory</span><span class="cloud-card-meta">live · refreshed 4s ago</span></div>
+            <div class="cloud-stats">
+              <div><div class="cloud-stat-num">1,303</div><div class="cloud-stat-lbl">chunks</div></div>
+              <div><div class="cloud-stat-num">18</div><div class="cloud-stat-lbl">documents</div></div>
+              <div><div class="cloud-stat-num">47</div><div class="cloud-stat-lbl">memories</div></div>
+              <div><div class="cloud-stat-num">4</div><div class="cloud-stat-lbl">ai tags</div></div>
+            </div>
+          </div>
+          <div class="cloud-card">
+            <div class="cloud-card-head"><span class="cloud-card-title">Recent enrichment runs</span><a style="font-size: 11px; color: var(--accent);">All jobs →</a></div>
+            <div class="cloud-row"><span class="cloud-row-name">2026-04-29 · enrich queue UX</span><span class="cloud-row-meta">note · 1,124 tokens · cloud_pool</span><span class="cloud-row-status done">done</span></div>
+            <div class="cloud-row"><span class="cloud-row-name">回传数仓表速查</span><span class="cloud-row-meta">wiki · 18,420 tokens · cloud_pool</span><span class="cloud-row-status done">done</span></div>
+            <div class="cloud-row"><span class="cloud-row-name">DAP attribution model</span><span class="cloud-row-meta">wiki · classifying 6/14</span><span class="cloud-row-status running">running</span></div>
+          </div>
+          <div class="cloud-card">
+            <div class="cloud-card-head"><span class="cloud-card-title">Auto-enrich</span><span class="cloud-card-meta">¥0.32 spent today / ¥9.9 plan budget</span></div>
+            <div style="display:flex; align-items:center; gap:12px;">
+              <button class="settings-toggle" aria-checked="true"></button>
+              <span style="font-size:12.5px; color:var(--text-secondary);">Re-enrich on note edit · classifier + AI tags</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ⑥ Settings -->
+    <section class="surface" data-surface="settings">
+      <div class="settings-grid">
+        <nav class="settings-nav" aria-label="Settings sections">
+          <button class="settings-nav-item" aria-current="true">Profile</button>
+          <button class="settings-nav-item">Storage paths</button>
+          <button class="settings-nav-item">AI providers</button>
+          <button class="settings-nav-item">Hotkeys</button>
+          <button class="settings-nav-item">Theme</button>
+          <button class="settings-nav-item">Diagnostics</button>
+        </nav>
+        <div class="settings-pane-wrap">
+        <div class="settings-pane">
+          <div class="settings-section-title">Profile</div>
+          <div class="settings-section-desc">How SmartNote identifies you across devices.</div>
+          <div class="settings-field">
+            <div class="settings-field-row">
+              <span class="settings-field-label">Display name</span>
+              <input class="settings-input" value="lilithgames" />
+            </div>
+          </div>
+          <div class="settings-field">
+            <div class="settings-field-row">
+              <span class="settings-field-label">Email</span>
+              <input class="settings-input" value="mokkjeddy444@gmail.com" />
+            </div>
+            <div class="settings-field-help">Used by Cloud Console for billing and sign-in.</div>
+          </div>
+          <div class="settings-field">
+            <div class="settings-field-row">
+              <span class="settings-field-label">Send anonymous diagnostics</span>
+              <button class="settings-toggle" aria-checked="false"></button>
+            </div>
+            <div class="settings-field-help">Crash reports only. No content, no telemetry on individual notes.</div>
+          </div>
+          <div class="settings-field">
+            <div class="settings-field-row">
+              <span class="settings-field-label">Auto-pair new devices</span>
+              <button class="settings-toggle" aria-checked="true"></button>
+            </div>
+            <div class="settings-field-help">Devices on this network can claim the workspace without a code.</div>
+          </div>
+        </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Right context (Notes/Wiki only — toggled by JS) -->
+  <aside class="ctx" id="ctx" hidden>
+    <div class="ctx-tabs">
+      <button class="ctx-tab" aria-pressed="true">For this note</button>
+      <button class="ctx-tab">Activity</button>
+    </div>
+    <div class="ctx-body">
+      <div class="ctx-section">
+        <div class="ctx-section-head">AI tags <span class="ctx-section-count">4</span></div>
+        <div class="ctx-tagrow">
+          <button class="ctx-chip">技术方案 <span class="ctx-chip-count">12</span></button>
+          <button class="ctx-chip">queue ux <span class="ctx-chip-count">5</span></button>
+          <button class="ctx-chip">enrich <span class="ctx-chip-count">8</span></button>
+          <button class="ctx-chip">+todo <span class="ctx-chip-count">2</span></button>
+        </div>
+      </div>
+      <div class="ctx-section">
+        <div class="ctx-section-head">Related <span class="ctx-section-count">3</span></div>
+        <div class="ctx-card">
+          <div class="ctx-card-title">Wiki · 自定义回传配置及下游回传代码分析</div>
+          <div class="ctx-card-meta">co-tagged 技术方案 · 6 shared chunks</div>
+        </div>
+        <div class="ctx-card">
+          <div class="ctx-card-title">Note · 2026-04-20 ad attribution debrief</div>
+          <div class="ctx-card-meta">co-tagged 回传 · 2 shared chunks</div>
+        </div>
+      </div>
+      <div class="ctx-section">
+        <div class="ctx-section-head">Pending memories <span class="ctx-section-count">2</span></div>
+        <div class="ctx-card">
+          <div class="ctx-card-title">"User wants per-segment classifier confidence visible inline."</div>
+          <div class="ctx-card-meta">cursor · 0.74 · 38m ago</div>
+        </div>
+      </div>
+      <div class="ctx-section">
+        <div class="ctx-section-head">Last enrichment</div>
+        <div class="ctx-fact">
+          <strong>Classified 27 lines</strong>
+          1,124 tokens · cloud_pool · finished 2m ago
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Bottom ambient bar -->
+  <div class="ambient">
+    <span class="ambient-item"><span class="ambient-dot"></span>2 devices online</span>
+    <span class="ambient-item">·</span>
+    <span class="ambient-item">last enriched 4m ago</span>
+    <span class="ambient-item">·</span>
+    <span class="ambient-item">1,303 chunks · 4 ai tags</span>
+    <span class="ambient-cmdk">⌘K to ask <kbd class="ambient-kbd">⌘K</kbd></span>
+  </div>
+</div>
+
+<aside class="annotations">
+  <h2>What you're looking at</h2>
+  <ul>
+    <li>One persistent shell. Six rail destinations. Stream is home; ⌘K stays a navigator (over any surface); RAG retrieval is its own canvas with chunk-level results + composed answer.</li>
+    <li>Right context panel only appears for Note + Wiki — the only surfaces where "what's adjacent to this thing" makes sense.</li>
+    <li>Cloud Console becomes a first-class rail icon (was buried). Tabs match production: Sync · Devices · Subscription · Memories.</li>
+    <li>Settings has a 200px sub-nav inside the canvas — full canvas, no right panel, no chrome competing.</li>
+    <li>Ambient bar persists everywhere. Devices · last enrich · inventory · ⌘K. Quiet by default; turns accent only when an agent is actively reading or a job is running.</li>
+    <li>What's NOT here on purpose: skills as a separate kind, an Insights panel, a left tree (B's tree only shows up inside the ⌘K palette grouped by knowledge kind).</li>
+  </ul>
+</aside>
+
+<script>
+  const tabs = document.querySelectorAll(".pillar-tab");
+  const surfaces = document.querySelectorAll(".surface");
+  const railBtns = document.querySelectorAll(".rail-btn[data-rail]");
+  const frame = document.getElementById("frame");
+  const ctx = document.getElementById("ctx");
+
+  function activate(name) {
+    tabs.forEach((t) => t.setAttribute("aria-selected", t.dataset.pillar === name ? "true" : "false"));
+    railBtns.forEach((b) => b.setAttribute("data-active", b.dataset.rail === name ? "true" : "false"));
+    surfaces.forEach((s) => s.setAttribute("data-active", s.dataset.surface === name ? "true" : "false"));
+    const showCtx = name === "note" || name === "wiki";
+    frame.setAttribute("data-with-context", showCtx ? "true" : "false");
+    ctx.hidden = !showCtx;
+  }
+
+  tabs.forEach((t) => t.addEventListener("click", () => activate(t.dataset.pillar)));
+  railBtns.forEach((b) => b.addEventListener("click", () => activate(b.dataset.rail)));
+</script>
+
+</body>
+</html>
