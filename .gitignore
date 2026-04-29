@@ -48,3 +48,6 @@ npm-debug.log*
 
 # ── Claude Code ──
 .claude/plans/
+
+# ── Skill artifacts (regenerated, not source of truth) ──
+.impeccable.md
