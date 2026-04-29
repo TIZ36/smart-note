@@ -1,42 +1,57 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   FileText, BookOpen, Sparkles, MessageSquare, Inbox, Search,
-  Clock, FileEdit,
+  Clock, FileEdit, ArrowRight, X,
 } from "lucide-react";
 import * as cloudApi from "@/lib/cloud-api";
 import type { ChannelId } from "@/lib/types";
 import { cn } from "@/lib/cn";
 
-/* StreamHome — A-direction landing.
+/* StreamHome — v3 home surface.
  *
- * Aligned to docs/design-mocks/a-stream.html. The page is a quiet
- * vertical river of activity, not a card grid. Rows separate with a
- * 1px top border (no boxes, no shadows). The accent earns its place
- * through the active filter chip, the agent-read icon tint, and the
- * `tag-accent` for primary type chips — nothing else.
+ * Three things merged here:
+ *   1) Real ask input (type + Enter → inline composed answer + chunks).
+ *   2) Filter-chip row to scope the feed to one kind.
+ *   3) Time-grouped feed split by KIND within each day:
+ *        Today
+ *          ❓ Questions      (search history)
+ *          ⬆ Uploads         (notes / wiki ingested)
+ *          🧠 Memories        (proposals — drafts AI proposed)
+ *          ⚡ Enrich           (re-enrichment runs)
+ *        Yesterday
+ *          …
  *
- * Topbar carries the single "ask, search, jot" entry — clicking it
- * opens the ⌘K palette. Ambient (devices / sync / live enrich) lives
- * in BottomBar; we don't duplicate it here.
+ * Kinds get distinct icons + sub-headers so the eye can scan the
+ * column without reading every title. Per the user note: "区分问题
+ * / 上传行为 / 总结知识 / enrich行为", not stuffed in one stream.
  */
+
+type Kind = "question" | "upload" | "memory" | "enrich";
 
 type Props = {
   onSelect: (channel: ChannelId) => void;
   onOpenPalette?: () => void;
 };
 
-type Filter = "all" | "doc" | "wiki" | "memory" | "enrich";
+type Filter = "all" | Kind;
 
 type FeedEvent = {
   id: string;
-  filter: Exclude<Filter, "all">;
-  title: string;
+  kind: Kind;
+  title: ReactNode;
   snippet: ReactNode;
   at: string;
   metric?: string;
   tags: { label: string; accent?: boolean }[];
   onClick: () => void;
   iconAccent?: boolean;
+};
+
+type AnswerState = {
+  status: "loading" | "ready" | "error";
+  query: string;
+  hits: cloudApi.ChunkSearchHit[];
+  err?: string;
 };
 
 const POLL_MS = 15_000;
@@ -47,8 +62,14 @@ export function StreamHome({ onSelect, onOpenPalette }: Props) {
   const [err, setErr] = useState("");
   const [configured, setConfigured] = useState<boolean | null>(null);
 
+  const [query, setQuery] = useState("");
+  const [answer, setAnswer] = useState<AnswerState | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // ── Load events from cloud (jobs / docs / proposals / search history) ──
   useEffect(() => {
     let alive = true;
+
     async function load() {
       try {
         const ok = await cloudApi.isCloudConfigured();
@@ -56,24 +77,34 @@ export function StreamHome({ onSelect, onOpenPalette }: Props) {
         setConfigured(ok);
         if (!ok) { setEvents([]); return; }
 
-        const [jobs, docs, proposalsRes] = await Promise.all([
+        const [jobs, docs, proposalsRes, history] = await Promise.all([
           cloudApi.listEnrichJobs().catch(() => [] as cloudApi.EnrichJob[]),
           cloudApi.listDocuments().catch(() => ({ documents: [] as cloudApi.CloudDocument[] })),
           cloudApi.listProposals(30).catch(() => ({ proposals: [] as cloudApi.Proposal[], total: 0 })),
+          cloudApi.fetchSearchHistory(30).catch(() => [] as cloudApi.CloudSearchHistoryItem[]),
         ]);
 
         const merged: FeedEvent[] = [];
 
+        // Enrich runs ─────────────────────────────────────────────
         for (const j of jobs.slice(0, 30)) {
           const at = j.finished_at || j.dispatched_at || j.created_at;
           const tokens = j.progress?.tokens?.total ?? 0;
           const lines = j.progress?.classify?.total;
+          const isMcp = j.executor === "mcp" || j.executor?.startsWith("mcp");
           merged.push({
             id: `enrich:${j.id}`,
-            filter: "enrich",
-            title: j.document_name
-              ? `Re-enriched ${j.document_name}`
-              : "Re-enriched a document",
+            kind: "enrich",
+            title: (
+              <>
+                <span className="proto-atelier-stream-actor">
+                  {isMcp ? "Agent" : "Cloud pool"}
+                </span>{" "}
+                {j.document_name
+                  ? <>re-enriched <em>{j.document_name}</em></>
+                  : <>re-enriched a document</>}
+              </>
+            ),
             snippet: enrichSnippet(j),
             at,
             metric: j.status === "done" && tokens > 0
@@ -82,101 +113,251 @@ export function StreamHome({ onSelect, onOpenPalette }: Props) {
                 ? `${lines} lines`
                 : undefined,
             tags: [
-              ...(j.smartnote_type ? [{ label: j.smartnote_type === "wiki_topic" ? "wiki" : j.smartnote_type, accent: true }] : []),
+              ...(j.smartnote_type ? [{ label: j.smartnote_type === "wiki_topic" ? "wiki" : j.smartnote_type }] : []),
               ...(j.executor ? [{ label: j.executor }] : []),
+              ...(isMcp ? [{ label: "agent-triggered", accent: true }] : []),
+            ],
+            onClick: () => onSelect("library:memories"),
+            iconAccent: isMcp,
+          });
+        }
+
+        // Uploads (docs ingested by you) ──────────────────────────
+        for (const d of docs.documents.slice(0, 30)) {
+          const md = (d.metadata && typeof d.metadata === "object" ? d.metadata : {}) as Record<string, unknown>;
+          const snt = String(md.smartnote_type || "");
+          const isWiki = snt === "wiki_topic";
+          const at = d.ingested_at || d.updated_at || d.created_at;
+          merged.push({
+            id: `doc:${d.id}`,
+            kind: "upload",
+            title: (
+              <>
+                <span className="proto-atelier-stream-actor proto-atelier-stream-actor-you">You</span>{" "}
+                {isWiki ? "synced wiki topic" : "ingested note"}{" "}
+                <em>{d.name}</em>
+              </>
+            ),
+            snippet: docSnippet(d, isWiki),
+            at,
+            metric: d.byte_size ? `${(d.byte_size / 1024).toFixed(1)} KB` : undefined,
+            tags: [
+              { label: isWiki ? "wiki" : "note", accent: isWiki },
+            ],
+            onClick: () => {
+              if (isWiki) onSelect(`source:${d.id}` as ChannelId);
+              else onSelect("note");
+            },
+          });
+        }
+
+        // Memory proposals (knowledge synthesis) ──────────────────
+        for (const p of proposalsRes.proposals.slice(0, 20)) {
+          const isDigest = p.author_agent === "digest";
+          merged.push({
+            id: `mem:${p.id}`,
+            kind: "memory",
+            title: (
+              <>
+                <span className="proto-atelier-stream-actor">
+                  {isDigest ? "Daily digest" : (p.author_agent || "Agent")}
+                </span>{" "}
+                proposed a memory
+                {p.confidence != null && (
+                  <span className="proto-atelier-stream-row-confidence">
+                    {" "}· {p.confidence.toFixed(2)}
+                  </span>
+                )}
+              </>
+            ),
+            snippet: <em>"{truncate(p.content, 200)}"</em>,
+            at: p.created_at,
+            tags: [
+              { label: p.kind || "fact" },
+              ...(isDigest ? [{ label: "digest", accent: true }] : []),
+              ...(p.scope ? [{ label: p.scope }] : []),
             ],
             onClick: () => onSelect("library:memories"),
             iconAccent: true,
           });
         }
 
-        for (const d of docs.documents.slice(0, 30)) {
-          const md = (d.metadata && typeof d.metadata === "object" ? d.metadata : {}) as Record<string, unknown>;
-          const snt = String(md.smartnote_type || "");
-          const isWiki = snt === "wiki_topic";
-          const path = String(md.raw_path || md.path || "");
+        // Questions (search history) ──────────────────────────────
+        for (const h of history.slice(0, 30)) {
           merged.push({
-            id: `doc:${d.id}`,
-            filter: isWiki ? "wiki" : "doc",
-            title: isWiki ? `Wiki topic · ${d.name}` : `Note synced — ${d.name}`,
-            snippet: docSnippet(d, isWiki),
-            at: d.ingested_at || d.created_at,
-            metric: d.byte_size ? `${(d.byte_size / 1024).toFixed(1)} KB` : undefined,
+            id: `q:${h.id}`,
+            kind: "question",
+            title: (
+              <>
+                <span className="proto-atelier-stream-actor proto-atelier-stream-actor-you">You</span>{" "}
+                asked: <em>"{truncate(h.query_text, 80)}"</em>
+              </>
+            ),
+            snippet: (
+              <>
+                {h.result_count} chunk{h.result_count === 1 ? "" : "s"} returned
+                {h.tag_filter && <> · scoped to <code>{h.tag_filter}</code></>}
+              </>
+            ),
+            at: h.created_at,
             tags: [
-              { label: isWiki ? "wiki" : "note", accent: true },
+              { label: "search" },
+              ...(h.tag_filter ? [{ label: h.tag_filter }] : []),
             ],
             onClick: () => {
-              if (isWiki && path) onSelect(`source:${path}` as ChannelId);
-              else if (isWiki) onSelect("library:docs");
-              else onSelect("note");
+              setQuery(h.query_text);
+              setTimeout(() => runSearch(h.query_text), 0);
             },
           });
         }
 
-        for (const p of proposalsRes.proposals.slice(0, 30)) {
-          merged.push({
-            id: `proposal:${p.id}`,
-            filter: "memory",
-            title: `${p.author_agent || "An agent"} proposed a memory — review (1)`,
-            snippet: <em>{`"${p.content.slice(0, 220)}${p.content.length > 220 ? "…" : ""}"`}</em>,
-            at: p.created_at,
-            metric: `confidence ${(p.confidence ?? 0).toFixed(2)}`,
-            tags: [
-              { label: "draft" },
-              { label: p.kind },
-            ],
-            onClick: () => onSelect("library:memories"),
-          });
-        }
-
         merged.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
-        if (alive) { setEvents(merged); setErr(""); }
+        if (alive) setEvents(merged);
+        if (alive) setErr("");
       } catch (e) {
-        if (alive) setErr(String(e));
+        if (alive) setErr(e instanceof Error ? e.message : String(e));
       }
     }
+
     load();
     const id = setInterval(load, POLL_MS);
     return () => { alive = false; clearInterval(id); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onSelect]);
 
-  const counts = useMemo(() => {
-    const c = { all: 0, doc: 0, wiki: 0, memory: 0, enrich: 0 };
-    if (!events) return c;
-    c.all = events.length;
-    for (const e of events) c[e.filter]++;
-    return c;
-  }, [events]);
-
+  // Filter the merged event list by the active chip.
   const visible = useMemo(() => {
     if (!events) return null;
     if (filter === "all") return events;
-    return events.filter((e) => e.filter === filter);
+    return events.filter((e) => e.kind === filter);
   }, [events, filter]);
+
+  // Counts for chip badges (always over the unfiltered set).
+  const counts = useMemo(() => {
+    const c: Record<Kind, number> & { all: number } = {
+      all: 0, question: 0, upload: 0, memory: 0, enrich: 0,
+    };
+    if (!events) return c;
+    c.all = events.length;
+    for (const e of events) c[e.kind]++;
+    return c;
+  }, [events]);
+
+  // ── Inline answer (B1) ───────────────────────────────────────────
+  async function runSearch(text: string) {
+    const q = text.trim();
+    if (!q) return;
+    setAnswer({ status: "loading", query: q, hits: [] });
+    try {
+      if (!(await cloudApi.isCloudConfigured())) {
+        setAnswer({ status: "error", query: q, hits: [], err: "Cloud not configured. Open Settings → AI providers." });
+        return;
+      }
+      const res = await cloudApi.searchChunks(q, { topk: 6 });
+      setAnswer({ status: "ready", query: q, hits: res.results });
+    } catch (e) {
+      setAnswer({
+        status: "error",
+        query: q,
+        hits: [],
+        err: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
+  function clearAnswer() {
+    setAnswer(null);
+    setQuery("");
+    inputRef.current?.focus();
+  }
+
+  // Group events by day → kind for rendering. Returns ordered list:
+  // [{ dayLabel, kinds: [{ kind, items }] }]
+  const grouped = useMemo(() => {
+    if (!visible) return [];
+    type KindBlock = { kind: Kind; items: FeedEvent[] };
+    type DayBlock = { day: string; kinds: KindBlock[] };
+    const days = new Map<string, Map<Kind, FeedEvent[]>>();
+    for (const e of visible) {
+      const day = dayLabel(e.at);
+      let kinds = days.get(day);
+      if (!kinds) { kinds = new Map(); days.set(day, kinds); }
+      const list = kinds.get(e.kind) || [];
+      list.push(e);
+      kinds.set(e.kind, list);
+    }
+    const order: Kind[] = ["question", "upload", "memory", "enrich"];
+    const result: DayBlock[] = [];
+    for (const [day, kindMap] of days) {
+      const blocks: KindBlock[] = order
+        .filter((k) => kindMap.has(k))
+        .map((k) => ({ kind: k, items: kindMap.get(k)! }));
+      result.push({ day, kinds: blocks });
+    }
+    return result;
+  }, [visible]);
 
   return (
     <div className="proto-atelier-stream">
+      {/* Real input ask bar */}
       <header className="proto-atelier-stream-topbar">
-        <button
-          type="button"
+        <form
           className="proto-atelier-stream-ask"
-          onClick={onOpenPalette}
-          aria-label="Open command palette"
+          onSubmit={(e) => { e.preventDefault(); runSearch(query); }}
         >
           <Search size={14} strokeWidth={2} className="proto-atelier-stream-ask-icon" />
-          <span>Ask, search, or jot down a memory…</span>
-          <kbd className="proto-atelier-stream-ask-kbd">⌘K</kbd>
-        </button>
+          <input
+            ref={inputRef}
+            type="text"
+            className="proto-atelier-stream-ask-input"
+            placeholder="Ask, search, or jot down a memory…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") { setQuery(""); inputRef.current?.blur(); }
+            }}
+            aria-label="Ask SmartNote anything"
+          />
+          {query && (
+            <button
+              type="button"
+              className="proto-atelier-stream-ask-clear"
+              aria-label="Clear"
+              onClick={() => { setQuery(""); setAnswer(null); inputRef.current?.focus(); }}
+            >
+              <X size={12} />
+            </button>
+          )}
+          <button
+            type="button"
+            className="proto-atelier-stream-ask-kbd"
+            onClick={onOpenPalette}
+            title="Open command palette"
+          >
+            ⌘K
+          </button>
+        </form>
       </header>
 
-      <div className="proto-atelier-stream-chips" role="tablist">
-        <Chip active={filter === "all"}    count={counts.all}    onClick={() => setFilter("all")}>Everything</Chip>
-        <Chip active={filter === "doc"}    count={counts.doc}    onClick={() => setFilter("doc")}>Notes</Chip>
-        <Chip active={filter === "wiki"}   count={counts.wiki}   onClick={() => setFilter("wiki")}>Wiki</Chip>
-        <Chip active={filter === "memory"} count={counts.memory} onClick={() => setFilter("memory")}>Memories</Chip>
-        <Chip active={filter === "enrich"} count={counts.enrich} onClick={() => setFilter("enrich")}>Agent activity</Chip>
+      {/* Inline composed answer (B1) */}
+      {answer && (
+        <InlineAnswer
+          state={answer}
+          onClose={clearAnswer}
+          onChunkClick={(hit) => onSelect(`source:${hit.document_id}` as ChannelId)}
+        />
+      )}
+
+      {/* Filter chips */}
+      <div className="proto-atelier-stream-chips" role="tablist" aria-label="Filter feed by kind">
+        <Chip active={filter === "all"}      count={counts.all}      onClick={() => setFilter("all")}>Everything</Chip>
+        <Chip active={filter === "question"} count={counts.question} onClick={() => setFilter("question")}>Questions</Chip>
+        <Chip active={filter === "upload"}   count={counts.upload}   onClick={() => setFilter("upload")}>Uploads</Chip>
+        <Chip active={filter === "memory"}   count={counts.memory}   onClick={() => setFilter("memory")}>Memories</Chip>
+        <Chip active={filter === "enrich"}   count={counts.enrich}   onClick={() => setFilter("enrich")}>Enrich</Chip>
       </div>
 
+      {/* Feed */}
       <div className="proto-atelier-stream-feed">
         {configured === false ? (
           <EmptyConfigured onSelect={onSelect} />
@@ -190,10 +371,138 @@ export function StreamHome({ onSelect, onOpenPalette }: Props) {
         ) : visible.length === 0 ? (
           <EmptyFeed filter={filter} />
         ) : (
-          renderGrouped(visible)
+          grouped.map((day) => (
+            <section key={day.day} className="proto-atelier-stream-group">
+              <div className="proto-atelier-stream-day">{day.day}</div>
+              {day.kinds.map((kb) => (
+                <div key={kb.kind} className="proto-atelier-stream-kind-block">
+                  <div className={cn(
+                    "proto-atelier-stream-kind-head",
+                    `proto-atelier-stream-kind-head-${kb.kind}`,
+                  )}>
+                    <KindIcon kind={kb.kind} />
+                    <span>{kindLabel(kb.kind)}</span>
+                    <span className="proto-atelier-stream-kind-count">{kb.items.length}</span>
+                  </div>
+                  {kb.items.map((e) => (
+                    <article
+                      key={e.id}
+                      className="proto-atelier-stream-row"
+                      data-kind={e.kind}
+                      onClick={e.onClick}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); e.onClick(); } }}
+                    >
+                      <span className={cn(
+                        "proto-atelier-stream-row-icon",
+                        `proto-atelier-stream-row-icon-${e.kind}`,
+                        e.iconAccent && "proto-atelier-stream-row-icon-accent",
+                      )}>
+                        <KindIcon kind={e.kind} />
+                      </span>
+                      <div className="proto-atelier-stream-row-body">
+                        <div className="proto-atelier-stream-row-title">{e.title}</div>
+                        <div className="proto-atelier-stream-row-snippet">{e.snippet}</div>
+                        <div className="proto-atelier-stream-row-meta">
+                          {e.metric && (
+                            <>
+                              <span className="proto-atelier-stream-row-metric">
+                                <strong>{e.metric}</strong>
+                              </span>
+                              <span aria-hidden="true">·</span>
+                            </>
+                          )}
+                          {e.tags.map((t, i) => (
+                            <span
+                              key={i}
+                              className={cn(
+                                "proto-atelier-stream-tag",
+                                t.accent && "proto-atelier-stream-tag-accent",
+                              )}
+                            >
+                              {t.label}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <span className="proto-atelier-stream-row-time">{relative(e.at)}</span>
+                    </article>
+                  ))}
+                </div>
+              ))}
+            </section>
+          ))
         )}
       </div>
     </div>
+  );
+}
+
+// ─── Subcomponents ────────────────────────────────────────────────
+
+function InlineAnswer({
+  state, onClose, onChunkClick,
+}: {
+  state: AnswerState;
+  onClose: () => void;
+  onChunkClick: (hit: cloudApi.ChunkSearchHit) => void;
+}) {
+  return (
+    <section className="proto-atelier-stream-answer" role="region" aria-label="Search results">
+      <div className="proto-atelier-stream-answer-head">
+        <span className="proto-atelier-stream-answer-dot" />
+        <span className="proto-atelier-stream-answer-label">
+          {state.status === "loading" && "Searching…"}
+          {state.status === "ready" && `${state.hits.length} chunk${state.hits.length === 1 ? "" : "s"} · top score ${(state.hits[0]?.score ?? 0).toFixed(2)}`}
+          {state.status === "error" && "Search failed"}
+        </span>
+        <span className="proto-atelier-stream-answer-q">"{state.query}"</span>
+        <button
+          type="button"
+          onClick={onClose}
+          className="proto-atelier-stream-answer-close"
+          aria-label="Close result"
+        >
+          <X size={12} />
+        </button>
+      </div>
+      {state.status === "error" && (
+        <div className="proto-atelier-stream-answer-error">{state.err}</div>
+      )}
+      {state.status === "ready" && state.hits.length === 0 && (
+        <div className="proto-atelier-stream-answer-empty">
+          No chunks matched. Try a broader phrasing or ingest more sources.
+        </div>
+      )}
+      {state.status === "ready" && state.hits.length > 0 && (
+        <div className="proto-atelier-stream-answer-chunks">
+          {state.hits.slice(0, 5).map((hit, i) => (
+            <button
+              key={hit.id}
+              type="button"
+              className="proto-atelier-stream-answer-chunk"
+              onClick={() => onChunkClick(hit)}
+            >
+              <span className="proto-atelier-stream-answer-chunk-num">[{i + 1}]</span>
+              <span className="proto-atelier-stream-answer-chunk-body">
+                <span className="proto-atelier-stream-answer-chunk-snippet">
+                  {truncate(hit.text, 280)}
+                </span>
+                <span className="proto-atelier-stream-answer-chunk-meta">
+                  <span>{hit.document_name}</span>
+                  {hit.dimension && <span>· {hit.dimension}</span>}
+                  <span className="proto-atelier-stream-answer-chunk-score">
+                    {hit.score.toFixed(2)}
+                  </span>
+                </span>
+              </span>
+              <ArrowRight size={11} />
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -214,51 +523,21 @@ function Chip({ active, count, onClick, children }: {
   );
 }
 
-function renderGrouped(events: FeedEvent[]): ReactNode {
-  const groups: { label: string; items: FeedEvent[] }[] = [];
-  for (const e of events) {
-    const label = dayLabel(e.at);
-    const last = groups[groups.length - 1];
-    if (last && last.label === label) last.items.push(e);
-    else groups.push({ label, items: [e] });
-  }
-  return groups.map((g) => (
-    <section key={g.label} className="proto-atelier-stream-group">
-      <div className="proto-atelier-stream-day">{g.label}</div>
-      {g.items.map((e) => (
-        <article
-          key={e.id}
-          className="proto-atelier-stream-row"
-          onClick={e.onClick}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); e.onClick(); } }}
-        >
-          <span className={cn("proto-atelier-stream-row-icon", e.iconAccent && "proto-atelier-stream-row-icon-accent")}>
-            <KindIcon filter={e.filter} />
-          </span>
-          <div className="proto-atelier-stream-row-body">
-            <div className="proto-atelier-stream-row-title">{e.title}</div>
-            <div className="proto-atelier-stream-row-snippet">{e.snippet}</div>
-            <div className="proto-atelier-stream-row-meta">
-              {e.metric && (<><span className="proto-atelier-stream-row-metric"><strong>{e.metric}</strong></span><span aria-hidden="true">·</span></>)}
-              {e.tags.map((t, i) => (
-                <span key={i} className={cn("proto-atelier-stream-tag", t.accent && "proto-atelier-stream-tag-accent")}>{t.label}</span>
-              ))}
-            </div>
-          </div>
-          <span className="proto-atelier-stream-row-time">{relative(e.at)}</span>
-        </article>
-      ))}
-    </section>
-  ));
+function KindIcon({ kind }: { kind: Kind }) {
+  if (kind === "question") return <Search size={13} strokeWidth={2} />;
+  if (kind === "upload")   return <FileText size={13} strokeWidth={2} />;
+  if (kind === "memory")   return <MessageSquare size={13} strokeWidth={2} />;
+  if (kind === "enrich")   return <Sparkles size={13} strokeWidth={2} />;
+  return null;
 }
 
-function KindIcon({ filter }: { filter: FeedEvent["filter"] }) {
-  if (filter === "wiki") return <BookOpen size={14} strokeWidth={2} />;
-  if (filter === "memory") return <MessageSquare size={14} strokeWidth={2} />;
-  if (filter === "enrich") return <Sparkles size={14} strokeWidth={2} />;
-  return <FileText size={14} strokeWidth={2} />;
+function kindLabel(kind: Kind): string {
+  switch (kind) {
+    case "question": return "Questions";
+    case "upload":   return "Uploads & ingest";
+    case "memory":   return "Memory proposals";
+    case "enrich":   return "Enrich runs";
+  }
 }
 
 function EmptyConfigured({ onSelect }: { onSelect: (c: ChannelId) => void }) {
@@ -273,9 +552,9 @@ function EmptyConfigured({ onSelect }: { onSelect: (c: ChannelId) => void }) {
         <button
           type="button"
           className="proto-atelier-stream-empty-btn proto-atelier-stream-empty-btn-strong"
-          onClick={() => onSelect("library:memories")}
+          onClick={() => onSelect("settings")}
         >
-          Open Cloud Console
+          Open settings
         </button>
         <button
           type="button"
@@ -291,11 +570,11 @@ function EmptyConfigured({ onSelect }: { onSelect: (c: ChannelId) => void }) {
 
 function EmptyFeed({ filter }: { filter: Filter }) {
   const lines: Record<Filter, string> = {
-    all:    "Nothing yet. Once agents read your knowledge or you ingest a document, it'll show up here.",
-    doc:    "No notes ingested in the recent window. Open the note editor to write or sync one.",
-    wiki:   "No wiki activity yet. Add a wiki source to start building topics.",
-    memory: "No memory proposals waiting. Cursor and Claude Code will surface drafts here as they work.",
-    enrich: "No re-enrichment runs yet. Enrich jobs surface here when classifier or AI re-tag a document.",
+    all:      "Nothing yet. Once agents read your knowledge or you ingest a document, it'll show up here.",
+    question: "No searches yet. Type a question above and hit Enter.",
+    upload:   "No notes ingested in the recent window. Open the note editor to write or sync one.",
+    memory:   "No memory proposals waiting. Cursor and Claude Code surface drafts here as they work.",
+    enrich:   "No re-enrichment runs yet. Enrich jobs surface here when classifier or AI re-tag a document.",
   };
   return (
     <div className="proto-atelier-stream-empty">
@@ -304,6 +583,14 @@ function EmptyFeed({ filter }: { filter: Filter }) {
       <span className="proto-atelier-stream-empty-meta">{lines[filter]}</span>
     </div>
   );
+}
+
+// ─── helpers ──────────────────────────────────────────────────────
+
+function truncate(s: string, n: number): string {
+  if (!s) return "";
+  if (s.length <= n) return s;
+  return s.slice(0, n - 1).trimEnd() + "…";
 }
 
 function enrichSnippet(j: cloudApi.EnrichJob): string {
@@ -324,7 +611,7 @@ function enrichSnippet(j: cloudApi.EnrichJob): string {
 function docSnippet(d: cloudApi.CloudDocument, isWiki: boolean): string {
   if (isWiki) {
     return d.byte_size
-      ? `Synced as a wiki topic. ${(d.byte_size / 1024).toFixed(1)} KB of source linked into the knowledge graph.`
+      ? `Synced as a wiki topic. ${(d.byte_size / 1024).toFixed(1)} KB linked into the knowledge graph.`
       : "Synced as a wiki topic.";
   }
   return d.byte_size
@@ -347,13 +634,11 @@ function dayLabel(iso: string): string {
 
 function relative(iso: string): string {
   if (!iso) return "";
-  const sec = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
-  if (sec < 0) return "just now";
-  if (sec < 60) return `${sec}s ago`;
-  const min = Math.round(sec / 60);
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.round(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const days = Math.round(hr / 24);
-  return `${days}d ago`;
+  const then = new Date(iso);
+  const diff = (Date.now() - then.getTime()) / 1000;
+  if (diff < 60) return `${Math.floor(diff)}s`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
+  if (diff < 86400 * 7) return `${Math.floor(diff / 86400)}d`;
+  return then.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
