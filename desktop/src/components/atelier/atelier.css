@@ -2375,6 +2375,66 @@
 .proto-atelier-rag-progress-row-failed .proto-atelier-rag-progress-bar-fill { background: var(--color-danger); }
 .proto-atelier-rag-progress-row-done   .proto-atelier-rag-progress-bar-fill { background: var(--color-success); }
 
+.proto-atelier-rag-progress-row-kind {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  padding: 1px 5px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-bg-elevated);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  flex-shrink: 0;
+}
+.proto-atelier-rag-progress-clear {
+  margin-left: auto;
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  border-radius: 3px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.proto-atelier-rag-progress-clear:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
+}
+.proto-atelier-rag-progress-more {
+  padding: 6px 14px 10px;
+  font-size: 10.5px;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+/* Action tile in-flight progress bar (under desc) */
+.proto-atelier-rag-action-running { border-color: color-mix(in oklab, var(--color-accent) 30%, var(--color-border)); }
+.proto-atelier-rag-action-bar {
+  margin-top: 8px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--color-bg-hover);
+  overflow: hidden;
+}
+.proto-atelier-rag-action-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--color-accent);
+  transition: width 240ms ease-out;
+}
+.proto-atelier-rag-action-pill-progress {
+  background: color-mix(in oklab, var(--color-accent) 20%, transparent);
+  color: var(--color-accent);
+  font-variant-numeric: tabular-nums;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
 /* ── Right scrollable panel ────────────────────────────────────── */
 .proto-atelier-rag-panel {
   flex: 1;

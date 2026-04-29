@@ -39,6 +39,18 @@ type Source = {
   tagged:   boolean;   // AI tags / classification applied
 };
 
+export type RunKind = "embed" | "enrich" | "tag" | "graph";
+export type RunStatus = {
+  kind: RunKind;
+  status: "queued" | "running" | "done" | "failed";
+  startedAt: number;
+  finishedAt?: number;
+  error?: string;
+  /** Source name for display — captured at enqueue so we don't depend
+   *  on the source list still containing this id. */
+  name: string;
+};
+
 const RETRIEVAL_PATHS: {
   key: string;
   name: string;
@@ -57,8 +69,12 @@ export function RAGPage() {
   const [sources, setSources] = useState<Source[] | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState("");
-  const [busy, setBusy] = useState<string | null>(null);
   const [flash, setFlash] = useState<{ msg: string; tone: "ok" | "err" } | null>(null);
+  // Real-time per-doc run map. Powers the Processing panel + the
+  // bulk-action button progress label. Cloud-side ingest is synchronous
+  // per doc, so we drive concurrency client-side and update this
+  // map as each call returns.
+  const [runs, setRuns] = useState<Map<string, RunStatus>>(new Map());
 
   // Tags
   const [tags, setTags] = useState<cloudApi.CloudTag[] | null>(null);
@@ -169,39 +185,76 @@ export function RAGPage() {
     setTimeout(() => setFlash(null), 2400);
   }
 
+  function patchRun(id: string, patch: Partial<RunStatus>) {
+    setRuns((prev) => {
+      const next = new Map(prev);
+      const cur = next.get(id);
+      if (cur) next.set(id, { ...cur, ...patch });
+      return next;
+    });
+  }
+
+  // Generic concurrency-limited runner. Drives a per-doc workload at
+  // CONC parallel calls, maintaining the runs map so the Processing
+  // panel + button label reflect real-time progress (NOT a single
+  // 20-doc-blocking HTTP call).
+  async function runBulk(
+    kind: RunKind,
+    ids: string[],
+    label: string,
+    perDoc: (id: string) => Promise<unknown>,
+    conc = 4,
+  ) {
+    if (ids.length === 0) return;
+    const now = Date.now();
+    setRuns((prev) => {
+      const next = new Map(prev);
+      // Strip prior entries for these ids so labels don't show stale done/failed.
+      for (const id of ids) {
+        const src = sources?.find((s) => s.id === id);
+        next.set(id, { kind, status: "queued", startedAt: now, name: src?.name || id.slice(0, 8) });
+      }
+      return next;
+    });
+    let cursor = 0;
+    let succ = 0;
+    let fail = 0;
+    const worker = async () => {
+      while (cursor < ids.length) {
+        const i = cursor++;
+        const id = ids[i];
+        patchRun(id, { status: "running", startedAt: Date.now() });
+        try {
+          await perDoc(id);
+          succ++;
+          patchRun(id, { status: "done", finishedAt: Date.now() });
+        } catch (e) {
+          fail++;
+          patchRun(id, { status: "failed", finishedAt: Date.now(), error: e instanceof Error ? e.message : String(e) });
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(conc, ids.length) }, () => worker()));
+    flashSet(
+      fail === 0
+        ? `${label} ${succ} source${succ === 1 ? "" : "s"}`
+        : `${label} ${succ} ok · ${fail} failed`,
+      fail === 0 ? "ok" : "err",
+    );
+  }
+
   async function runEmbedding() {
     if (selected.size === 0) return;
-    setBusy("embedding");
-    try {
-      const ids = [...selected];
-      // Bulk re-embed via cloud API. The bulk endpoint queues server-side.
-      // Per the bulk schema, it can also gate AI enrichment — we explicitly
-      // disable here so this button stays "non-LLM".
-      await cloudApi.bulkIngest({ document_ids: ids, enrich_with_ai: false });
-      flashSet(`Queued ${ids.length} source${ids.length === 1 ? "" : "s"} for embedding`);
-    } catch (e) {
-      flashSet(e instanceof Error ? e.message : String(e), "err");
-    } finally {
-      setBusy(null);
-    }
+    // Per-doc parallel ingestDocument, NOT bulkIngest. The cloud's
+    // /ingest/bulk runs all docs serially in a single request which
+    // pegs the HTTP connection for minutes; per-doc calls let the UI
+    // reflect each completion immediately + lets us bound concurrency.
+    await runBulk("embed", [...selected], "Embedded", (id) => cloudApi.ingestDocument(id));
   }
 
   async function runEnrich() {
     if (selected.size === 0) return;
-    setBusy("enrich");
-    try {
-      const ids = [...selected];
-      // Loop runEnrich for each — there's no bulk enrich endpoint yet.
-      let ok = 0;
-      for (const id of ids) {
-        try { await cloudApi.runEnrich(id); ok++; } catch { /* per-doc tolerated */ }
-      }
-      flashSet(`Dispatched ${ok}/${ids.length} enrich job${ok === 1 ? "" : "s"}`);
-    } catch (e) {
-      flashSet(e instanceof Error ? e.message : String(e), "err");
-    } finally {
-      setBusy(null);
-    }
+    await runBulk("enrich", [...selected], "Enrich-dispatched", (id) => cloudApi.runEnrich(id), 3);
   }
 
   async function runTagPass() {
@@ -210,15 +263,42 @@ export function RAGPage() {
   }
 
   async function runGraphRebuild() {
-    setBusy("graph");
+    const id = "__graph__";
+    setRuns((prev) => {
+      const next = new Map(prev);
+      next.set(id, { kind: "graph", status: "running", startedAt: Date.now(), name: "Entity graph" });
+      return next;
+    });
     try {
-      await cloudApi.fetchGraph(); // touches the graph endpoint to warm it
+      await cloudApi.fetchGraph();
+      patchRun(id, { status: "done", finishedAt: Date.now() });
       flashSet("Entity graph refreshed");
     } catch (e) {
+      patchRun(id, { status: "failed", finishedAt: Date.now(), error: e instanceof Error ? e.message : String(e) });
       flashSet(e instanceof Error ? e.message : String(e), "err");
-    } finally {
-      setBusy(null);
     }
+  }
+
+  // Derive in-flight + completed counts per kind for the action tiles
+  // and global "is anything running?" state.
+  const runStats = useMemo(() => {
+    const empty = { running: 0, done: 0, failed: 0, total: 0 };
+    const by: Record<RunKind, typeof empty> = {
+      embed:  { ...empty }, enrich: { ...empty }, tag: { ...empty }, graph: { ...empty },
+    };
+    for (const r of runs.values()) {
+      const b = by[r.kind];
+      b.total++;
+      if (r.status === "running" || r.status === "queued") b.running++;
+      else if (r.status === "done") b.done++;
+      else if (r.status === "failed") b.failed++;
+    }
+    return by;
+  }, [runs]);
+
+  const busyKinds = new Set<RunKind>();
+  for (const k of Object.keys(runStats) as RunKind[]) {
+    if (runStats[k].running > 0) busyKinds.add(k);
   }
 
   // ── Per-path rebuild (placeholder until backend exposes per-path) ──
@@ -404,8 +484,9 @@ export function RAGPage() {
                 title="Embedding"
                 tone="non-llm"
                 desc="Re-chunk + re-embed selected sources. No LLM calls."
-                disabled={selected.size === 0 || busy === "embedding"}
-                running={busy === "embedding"}
+                disabled={selected.size === 0 || busyKinds.has("embed")}
+                running={busyKinds.has("embed")}
+                progress={runStats.embed.total > 0 ? { done: runStats.embed.done + runStats.embed.failed, total: runStats.embed.total } : undefined}
                 onClick={runEmbedding}
               />
               <ActionTile
@@ -413,8 +494,9 @@ export function RAGPage() {
                 title="Enrich"
                 tone="llm"
                 desc="LLM classifier + tag generation + segment summaries."
-                disabled={selected.size === 0 || busy === "enrich"}
-                running={busy === "enrich"}
+                disabled={selected.size === 0 || busyKinds.has("enrich")}
+                running={busyKinds.has("enrich")}
+                progress={runStats.enrich.total > 0 ? { done: runStats.enrich.done + runStats.enrich.failed, total: runStats.enrich.total } : undefined}
                 onClick={runEnrich}
               />
               <ActionTile
@@ -430,8 +512,8 @@ export function RAGPage() {
                 title="Rebuild entity graph"
                 tone="non-llm"
                 desc="Re-derive entities + relations across the workspace."
-                disabled={busy === "graph"}
-                running={busy === "graph"}
+                disabled={busyKinds.has("graph")}
+                running={busyKinds.has("graph")}
                 onClick={runGraphRebuild}
                 wholeWorkspace
               />
@@ -439,8 +521,17 @@ export function RAGPage() {
           </section>
 
           {/* Live processing panel — auto-shows while jobs are
-              running, fades after completion */}
-          <RAGProcessingPanel />
+              running, fades after completion. Combines client-side
+              real-time runs (embedding/enrich dispatched from this
+              session) with cloud-polled enrich jobs (catches
+              MCP-triggered runs from agents). */}
+          <RAGProcessingPanel clientRuns={runs} onClearDone={() => {
+            setRuns((prev) => {
+              const next = new Map(prev);
+              for (const [id, r] of prev) if (r.status === "done" || r.status === "failed") next.delete(id);
+              return next;
+            });
+          }} />
 
           {/* 6 retrieval paths */}
           <section className="proto-atelier-rag-section">
@@ -590,7 +681,7 @@ function StatusDot({ on, title, letter }: { on: boolean; title: string; letter: 
 }
 
 function ActionTile({
-  icon, title, desc, tone, onClick, disabled, running, wholeWorkspace,
+  icon, title, desc, tone, onClick, disabled, running, wholeWorkspace, progress,
 }: {
   icon: React.ReactNode;
   title: string;
@@ -600,7 +691,11 @@ function ActionTile({
   disabled?: boolean;
   running?: boolean;
   wholeWorkspace?: boolean;
+  progress?: { done: number; total: number };
 }) {
+  const pct = progress && progress.total > 0
+    ? Math.round((progress.done / progress.total) * 100)
+    : 0;
   return (
     <button
       type="button"
@@ -610,6 +705,7 @@ function ActionTile({
         "proto-atelier-rag-action",
         tone === "llm" && "proto-atelier-rag-action-llm",
         tone === "non-llm" && "proto-atelier-rag-action-nonllm",
+        running && "proto-atelier-rag-action-running",
       )}
     >
       <span className="proto-atelier-rag-action-icon">{icon}</span>
@@ -620,10 +716,25 @@ function ActionTile({
             ? <span className="proto-atelier-rag-action-pill">LLM</span>
             : <span className="proto-atelier-rag-action-pill proto-atelier-rag-action-pill-cheap">no-LLM</span>}
           {wholeWorkspace && <span className="proto-atelier-rag-action-pill proto-atelier-rag-action-pill-cheap">workspace</span>}
+          {progress && (
+            <span className="proto-atelier-rag-action-pill proto-atelier-rag-action-pill-progress">
+              {progress.done}/{progress.total}
+            </span>
+          )}
         </div>
         <div className="proto-atelier-rag-action-desc">
-          {running ? "running…" : desc}
+          {running && progress
+            ? `${progress.done}/${progress.total} done · running…`
+            : running ? "running…" : desc}
         </div>
+        {progress && (
+          <div className="proto-atelier-rag-action-bar">
+            <span
+              className="proto-atelier-rag-action-bar-fill"
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+        )}
       </div>
     </button>
   );
