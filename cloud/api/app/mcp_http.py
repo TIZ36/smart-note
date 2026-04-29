@@ -913,20 +913,111 @@ async def get_usage() -> str:
 class ApiKeyMiddleware:
     """Pulls `Authorization: Bearer …` off every incoming request and
     stashes the token in `_api_key_ctx` so tools can read it without
-    threading the header through MCP protocol plumbing."""
+    threading the header through MCP protocol plumbing.
+
+    Also extracts User-Agent to identify the calling AI CLI (Claude
+    Code / Cursor / Opencode / etc.) and fires a fire-and-forget
+    UPSERT into devices(platform='ai-cli') so the user's workspace
+    registry shows connected agents alongside paired desktops.
+    """
 
     def __init__(self, app: ASGIApp):
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "http":
+            api_key = None
+            user_agent = None
             for key, value in scope.get("headers") or []:
                 if key == b"authorization":
                     raw = value.decode("latin-1").strip()
                     if raw.lower().startswith("bearer "):
-                        _api_key_ctx.set(raw.split(" ", 1)[1].strip())
-                    break
+                        api_key = raw.split(" ", 1)[1].strip()
+                        _api_key_ctx.set(api_key)
+                elif key == b"user-agent":
+                    user_agent = value.decode("latin-1").strip()
+            # Self-identify: capture the agent name and bump its
+            # virtual device row. Background task so middleware doesn't
+            # block. Best-effort — failures swallowed.
+            if api_key and user_agent:
+                agent_name = _detect_agent(user_agent)
+                if agent_name:
+                    import asyncio as _asyncio
+                    _asyncio.create_task(_upsert_agent_device(api_key, agent_name, user_agent))
         await self.app(scope, receive, send)
+
+
+def _detect_agent(ua: str) -> str | None:
+    """Best-effort agent identification from User-Agent. Returns None
+    for unknown UAs (browsers, curl, generic) so we don't pollute the
+    device list with random callers."""
+    if not ua:
+        return None
+    lower = ua.lower()
+    # Known AI CLIs — pattern-match on substring so version bumps
+    # don't break detection.
+    if "claude-code" in lower or "claudecode" in lower or "claude/" in lower:
+        return "Claude Code"
+    if "cursor" in lower:
+        return "Cursor"
+    if "opencode" in lower:
+        return "Opencode"
+    if "windsurf" in lower:
+        return "Windsurf"
+    # Generic "name/version" UA from an unknown MCP client. Take the
+    # first slash-delimited token as the name unless it's a browser.
+    BROWSER_HINTS = ("mozilla", "chrome", "safari", "firefox", "edge", "webkit")
+    if any(h in lower for h in BROWSER_HINTS):
+        return None
+    if "/" in ua:
+        first = ua.split("/", 1)[0].strip()
+        if 2 <= len(first) <= 40 and first.lower() not in {"python-httpx", "python-requests", "curl", "wget"}:
+            return first
+    return None
+
+
+async def _upsert_agent_device(api_key: str, name: str, ua: str) -> None:
+    """Resolve api_key → workspace_id, then UPSERT a devices row with
+    platform='ai-cli' for this agent. Idempotent: subsequent calls
+    just bump last_seen_at."""
+    try:
+        from app.common.db import pool as _pool
+        # Parse `prefix.secret` like the auth router does.
+        parts = api_key.split(".", 1) if "." in api_key else None
+        if not parts:
+            # Fallback: try treating the whole key as the prefix
+            # (some clients format keys differently).
+            return
+        prefix, _ = parts
+        async with _pool().acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT workspace_id FROM api_keys WHERE prefix=$1 AND revoked_at IS NULL",
+                prefix,
+            )
+            if not row:
+                return
+            ws = row["workspace_id"]
+            # Look up existing virtual device by (workspace, name, platform)
+            existing = await conn.fetchrow(
+                "SELECT id FROM devices "
+                "WHERE workspace_id=$1 AND platform='ai-cli' AND name=$2",
+                ws, name,
+            )
+            if existing:
+                await conn.execute(
+                    "UPDATE devices SET last_seen_at=now() WHERE id=$1",
+                    existing["id"],
+                )
+            else:
+                await conn.execute(
+                    "INSERT INTO devices (workspace_id, name, platform, last_seen_at) "
+                    "VALUES ($1, $2, 'ai-cli', now())",
+                    ws, name,
+                )
+    except Exception:
+        # Self-identification is purely a UX improvement — never
+        # fail the user's actual MCP request because of it.
+        pass
 
 
 def build_mcp_asgi() -> ASGIApp:

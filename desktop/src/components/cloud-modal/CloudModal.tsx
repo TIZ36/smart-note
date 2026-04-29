@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { X, Upload, Zap, Search, Calendar } from "lucide-react";
+import { X, Upload, Zap, Search, Calendar, Cpu, Bot } from "lucide-react";
 import * as cloudApi from "@/lib/cloud-api";
 import { readSettings } from "@/lib/electron";
 
@@ -220,35 +220,36 @@ export function CloudModal({ open, onClose }: Props) {
             </div>
           </div>
 
-          {/* Devices + plan */}
+          {/* Devices + connected agents — physical devices first,
+              then AI CLI virtual devices (auto-registered when an
+              agent first connects via MCP with its User-Agent). */}
           <div className="proto-modal-section">
-            <div className="proto-modal-section-title">Devices · plan</div>
+            <div className="proto-modal-section-title">Devices · connected agents</div>
             {devices === null
               ? <div className="proto-modal-row-meta">loading…</div>
               : devices.length === 0
                 ? <div className="proto-modal-row-meta">no devices paired yet</div>
-                : devices.slice(0, 3).map((d) => (
-                  <div key={d.id} className="proto-modal-row">
-                    <span className="proto-modal-row-name">
-                      {d.name || d.id.slice(0, 8)}
-                      {d.is_primary && " · primary"}
-                    </span>
-                    <span className="proto-modal-row-meta">
-                      {d.last_seen_at
-                        ? `last seen ${relTime(d.last_seen_at)}`
-                        : "—"}
-                    </span>
-                    <span
-                      className={cn(
-                        "proto-modal-pill",
-                        d.online && "proto-modal-pill-success",
-                        !d.online && "proto-modal-pill-warning",
+                : (() => {
+                  const physical = devices.filter((d) => d.platform !== "ai-cli");
+                  const agents = devices.filter((d) => d.platform === "ai-cli");
+                  return (
+                    <>
+                      {physical.slice(0, 4).map((d) => (
+                        <DeviceRow key={d.id} d={d} kind="device" />
+                      ))}
+                      {agents.length > 0 && (
+                        <>
+                          {physical.length > 0 && (
+                            <div style={{ height: 1, background: "var(--color-border)", margin: "6px 0" }} />
+                          )}
+                          {agents.slice(0, 6).map((d) => (
+                            <DeviceRow key={d.id} d={d} kind="agent" />
+                          ))}
+                        </>
                       )}
-                    >
-                      {d.online ? "online" : "offline"}
-                    </span>
-                  </div>
-                ))}
+                    </>
+                  );
+                })()}
           </div>
 
           {/* Quick actions */}
@@ -388,6 +389,38 @@ export function CloudModal({ open, onClose }: Props) {
 
         </div>
       </div>
+    </div>
+  );
+}
+
+function DeviceRow({ d, kind }: { d: cloudApi.Device; kind: "device" | "agent" }) {
+  const Icon = kind === "agent" ? Bot : Cpu;
+  return (
+    <div className="proto-modal-row">
+      <span className="proto-modal-row-icon" style={{ color: kind === "agent" ? "var(--color-accent)" : "var(--color-text-muted)" }}>
+        <Icon size={12} strokeWidth={1.8} />
+      </span>
+      <span className="proto-modal-row-name">
+        {d.name || d.id.slice(0, 8)}
+        {d.is_primary && " · primary"}
+        {kind === "agent" && (
+          <span style={{ fontSize: 9.5, color: "var(--color-text-muted)", marginLeft: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+            agent
+          </span>
+        )}
+      </span>
+      <span className="proto-modal-row-meta">
+        {d.last_seen_at ? `last seen ${relTime(d.last_seen_at)}` : "—"}
+      </span>
+      <span
+        className={cn(
+          "proto-modal-pill",
+          d.online && "proto-modal-pill-success",
+          !d.online && "proto-modal-pill-warning",
+        )}
+      >
+        {d.online ? "online" : "offline"}
+      </span>
     </div>
   );
 }
