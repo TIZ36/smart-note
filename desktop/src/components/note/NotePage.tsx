@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  FolderOpen, Shuffle, ArrowDownToLine, PanelLeft, Save,
+  FolderOpen, Shuffle, ArrowDownToLine, Save,
   Plus, Minus,
 } from "lucide-react";
 import { NoteEditor, type LineMeta } from "../editor/NoteEditor";
@@ -11,7 +11,8 @@ import { ReorganizeDialog } from "./ReorganizeDialog";
 import { BookmarksButton } from "./BookmarksButton";
 import { QuickSearch } from "./QuickSearch";
 import { NoteViewDialog } from "./NoteViewDialog";
-import { NoteViewSidebar, type SidebarViewItem } from "./NoteViewSidebar";
+import { type SidebarViewItem } from "./NoteViewSidebar";
+import { NoteViewStrip } from "./NoteViewStrip";
 import { cn } from "@/lib/cn";
 import { pickRawFile, saveRawPathForHotkey, installSampleNote } from "@/lib/electron";
 import * as api from "@/lib/api";
@@ -49,8 +50,8 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
   const [showIngest, setShowIngest] = useState(false);
   const [showReorganize, setShowReorganize] = useState(false);
   const [showQuickSearch, setShowQuickSearch] = useState(false);
-  // v3: sidebar collapses by default — Views toggle reveals it
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  // v3: views + AI tags live inline as a chip strip below the
+  // breadcrumb (no foldable sidebar). One coherent surface.
 
   // ── View state ──
   // `views` is the list of persisted custom lenses for the current file.
@@ -610,15 +611,6 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
           {/* Secondary icon-button row */}
           <button
             type="button"
-            onClick={() => setSidebarOpen((v) => !v)}
-            className="proto-note-v3-btn proto-note-v3-btn-icon"
-            aria-pressed={sidebarOpen}
-            title="Toggle Views sidebar"
-          >
-            <PanelLeft size={13} strokeWidth={2} />
-          </button>
-          <button
-            type="button"
             onClick={() => setShowReorganize(true)}
             className="proto-note-v3-btn proto-note-v3-btn-icon"
             title="Reorganize note by tag (destructive — snapshots first)"
@@ -636,27 +628,19 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
         </div>
       </div>
 
-      {/* Body shell — collapsible sidebar + centered editor canvas */}
+      {/* View + AI-tag strip — always visible, no fold */}
+      <NoteViewStrip
+        items={sidebarItems}
+        activeKey={activeKey}
+        onChange={(k) => setActiveKey(k)}
+        onNewView={() => { setViewDialogInitial(null); setViewDialogOpen(true); }}
+        onEditView={(v) => { setViewDialogInitial(v); setViewDialogOpen(true); }}
+        onRepopulateView={handleRepopulate}
+        onDeleteView={handleDeleteView}
+      />
+
+      {/* Body shell — full-width centered editor canvas */}
       <div className="proto-note-v3-shell">
-        <aside
-          className="proto-note-v3-sidebar-wrap"
-          hidden={!sidebarOpen}
-          aria-hidden={!sidebarOpen}
-        >
-          <NoteViewSidebar
-            items={sidebarItems}
-            activeKey={activeKey}
-            onChange={(k) => setActiveKey(k)}
-            activeMembers={viewLines}
-            onJumpToLine={(line) => setScrollTarget({ start: line, end: line })}
-            onNewView={() => { setViewDialogInitial(null); setViewDialogOpen(true); }}
-            onEditView={(v) => { setViewDialogInitial(v); setViewDialogOpen(true); }}
-            onRepopulateView={handleRepopulate}
-            onDeleteView={handleDeleteView}
-            onAddTag={handleAddTag}
-            onDeleteTag={handleDeleteTag}
-          />
-        </aside>
         <div className="proto-note-v3-canvas">
         <div className="proto-note-v3-canvas-inner">
           <NoteEditor

@@ -1647,6 +1647,156 @@
   50%      { box-shadow: 0 0 0 4px color-mix(in oklab, var(--color-accent) 12%, transparent); }
 }
 
+/* ── View + AI-tag strip (under breadcrumb) ───────────────────
+ * No fold. Default chip → user views → AI auto-views → "+ View".
+ * Active user view exposes Edit / Repopulate / Delete inline on
+ * hover so view CRUD doesn't need a separate dialog/menu chrome. */
+.proto-note-v3-strip {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 18px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-primary);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.proto-note-v3-strip::-webkit-scrollbar { display: none; }
+.proto-note-v3-strip-sep {
+  width: 1px;
+  height: 14px;
+  background: var(--color-border);
+  flex-shrink: 0;
+  margin: 0 4px;
+}
+.proto-note-v3-strip-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.proto-note-v3-strip-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: color 160ms ease-out, border-color 160ms ease-out, background 160ms ease-out;
+}
+.proto-note-v3-strip-chip:hover {
+  color: var(--color-text-primary);
+  border-color: var(--color-text-muted);
+}
+.proto-note-v3-strip-chip-active {
+  background: color-mix(in oklab, var(--color-accent) 14%, transparent);
+  color: var(--color-accent);
+  border-color: transparent;
+  font-weight: 500;
+}
+.proto-note-v3-strip-chip-prefix {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 500;
+  opacity: 0.75;
+}
+.proto-note-v3-strip-chip-label {
+  font-weight: 500;
+  max-width: 18ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.proto-note-v3-strip-chip-count {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+.proto-note-v3-strip-chip-meta {
+  font-size: 10px;
+  font-style: italic;
+  opacity: 0.7;
+  font-weight: 400;
+}
+.proto-note-v3-strip-chip-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  margin-left: 1px;
+  margin-right: -3px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.proto-note-v3-strip-chip-clear:hover {
+  opacity: 1;
+  background: color-mix(in oklab, currentColor 14%, transparent);
+}
+
+/* Inline action mini-buttons next to active user view chip */
+.proto-note-v3-strip-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  margin-left: 2px;
+}
+.proto-note-v3-strip-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-family: inherit;
+  transition: color 160ms ease-out, background 160ms ease-out;
+}
+.proto-note-v3-strip-action:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
+}
+.proto-note-v3-strip-action-danger:hover {
+  color: var(--color-danger);
+  background: color-mix(in oklab, var(--color-danger) 10%, transparent);
+}
+
+.proto-note-v3-strip-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: transparent;
+  color: var(--color-text-muted);
+  border: 1px dashed var(--color-border);
+  cursor: pointer;
+  font-family: inherit;
+  flex-shrink: 0;
+  transition: color 160ms ease-out, border-color 160ms ease-out;
+}
+.proto-note-v3-strip-add:hover {
+  color: var(--color-text-primary);
+  border-color: var(--color-text-muted);
+  border-style: solid;
+}
+
 /* ── Body shell: collapsible sidebar + canvas ──────────────── */
 .proto-note-v3-shell {
   flex: 1;
