@@ -355,12 +355,40 @@ export function NoteEditor({
   }, [handleSave]);
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    // alive guard so a StrictMode double-mount (or any rapid filePath
+    // change) doesn't leave a stale Promise resolving into a torn-down
+    // component — the symptom was: first ever mount hung on "loading…"
+    // because closure raced with cleanup; flipping channels and back
+    // re-mounted fresh and resolved correctly. Now both passes resolve
+    // their own setLoading(false) cleanly.
+    let alive = true;
 
     setLoading(true);
     // Full raw file for the Note editor only; search/tag side panels use gateway line windows.
     readFileFull(filePath).then((result) => {
-      const content = result.output || "";
+      if (!alive) return;
+      // Container ref check moved here — by the time the read resolves,
+      // the DOM is committed and the ref is set. Earlier the check
+      // ran synchronously at effect-start which could fire before paint
+      // in some edge cases, dropping the entire effect.
+      if (!containerRef.current) {
+        // Defer one tick — gives React a chance to attach the ref.
+        requestAnimationFrame(() => {
+          if (alive && containerRef.current) {
+            // Re-trigger by toggling loading; effect won't re-run
+            // (filePath unchanged) but the CM mount can still happen.
+            mountEditorWithContent(result.output || "");
+          }
+        });
+        return;
+      }
+      mountEditorWithContent(result.output || "");
+    }).catch(() => {
+      if (alive) setLoading(false);
+    });
+
+    function mountEditorWithContent(content: string) {
+      if (!alive || !containerRef.current) return;
       lastSavedRef.current = content;
 
       if (viewRef.current) {
@@ -475,11 +503,10 @@ export function NoteEditor({
       }
 
       setLoading(false);
-    }).catch(() => {
-      setLoading(false);
-    });
+    }
 
     return () => {
+      alive = false;
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
       viewRef.current?.destroy();
       viewRef.current = null;

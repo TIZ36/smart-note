@@ -116,6 +116,11 @@ export function StreamHome({ onSelect, onOpenPalette }: Props) {
   const [answer, setAnswer] = useState<AnswerState | null>(null);
   const [retrieval, setRetrieval] = useState<RetrievalSettings>(loadRetrieval);
   const [retrievalOpen, setRetrievalOpen] = useState(false);
+  // Doc id → source kind map. Populated from listDocuments load below.
+  // Lets the inline answer split chunks by Notes vs Wiki vs Doc so
+  // user-authored notes (narrow scope, less authoritative) read
+  // separately from imported wiki references (broad, authoritative).
+  const [docKinds, setDocKinds] = useState<Map<string, "note" | "wiki" | "doc">>(new Map());
   const inputRef = useRef<HTMLInputElement>(null);
 
   function updateRetrieval(patch: Partial<RetrievalSettings>) {
@@ -143,6 +148,17 @@ export function StreamHome({ onSelect, onOpenPalette }: Props) {
           cloudApi.listProposals(30).catch(() => ({ proposals: [] as cloudApi.Proposal[], total: 0 })),
           cloudApi.fetchSearchHistory(30).catch(() => [] as cloudApi.CloudSearchHistoryItem[]),
         ]);
+
+        // Build the doc-id → kind lookup so the inline-answer renderer
+        // can group hits by source. Same kind heuristic as RAGPage:
+        // smartnote_type=wiki_topic → wiki, =note → note, else doc.
+        const km = new Map<string, "note" | "wiki" | "doc">();
+        for (const d of docs.documents) {
+          const md = (d.metadata && typeof d.metadata === "object" ? d.metadata : {}) as Record<string, unknown>;
+          const snt = String(md.smartnote_type || "");
+          km.set(d.id, snt === "wiki_topic" ? "wiki" : snt === "note" ? "note" : "doc");
+        }
+        if (alive) setDocKinds(km);
 
         const merged: FeedEvent[] = [];
 
@@ -427,6 +443,7 @@ export function StreamHome({ onSelect, onOpenPalette }: Props) {
       {answer && (
         <InlineAnswer
           state={answer}
+          docKinds={docKinds}
           onClose={clearAnswer}
           onChunkClick={(hit) => onSelect(`source:${hit.document_id}` as ChannelId)}
         />
@@ -621,9 +638,10 @@ function PathScores({ scores }: { scores: Record<string, number> }) {
 }
 
 function InlineAnswer({
-  state, onClose, onChunkClick,
+  state, docKinds, onClose, onChunkClick,
 }: {
   state: AnswerState;
+  docKinds: Map<string, "note" | "wiki" | "doc">;
   onClose: () => void;
   onChunkClick: (hit: cloudApi.ChunkSearchHit) => void;
 }) {
@@ -654,36 +672,73 @@ function InlineAnswer({
           No chunks matched. Try a broader phrasing or ingest more sources.
         </div>
       )}
-      {state.status === "ready" && state.hits.length > 0 && (
-        <div className="proto-atelier-stream-answer-chunks">
-          {state.hits.slice(0, 8).map((hit, i) => (
-            <button
-              key={hit.id}
-              type="button"
-              className="proto-atelier-stream-answer-chunk"
-              onClick={() => onChunkClick(hit)}
-            >
-              <span className="proto-atelier-stream-answer-chunk-num">[{i + 1}]</span>
-              <span className="proto-atelier-stream-answer-chunk-body">
-                <span className="proto-atelier-stream-answer-chunk-snippet">
-                  {truncate(hit.text, 280)}
-                </span>
-                <span className="proto-atelier-stream-answer-chunk-meta">
-                  <span>{hit.document_name}</span>
-                  {hit.dimension && <span>· {hit.dimension}</span>}
-                  <span className="proto-atelier-stream-answer-chunk-score">
-                    fused {hit.score.toFixed(2)}
-                  </span>
-                </span>
-                {hit.path_scores && Object.keys(hit.path_scores).length > 0 && (
-                  <PathScores scores={hit.path_scores} />
-                )}
-              </span>
-              <ArrowRight size={11} />
-            </button>
-          ))}
-        </div>
-      )}
+      {state.status === "ready" && state.hits.length > 0 && (() => {
+        // Group hits by source kind. Notes (user-authored, narrow but
+        // self-curated) read separately from Wiki (broad reference) so
+        // the user can weigh evidence appropriately.
+        type Kind = "note" | "wiki" | "doc";
+        const groups: Record<Kind, cloudApi.ChunkSearchHit[]> = { note: [], wiki: [], doc: [] };
+        for (const h of state.hits) {
+          const k: Kind = docKinds.get(h.document_id) || "doc";
+          groups[k].push(h);
+        }
+        // Stable display order: notes first (they're scoped + accurate
+        // when present), then wiki (broader), then doc (untyped).
+        const renderOrder: { kind: Kind; label: string; hint: string }[] = [
+          { kind: "note", label: "From your notes",   hint: "self-curated · narrow scope · accurate to context" },
+          { kind: "wiki", label: "From wiki",          hint: "imported reference material · broad coverage" },
+          { kind: "doc",  label: "From docs",          hint: "uncategorized — re-classify in Library" },
+        ];
+        // Continuous chunk numbering across groups so the citations in
+        // the composed answer ([1] [2] …) match what user sees here.
+        let counter = 0;
+        return (
+          <div className="proto-atelier-stream-answer-chunks">
+            {renderOrder.map(({ kind, label, hint }) => {
+              const items = groups[kind];
+              if (items.length === 0) return null;
+              return (
+                <div key={kind} className={cn("proto-atelier-stream-answer-section", `proto-atelier-stream-answer-section-${kind}`)}>
+                  <div className="proto-atelier-stream-answer-section-head">
+                    <span className="proto-atelier-stream-answer-section-label">{label}</span>
+                    <span className="proto-atelier-stream-answer-section-count">{items.length}</span>
+                    <span className="proto-atelier-stream-answer-section-hint">{hint}</span>
+                  </div>
+                  {items.map((hit) => {
+                    counter++;
+                    return (
+                      <button
+                        key={hit.id}
+                        type="button"
+                        className="proto-atelier-stream-answer-chunk"
+                        onClick={() => onChunkClick(hit)}
+                      >
+                        <span className="proto-atelier-stream-answer-chunk-num">[{counter}]</span>
+                        <span className="proto-atelier-stream-answer-chunk-body">
+                          <span className="proto-atelier-stream-answer-chunk-snippet">
+                            {truncate(hit.text, 280)}
+                          </span>
+                          <span className="proto-atelier-stream-answer-chunk-meta">
+                            <span>{hit.document_name}</span>
+                            {hit.dimension && <span>· {hit.dimension}</span>}
+                            <span className="proto-atelier-stream-answer-chunk-score">
+                              fused {hit.score.toFixed(2)}
+                            </span>
+                          </span>
+                          {hit.path_scores && Object.keys(hit.path_scores).length > 0 && (
+                            <PathScores scores={hit.path_scores} />
+                          )}
+                        </span>
+                        <ArrowRight size={11} />
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
     </section>
   );
 }

@@ -718,6 +718,52 @@
   display: flex;
   flex-direction: column;
 }
+
+/* Source-grouped sections inside the answer.
+ * Notes (your own writing — narrow but trustworthy) read separately
+ * from Wiki (broader reference) so the user can weigh evidence. */
+.proto-atelier-stream-answer-section + .proto-atelier-stream-answer-section {
+  border-top: 1px solid var(--color-border);
+}
+.proto-atelier-stream-answer-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 14px 4px;
+  background: var(--color-bg-elevated);
+  border-bottom: 1px dashed var(--color-border);
+}
+.proto-atelier-stream-answer-section-label {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.proto-atelier-stream-answer-section-count {
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+}
+.proto-atelier-stream-answer-section-hint {
+  font-size: 10.5px;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+/* Section accent stripes — lets the eye find Notes vs Wiki at a glance */
+.proto-atelier-stream-answer-section-note .proto-atelier-stream-answer-section-head {
+  border-left: 3px solid color-mix(in oklab, var(--color-accent) 70%, var(--color-text-muted));
+}
+.proto-atelier-stream-answer-section-wiki .proto-atelier-stream-answer-section-head {
+  border-left: 3px solid color-mix(in oklab, var(--color-success) 60%, var(--color-text-muted));
+}
+.proto-atelier-stream-answer-section-doc .proto-atelier-stream-answer-section-head {
+  border-left: 3px solid var(--color-text-muted);
+}
 .proto-atelier-stream-answer-chunk {
   display: flex;
   align-items: flex-start;
