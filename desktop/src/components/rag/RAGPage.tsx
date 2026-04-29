@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import * as cloudApi from "@/lib/cloud-api";
 import { cn } from "@/lib/cn";
+import { RAGProcessingPanel } from "./RAGProcessingPanel";
 
 /* RAG — knowledge processing center.
  *
@@ -33,6 +34,9 @@ type Source = {
   byteSize: number;
   ingestedAt: string | null;
   updatedAt: string | null;
+  embedded: boolean;   // chunks + embeddings present
+  enriched: boolean;   // an enrich job ran to completion
+  tagged:   boolean;   // AI tags / classification applied
 };
 
 const RETRIEVAL_PATHS: {
@@ -62,7 +66,8 @@ export function RAGPage() {
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const [editingTagDesc, setEditingTagDesc] = useState("");
 
-  // Load sources (notes + wiki) from cloud
+  // Load sources (notes + wiki) from cloud, enriched with per-source
+  // status badges derived from the enrich-jobs feed.
   useEffect(() => {
     let alive = true;
     async function load() {
@@ -71,12 +76,28 @@ export function RAGPage() {
           if (alive) setSources([]);
           return;
         }
-        const res = await cloudApi.listDocuments();
+        const [docs, jobs] = await Promise.all([
+          cloudApi.listDocuments(),
+          cloudApi.listEnrichJobs().catch(() => [] as cloudApi.EnrichJob[]),
+        ]);
         if (!alive) return;
-        const mapped: Source[] = res.documents.map((d) => {
+        // Group jobs by document_id to compute per-source status.
+        const byDoc = new Map<string, cloudApi.EnrichJob[]>();
+        for (const j of jobs) {
+          const arr = byDoc.get(j.document_id) || [];
+          arr.push(j);
+          byDoc.set(j.document_id, arr);
+        }
+        const mapped: Source[] = docs.documents.map((d) => {
           const md = (d.metadata && typeof d.metadata === "object" ? d.metadata : {}) as Record<string, unknown>;
           const snt = String(md.smartnote_type || "");
           const kind: SourceKind = snt === "wiki_topic" ? "wiki" : "note";
+          const docJobs = byDoc.get(d.id) || [];
+          const lastDone = docJobs.find((j) => j.status === "done");
+          // Tag/classify markers from cloud metadata. Adjust as the
+          // backend exposes more granular signals.
+          const tagsApplied = Array.isArray((md as Record<string, unknown>).ai_tags)
+            && (md as { ai_tags: unknown[] }).ai_tags.length > 0;
           return {
             id: d.id,
             name: d.name,
@@ -84,6 +105,9 @@ export function RAGPage() {
             byteSize: d.byte_size,
             ingestedAt: d.ingested_at,
             updatedAt: d.updated_at,
+            embedded: d.ingested_at != null,
+            enriched: !!lastDone,
+            tagged:   tagsApplied || !!lastDone,
           };
         });
         setSources(mapped);
@@ -92,6 +116,9 @@ export function RAGPage() {
       }
     }
     load();
+    // Re-poll periodically so badges flip after a job completes.
+    const id = setInterval(load, 5_000);
+    return () => { alive = false; clearInterval(id); };
   }, []);
 
   // Load tags
@@ -341,6 +368,11 @@ export function RAGPage() {
                           ? <CheckSquare size={13} strokeWidth={2} />
                           : <Square size={13} strokeWidth={1.6} />}
                         <span className="proto-atelier-rag-tree-item-name">{s.name}</span>
+                        <span className="proto-atelier-rag-tree-item-status">
+                          <StatusDot on={s.embedded} title="Embedding" letter="E" />
+                          <StatusDot on={s.enriched} title="Enriched"  letter="N" />
+                          <StatusDot on={s.tagged}   title="AI tags"   letter="T" />
+                        </span>
                         <span className="proto-atelier-rag-tree-item-meta">
                           {Math.round(s.byteSize / 1024)}k
                         </span>
@@ -405,6 +437,10 @@ export function RAGPage() {
               />
             </div>
           </section>
+
+          {/* Live processing panel — auto-shows while jobs are
+              running, fades after completion */}
+          <RAGProcessingPanel />
 
           {/* 6 retrieval paths */}
           <section className="proto-atelier-rag-section">
@@ -535,6 +571,21 @@ export function RAGPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+function StatusDot({ on, title, letter }: { on: boolean; title: string; letter: string }) {
+  return (
+    <span
+      className={cn(
+        "proto-atelier-rag-status-dot",
+        on && "proto-atelier-rag-status-dot-on",
+      )}
+      title={`${title}: ${on ? "yes" : "no"}`}
+      aria-label={`${title} ${on ? "applied" : "missing"}`}
+    >
+      {letter}
+    </span>
   );
 }
 

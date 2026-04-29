@@ -1,11 +1,50 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   FileText, BookOpen, Sparkles, MessageSquare, Inbox, Search,
-  Clock, FileEdit, ArrowRight, X,
+  Clock, FileEdit, ArrowRight, X, SlidersHorizontal,
 } from "lucide-react";
 import * as cloudApi from "@/lib/cloud-api";
 import type { ChannelId } from "@/lib/types";
 import { cn } from "@/lib/cn";
+
+// Tunable retrieval defaults — persisted in localStorage so the
+// user's preference survives reloads. Min score is applied
+// client-side; topk goes to the cloud query directly.
+type RetrievalSettings = {
+  topk: number;
+  minScore: number;
+};
+const DEFAULT_RETRIEVAL: RetrievalSettings = { topk: 8, minScore: 0 };
+const RETRIEVAL_KEY = "smartnote-stream-retrieval";
+
+function loadRetrieval(): RetrievalSettings {
+  try {
+    const raw = localStorage.getItem(RETRIEVAL_KEY);
+    if (!raw) return DEFAULT_RETRIEVAL;
+    const parsed = JSON.parse(raw);
+    return {
+      topk: Math.max(1, Math.min(50, parsed.topk ?? DEFAULT_RETRIEVAL.topk)),
+      minScore: Math.max(0, Math.min(1, parsed.minScore ?? DEFAULT_RETRIEVAL.minScore)),
+    };
+  } catch {
+    return DEFAULT_RETRIEVAL;
+  }
+}
+
+function saveRetrieval(s: RetrievalSettings) {
+  try { localStorage.setItem(RETRIEVAL_KEY, JSON.stringify(s)); } catch { /* silent */ }
+}
+
+// Friendly labels for the 6 retrieval paths the cloud surfaces in
+// path_scores. The keys come from `ChunkSearchHit.path_scores`.
+const PATH_LABELS: Record<string, string> = {
+  fts: "fts",
+  vec: "vec",
+  ngram: "ngram",
+  sub: "sub",
+  kw: "kw",
+  tag_meta: "tag",
+};
 
 /* StreamHome — v3 home surface.
  *
@@ -64,7 +103,17 @@ export function StreamHome({ onSelect, onOpenPalette }: Props) {
 
   const [query, setQuery] = useState("");
   const [answer, setAnswer] = useState<AnswerState | null>(null);
+  const [retrieval, setRetrieval] = useState<RetrievalSettings>(loadRetrieval);
+  const [retrievalOpen, setRetrievalOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  function updateRetrieval(patch: Partial<RetrievalSettings>) {
+    setRetrieval((prev) => {
+      const next = { ...prev, ...patch };
+      saveRetrieval(next);
+      return next;
+    });
+  }
 
   // ── Load events from cloud (jobs / docs / proposals / search history) ──
   useEffect(() => {
@@ -253,8 +302,13 @@ export function StreamHome({ onSelect, onOpenPalette }: Props) {
         setAnswer({ status: "error", query: q, hits: [], err: "Cloud not configured. Open Settings → AI providers." });
         return;
       }
-      const res = await cloudApi.searchChunks(q, { topk: 6 });
-      setAnswer({ status: "ready", query: q, hits: res.results });
+      const res = await cloudApi.searchChunks(q, { topk: retrieval.topk });
+      // Client-side min-score filter — backend doesn't expose it as
+      // a query param, so we trim after the fact.
+      const filtered = retrieval.minScore > 0
+        ? res.results.filter((h) => h.score >= retrieval.minScore)
+        : res.results;
+      setAnswer({ status: "ready", query: q, hits: filtered });
     } catch (e) {
       setAnswer({
         status: "error",
@@ -330,6 +384,18 @@ export function StreamHome({ onSelect, onOpenPalette }: Props) {
           )}
           <button
             type="button"
+            className={cn(
+              "proto-atelier-stream-ask-settings",
+              retrievalOpen && "proto-atelier-stream-ask-settings-open",
+            )}
+            onClick={() => setRetrievalOpen((v) => !v)}
+            title={`Retrieval — top ${retrieval.topk}${retrieval.minScore > 0 ? `, ≥ ${retrieval.minScore.toFixed(2)}` : ""}`}
+            aria-pressed={retrievalOpen}
+          >
+            <SlidersHorizontal size={12} strokeWidth={2} />
+          </button>
+          <button
+            type="button"
             className="proto-atelier-stream-ask-kbd"
             onClick={onOpenPalette}
             title="Open command palette"
@@ -337,6 +403,13 @@ export function StreamHome({ onSelect, onOpenPalette }: Props) {
             ⌘K
           </button>
         </form>
+        {retrievalOpen && (
+          <RetrievalSettingsPopover
+            settings={retrieval}
+            onChange={updateRetrieval}
+            onClose={() => setRetrievalOpen(false)}
+          />
+        )}
       </header>
 
       {/* Inline composed answer (B1) */}
@@ -441,6 +514,91 @@ export function StreamHome({ onSelect, onOpenPalette }: Props) {
 
 // ─── Subcomponents ────────────────────────────────────────────────
 
+function RetrievalSettingsPopover({
+  settings, onChange, onClose,
+}: {
+  settings: RetrievalSettings;
+  onChange: (patch: Partial<RetrievalSettings>) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="proto-atelier-stream-retrieval-popover" role="dialog">
+      <div className="proto-atelier-stream-retrieval-row">
+        <label className="proto-atelier-stream-retrieval-label">
+          Recall size
+          <span className="proto-atelier-stream-retrieval-value">{settings.topk}</span>
+        </label>
+        <input
+          type="range"
+          min={1}
+          max={30}
+          step={1}
+          value={settings.topk}
+          onChange={(e) => onChange({ topk: parseInt(e.target.value, 10) })}
+          className="proto-atelier-stream-retrieval-slider"
+        />
+        <div className="proto-atelier-stream-retrieval-hint">
+          Top-N chunks to fetch from the cloud's hybrid retrieval.
+        </div>
+      </div>
+      <div className="proto-atelier-stream-retrieval-row">
+        <label className="proto-atelier-stream-retrieval-label">
+          Min score
+          <span className="proto-atelier-stream-retrieval-value">
+            {settings.minScore.toFixed(2)}
+          </span>
+        </label>
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.05}
+          value={settings.minScore}
+          onChange={(e) => onChange({ minScore: parseFloat(e.target.value) })}
+          className="proto-atelier-stream-retrieval-slider"
+        />
+        <div className="proto-atelier-stream-retrieval-hint">
+          Drop chunks with fused score below this. 0 = keep all.
+        </div>
+      </div>
+      <button
+        type="button"
+        className="proto-atelier-stream-retrieval-close"
+        onClick={onClose}
+      >
+        Done
+      </button>
+    </div>
+  );
+}
+
+function PathScores({ scores }: { scores: Record<string, number> }) {
+  const entries = Object.entries(scores).filter(([, v]) => v > 0);
+  if (entries.length === 0) return null;
+  // Sort by contribution descending so the strongest signal reads first.
+  entries.sort((a, b) => b[1] - a[1]);
+  return (
+    <span className="proto-atelier-stream-answer-paths">
+      {entries.map(([k, v]) => (
+        <span key={k} className="proto-atelier-stream-answer-path">
+          <span className="proto-atelier-stream-answer-path-name">
+            {PATH_LABELS[k] || k}
+          </span>
+          <span className="proto-atelier-stream-answer-path-bar">
+            <span
+              className="proto-atelier-stream-answer-path-bar-fill"
+              style={{ width: `${Math.min(100, Math.round(v * 100))}%` }}
+            />
+          </span>
+          <span className="proto-atelier-stream-answer-path-val">
+            {v.toFixed(2)}
+          </span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
 function InlineAnswer({
   state, onClose, onChunkClick,
 }: {
@@ -477,7 +635,7 @@ function InlineAnswer({
       )}
       {state.status === "ready" && state.hits.length > 0 && (
         <div className="proto-atelier-stream-answer-chunks">
-          {state.hits.slice(0, 5).map((hit, i) => (
+          {state.hits.slice(0, 8).map((hit, i) => (
             <button
               key={hit.id}
               type="button"
@@ -493,9 +651,12 @@ function InlineAnswer({
                   <span>{hit.document_name}</span>
                   {hit.dimension && <span>· {hit.dimension}</span>}
                   <span className="proto-atelier-stream-answer-chunk-score">
-                    {hit.score.toFixed(2)}
+                    fused {hit.score.toFixed(2)}
                   </span>
                 </span>
+                {hit.path_scores && Object.keys(hit.path_scores).length > 0 && (
+                  <PathScores scores={hit.path_scores} />
+                )}
               </span>
               <ArrowRight size={11} />
             </button>

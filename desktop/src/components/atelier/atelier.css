@@ -495,6 +495,141 @@
   border-color: var(--color-text-muted);
 }
 
+/* Retrieval settings (sliders) — small icon button + popover */
+.proto-atelier-stream-ask-settings {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 160ms ease-out, background 160ms ease-out;
+}
+.proto-atelier-stream-ask-settings:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
+}
+.proto-atelier-stream-ask-settings-open {
+  color: var(--color-accent);
+  background: color-mix(in oklab, var(--color-accent) 14%, transparent);
+}
+
+.proto-atelier-stream-retrieval-popover {
+  margin-top: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-primary);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  /* tucked under the ask, calm chrome — no shadow per design lang */
+}
+.proto-atelier-stream-retrieval-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.proto-atelier-stream-retrieval-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+  font-weight: 500;
+}
+.proto-atelier-stream-retrieval-value {
+  font-size: 11px;
+  color: var(--color-accent);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+.proto-atelier-stream-retrieval-slider {
+  width: 100%;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--color-bg-hover);
+  border-radius: 2px;
+  cursor: pointer;
+}
+.proto-atelier-stream-retrieval-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  border: 2px solid var(--color-bg-primary);
+  cursor: pointer;
+}
+.proto-atelier-stream-retrieval-hint {
+  font-size: 10.5px;
+  color: var(--color-text-muted);
+  line-height: 1.4;
+}
+.proto-atelier-stream-retrieval-close {
+  align-self: flex-end;
+  padding: 4px 12px;
+  font-size: 11px;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  background: var(--color-bg-primary);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-family: inherit;
+}
+.proto-atelier-stream-retrieval-close:hover {
+  color: var(--color-text-primary);
+  border-color: var(--color-text-muted);
+}
+
+/* Per-chunk path-score row — tiny bars showing each retrieval
+ * dimension's contribution to a chunk's fused score. */
+.proto-atelier-stream-answer-paths {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+.proto-atelier-stream-answer-path {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.proto-atelier-stream-answer-path-name {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-secondary);
+  font-weight: 500;
+  min-width: 26px;
+}
+.proto-atelier-stream-answer-path-bar {
+  display: inline-block;
+  width: 38px;
+  height: 3px;
+  background: var(--color-bg-hover);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.proto-atelier-stream-answer-path-bar-fill {
+  display: block;
+  height: 100%;
+  background: color-mix(in oklab, var(--color-accent) 70%, var(--color-text-muted));
+  transition: width 200ms ease-out;
+}
+.proto-atelier-stream-answer-path-val {
+  min-width: 22px;
+}
+
 /* Inline composed answer (B1) — pushes feed down on Enter */
 .proto-atelier-stream-answer {
   max-width: 880px;
@@ -2092,6 +2227,153 @@
   color: var(--color-text-muted);
   flex-shrink: 0;
 }
+
+/* Per-source status dots (E embedding · N enriched · T tagged) */
+.proto-atelier-rag-tree-item-status {
+  display: inline-flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.proto-atelier-rag-status-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+  opacity: 0.5;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+}
+.proto-atelier-rag-status-dot-on {
+  background: color-mix(in oklab, var(--color-success) 14%, transparent);
+  color: var(--color-success);
+  border-color: transparent;
+  opacity: 1;
+}
+
+/* Live processing panel — auto-shows while jobs running, tucked
+   into RAG right-panel between bulk actions and 6 paths */
+.proto-atelier-rag-progress {
+  max-width: 880px;
+  margin: 0 auto 28px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-primary);
+  overflow: hidden;
+}
+.proto-atelier-rag-progress-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+}
+.proto-atelier-rag-progress-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+.proto-atelier-rag-progress-stats {
+  display: inline-flex;
+  gap: 6px;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+.proto-atelier-rag-progress-stat {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+}
+.proto-atelier-rag-progress-stat-running {
+  background: color-mix(in oklab, var(--color-accent) 14%, transparent);
+  color: var(--color-accent);
+  border-color: transparent;
+}
+.proto-atelier-rag-progress-stat-done {
+  background: color-mix(in oklab, var(--color-success) 14%, transparent);
+  color: var(--color-success);
+  border-color: transparent;
+}
+.proto-atelier-rag-progress-stat-failed {
+  background: color-mix(in oklab, var(--color-danger) 14%, transparent);
+  color: var(--color-danger);
+  border-color: transparent;
+}
+
+.proto-atelier-rag-progress-list {
+  display: flex;
+  flex-direction: column;
+}
+.proto-atelier-rag-progress-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--color-border);
+  font-size: 12px;
+}
+.proto-atelier-rag-progress-row:first-child { border-top: none; }
+.proto-atelier-rag-progress-row-failed { background: color-mix(in oklab, var(--color-danger) 4%, transparent); }
+.proto-atelier-rag-progress-row-done   { opacity: 0.7; }
+.proto-atelier-rag-progress-row-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--color-text-muted);
+}
+.proto-atelier-rag-progress-row-failed .proto-atelier-rag-progress-row-icon { color: var(--color-danger); }
+.proto-atelier-rag-progress-row-done   .proto-atelier-rag-progress-row-icon { color: var(--color-success); }
+.proto-atelier-rag-progress-row-body { flex: 1; min-width: 0; }
+.proto-atelier-rag-progress-row-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.proto-atelier-rag-progress-row-name {
+  font-weight: 500;
+  color: var(--color-text-primary);
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.proto-atelier-rag-progress-row-phase {
+  font-size: 10.5px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.proto-atelier-rag-progress-bar {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--color-bg-hover);
+  overflow: hidden;
+}
+.proto-atelier-rag-progress-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--color-accent);
+  transition: width 280ms ease-out;
+}
+.proto-atelier-rag-progress-row-failed .proto-atelier-rag-progress-bar-fill { background: var(--color-danger); }
+.proto-atelier-rag-progress-row-done   .proto-atelier-rag-progress-bar-fill { background: var(--color-success); }
 
 /* ── Right scrollable panel ────────────────────────────────────── */
 .proto-atelier-rag-panel {
