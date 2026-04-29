@@ -410,6 +410,97 @@ async def list_documents() -> str:
 
 
 @mcp.tool()
+async def get_document(document_id: str, max_bytes: int = 200_000) -> str:
+    """Fetch a document's full markdown / text content by id.
+
+    Use this after `list_documents` to read the actual body of a
+    specific note or wiki topic. Output is plain content — agents
+    can summarize / quote / reason over it directly.
+
+    Args:
+        document_id: UUID from list_documents (8-char prefix is OK).
+        max_bytes: Soft cap on returned content. Larger docs get
+                   truncated with "[truncated …]" tail.
+    """
+    # Resolve short id by listing and prefix-matching if needed.
+    target = document_id.strip()
+    if len(target) < 36:
+        rl = await _call("GET", "/v1/documents")
+        if rl.status_code != 200:
+            return _fail(rl, "get_document")
+        matches = [
+            d for d in (rl.json().get("documents") or [])
+            if str(d.get("id", "")).startswith(target)
+        ]
+        if not matches:
+            return f"No document matches id prefix '{target}'."
+        if len(matches) > 1:
+            preview = "\n".join(f"  {d['id']}  {d['name']}" for d in matches[:6])
+            return f"Ambiguous prefix '{target}' — {len(matches)} matches:\n{preview}"
+        target = matches[0]["id"]
+
+    r = await _call("GET", f"/v1/documents/{target}")
+    if r.status_code != 200:
+        return _fail(r, "get_document")
+    doc = r.json()
+    content = doc.get("content") or ""
+    if len(content) > max_bytes:
+        content = content[:max_bytes] + f"\n\n[truncated — full size {len(content)}B; raise max_bytes to see more]"
+    md = doc.get("metadata") or {}
+    snt = md.get("smartnote_type") if isinstance(md, dict) else None
+    head = f"# {doc.get('name')} ({doc.get('byte_size')}B"
+    if snt: head += f" · {snt}"
+    if doc.get("ingested_at"): head += " · ingested"
+    head += f")\nid: {doc.get('id')}\n\n"
+    return head + content
+
+
+@mcp.tool()
+async def search_documents(
+    query: str,
+    topk: int = 8,
+    dimension: Optional[str] = None,
+) -> str:
+    """Search across embedded document chunks (notes + wiki) — the
+    "search the actual content" tool. Distinct from `search_memory`
+    which queries the memories table (preferences / facts / rules).
+
+    Use search_documents when you want to find sections of a note or
+    wiki topic that match a query. Hits include line ranges + the
+    parent document id, so you can follow up with `get_document(id)`
+    for full context.
+
+    Args:
+        query: Natural-language search.
+        topk: Max chunks to return (default 8).
+        dimension: Optional dimension filter (e.g. "wiki_topic").
+    """
+    body: dict[str, Any] = {"query": query, "topk": topk}
+    if dimension:
+        body["dimension"] = dimension
+    r = await _call("POST", "/v1/chunks/search", json=body)
+    if r.status_code != 200:
+        return _fail(r, "search_documents")
+    data = r.json()
+    hits = data.get("results") or []
+    if not hits:
+        return f"No document chunks matched: {query}"
+    out = [f"{len(hits)} chunk(s) for: {query}"]
+    for h in hits:
+        # Compact line: doc-name · L<start>–<end> · score · 100-char preview
+        text = (h.get("text") or "").replace("\n", " ").strip()
+        if len(text) > 120: text = text[:118] + "…"
+        out.append(
+            f"- {h.get('document_name','?')} · "
+            f"L{h.get('line_start',0)}–{h.get('line_end',0)} · "
+            f"score {h.get('score',0):.2f} · doc={h.get('document_id','?')[:8]}\n"
+            f"    {text}"
+        )
+    out.append("\n→ call get_document(id) on any of the doc=… ids for full content.")
+    return "\n".join(out)
+
+
+@mcp.tool()
 async def queue_enrich_jobs(
     smartnote_type: Optional[str] = None,
 ) -> str:
