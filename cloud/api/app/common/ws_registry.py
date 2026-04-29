@@ -49,3 +49,34 @@ def pick(workspace_id: str) -> _Session | None:
     for s in _sessions.get(workspace_id, set()):
         return s
     return None
+
+
+async def broadcast(workspace_id: str, payload: dict) -> int:
+    """Fan-out a JSON payload to every open desktop session in this
+    workspace. Used to push real-time events (agent activity, enrich
+    completion, memory proposed) so desktops update without polling.
+
+    Returns the number of sessions that successfully received it.
+    Sessions that fail are silently ignored — disconnect handlers
+    will GC them. Best-effort by design.
+    """
+    import json
+    sessions = list(_sessions.get(workspace_id, set()))
+    if not sessions:
+        return 0
+    text = json.dumps(payload, ensure_ascii=False)
+    delivered = 0
+    for s in sessions:
+        try:
+            await s.ws.send_text(text)
+            delivered += 1
+        except Exception:
+            # Silent — the disconnect handler will unregister.
+            pass
+    return delivered
+
+
+def session_count(workspace_id: str) -> int:
+    """Open WS sessions for this workspace. Replaces HTTP heartbeat
+    for "is anything online" — connection presence == online."""
+    return len(_sessions.get(workspace_id, set()))

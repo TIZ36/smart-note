@@ -35,6 +35,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 
 _api_key_ctx: ContextVar[str] = ContextVar("smartnote_api_key", default="")
+_agent_name_ctx: ContextVar[str] = ContextVar("smartnote_agent_name", default="")
 
 # In-process host to call ourselves on. In Docker the api listens on 8000
 # inside the container; the host port (58000) is irrelevant here. Override
@@ -81,6 +82,7 @@ async def _jwt_for(key: str) -> str:
 async def _call(
     method: str, path: str,
     *, json: Any | None = None, params: dict | None = None,
+    _tool_name: str | None = None,
 ) -> httpx.Response:
     key = _api_key_ctx.get()
     if not key:
@@ -90,13 +92,26 @@ async def _call(
         )
     jwt = await _jwt_for(key)
     # Mark this workspace as having a live MCP session — feeds the
-    # mcp_pull executor's availability check.
+    # mcp_pull executor's availability check. Also broadcasts an
+    # agent_active event over WS so any open desktop can render
+    # "Now reading: <agent>" in real-time.
     try:
         from app.security import verify_jwt as _vj
         from app.services.enrich.executors import mcp_pull as _mp
+        from app.common import ws_registry
+        import asyncio as _asyncio
         claims = _vj(jwt)
         if claims:
             _mp.mark_active(claims.workspace_id)
+            agent_name = _agent_name_ctx.get() or "AI agent"
+            payload = {
+                "type": "agent_active",
+                "agent": agent_name,
+                "tool": _tool_name or path.lstrip("/").split("/", 1)[-1],
+                "method": method,
+                "at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+            }
+            _asyncio.create_task(ws_registry.broadcast(claims.workspace_id, payload))
     except Exception:
         pass
     async with httpx.AsyncClient(timeout=30.0) as c:
@@ -936,12 +951,14 @@ class ApiKeyMiddleware:
                         _api_key_ctx.set(api_key)
                 elif key == b"user-agent":
                     user_agent = value.decode("latin-1").strip()
-            # Self-identify: capture the agent name and bump its
-            # virtual device row. Background task so middleware doesn't
-            # block. Best-effort — failures swallowed.
+            # Self-identify: capture the agent name into a contextvar
+            # (so MCP tools can read it for activity broadcasts) and
+            # bump its virtual device row. Background task so
+            # middleware doesn't block. Best-effort — failures swallowed.
             if api_key and user_agent:
                 agent_name = _detect_agent(user_agent)
                 if agent_name:
+                    _agent_name_ctx.set(agent_name)
                     import asyncio as _asyncio
                     _asyncio.create_task(_upsert_agent_device(api_key, agent_name, user_agent))
         await self.app(scope, receive, send)

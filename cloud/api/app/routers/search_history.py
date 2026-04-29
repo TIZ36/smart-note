@@ -25,6 +25,9 @@ class SearchHistoryItem(BaseModel):
     result_count: int
     tag_filter: str | None
     created_at: str
+    # NULL or 'user' = desktop-driven; agent name like 'Claude Code'
+    # = AI CLI search via MCP search_memory.
+    author: str | None = None
 
 
 @router.get(
@@ -38,7 +41,7 @@ async def list_history(
 ) -> list[SearchHistoryItem]:
     async with pool().acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id, query_text, result_count, tag_filter, created_at "
+            "SELECT id, query_text, result_count, tag_filter, created_at, author "
             "FROM search_history WHERE workspace_id = $1 "
             "ORDER BY created_at DESC LIMIT $2",
             UUID(identity.workspace_id), limit,
@@ -50,6 +53,7 @@ async def list_history(
             result_count=int(r["result_count"]),
             tag_filter=r["tag_filter"],
             created_at=r["created_at"].isoformat(),
+            author=r.get("author"),
         )
         for r in rows
     ]
@@ -90,13 +94,17 @@ async def clear_history(
 # simple — best-effort, swallow errors so a history-write hiccup
 # doesn't fail an actual search.
 async def record(workspace_id: str, query: str, result_count: int,
-                 tag_filter: str | None = None) -> None:
+                 tag_filter: str | None = None,
+                 author: str | None = None) -> None:
+    """Best-effort write to search_history. `author` is NULL or
+    'user' for desktop-driven searches, an agent name (e.g.
+    'Claude Code') for MCP search_memory calls."""
     try:
         async with pool().acquire() as conn:
             await conn.execute(
                 "INSERT INTO search_history (workspace_id, query_text, "
-                "result_count, tag_filter) VALUES ($1, $2, $3, $4)",
-                UUID(workspace_id), query[:500], result_count, tag_filter,
+                "result_count, tag_filter, author) VALUES ($1, $2, $3, $4, $5)",
+                UUID(workspace_id), query[:500], result_count, tag_filter, author,
             )
     except Exception:
         import logging
