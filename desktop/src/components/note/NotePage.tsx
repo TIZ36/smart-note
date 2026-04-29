@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Database, FolderOpen, Shuffle, ArrowDownToLine } from "lucide-react";
+import {
+  FolderOpen, Shuffle, ArrowDownToLine, PanelLeft, Save, RotateCw, Copy,
+  Plus, Minus,
+} from "lucide-react";
 import { NoteEditor, type LineMeta } from "../editor/NoteEditor";
 import { IngestDialog } from "./IngestDialog";
 import { PackBadge } from "./PackBadge";
@@ -9,7 +12,6 @@ import { BookmarksButton } from "./BookmarksButton";
 import { QuickSearch } from "./QuickSearch";
 import { NoteViewDialog } from "./NoteViewDialog";
 import { NoteViewSidebar, type SidebarViewItem } from "./NoteViewSidebar";
-import { Plus, Minus } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { pickRawFile, saveRawPathForHotkey, installSampleNote } from "@/lib/electron";
 import * as api from "@/lib/api";
@@ -47,6 +49,9 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
   const [showIngest, setShowIngest] = useState(false);
   const [showReorganize, setShowReorganize] = useState(false);
   const [showQuickSearch, setShowQuickSearch] = useState(false);
+  // v3: sidebar collapses by default — Views toggle reveals it
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [copiedMcp, setCopiedMcp] = useState(false);
 
   // ── View state ──
   // `views` is the list of persisted custom lenses for the current file.
@@ -491,22 +496,62 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
     }
   }
 
+  // Copy the current note content as MCP-flavored context so it can
+  // paste straight into Claude Code / Cursor without manual wrapping.
+  async function handleCopyAsMcp() {
+    try {
+      const filename = rawPath.split("/").pop() || "note.md";
+      const cm = document.querySelector<HTMLElement>(".cm-content");
+      const content = cm?.innerText || "";
+      const wrapped = `<smartnote:note path="${rawPath}" name="${filename}">\n${content}\n</smartnote:note>`;
+      await navigator.clipboard.writeText(wrapped);
+      setCopiedMcp(true);
+      setTimeout(() => setCopiedMcp(false), 1400);
+    } catch {
+      /* silent */
+    }
+  }
+
+  // Trigger the editor's native ⌘S save by synthesizing a keydown.
+  // CodeMirror's keymap picks it up so save flows through the same
+  // path as user-typed ⌘S (handleSave callback below).
+  function handleSaveClick() {
+    const cm = document.querySelector<HTMLElement>(".cm-content");
+    if (!cm) return;
+    cm.focus();
+    cm.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "s",
+      code: "KeyS",
+      metaKey: true,
+      ctrlKey: false,
+      bubbles: true,
+      cancelable: true,
+    }));
+  }
+
   if (!rawPath) {
     return (
-      <div className="proto-editor-empty">
-        <div className="proto-editor-empty-inner">
-          <FolderOpen size={28} className="proto-editor-empty-icon" />
-          <h2 className="proto-editor-empty-title">Start with SmartNote in 30 seconds</h2>
-          <p className="proto-editor-empty-desc">
-            Try with a curated sample note, or point SmartNote at your own file (.md, .txt).
-            Your raw content is never rewritten — all AI enrichment is additive and reversible.
+      <div className="proto-note-v3-empty">
+        <div className="proto-note-v3-empty-inner">
+          <span className="proto-note-v3-empty-eyebrow">Note</span>
+          <h2 className="proto-note-v3-empty-title">Open a markdown file to start.</h2>
+          <p className="proto-note-v3-empty-desc">
+            Raw content is never rewritten — all AI enrichment is additive and reversible.
           </p>
-          <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 8, flexWrap: "wrap" }}>
-            <button type="button" onClick={handleTrySample} className="proto-btn proto-btn-primary">
-              Try with sample notes
+          <div className="proto-note-v3-empty-actions">
+            <button
+              type="button"
+              onClick={handleTrySample}
+              className="proto-note-v3-btn proto-note-v3-btn-primary"
+            >
+              Try with sample
             </button>
-            <button type="button" onClick={handlePickFile} className="proto-btn">
-              Use your own file
+            <button
+              type="button"
+              onClick={handlePickFile}
+              className="proto-note-v3-btn"
+            >
+              <FolderOpen size={12} strokeWidth={2} /> Use your own file
             </button>
           </div>
         </div>
@@ -515,25 +560,27 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
   }
 
   return (
-    <div className="proto-note-page">
-      {/* Minimal header — Linear style */}
-      <div className="proto-note-header">
-        <div className="proto-note-header-left">
-          <span className="proto-note-header-name">{rawPath.split("/").pop()}</span>
-          {dirty && <span className="proto-note-header-dot" />}
+    <div className="proto-note-v3">
+      {/* v3 breadcrumb bar — Notes / filename + actions */}
+      <div className="proto-note-v3-bar">
+        <span className="proto-note-v3-crumbs">
+          <span>Notes /</span>
+          <strong>{rawPath.split("/").pop()}</strong>
+          {dirty && <span className="proto-note-v3-crumbs-dirty" title="Unsaved changes" />}
           {activeBuild && (
-            <span className="proto-note-header-build">v{activeBuild}</span>
+            <span className="proto-note-v3-build">v{activeBuild}</span>
           )}
-        </div>
-        <div className="proto-note-header-actions">
+        </span>
+
+        <div className="proto-note-v3-actions">
           {packsSinceFull > 0 && (
             <button
               type="button"
               onClick={() => setShowIngest(true)}
-              className="proto-note-header-progress proto-note-header-progress-warning"
-              title={`${packsSinceFull} pack${packsSinceFull === 1 ? "" : "s"} applied since last full ingest — AI classification is stale. Click to run a full rebuild.`}
+              className="proto-note-v3-pill proto-note-v3-pill-warning"
+              title={`${packsSinceFull} pack${packsSinceFull === 1 ? "" : "s"} applied since last full ingest — classification stale.`}
             >
-              <span className="proto-note-header-progress-dot" />
+              <span className="proto-note-v3-pill-dot" />
               <span>{packsSinceFull} since full</span>
             </button>
           )}
@@ -548,50 +595,85 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
                 exit={{ opacity: 0, y: -2 }}
                 transition={{ duration: 0.18, ease: [0.25, 1, 0.5, 1] }}
                 className={cn(
-                  "proto-note-header-progress",
-                  ingestBusy && "proto-note-header-progress-active",
-                  !ingestBusy && ingestResult?.type === "success" && "proto-note-header-progress-done",
-                  !ingestBusy && ingestResult?.type === "error" && "proto-note-header-progress-error",
+                  "proto-note-v3-pill",
+                  ingestBusy && "proto-note-v3-pill-active",
+                  !ingestBusy && ingestResult?.type === "success" && "proto-note-v3-pill-done",
+                  !ingestBusy && ingestResult?.type === "error" && "proto-note-v3-pill-error",
                 )}
                 title="Ingest pipeline — click for details"
               >
-                <span className="proto-note-header-progress-dot" />
+                <span className="proto-note-v3-pill-dot" />
                 <span>{progressLabel}</span>
-                {progressCount && <span className="proto-note-header-progress-count">{progressCount}</span>}
+                {progressCount && <span style={{ opacity: 0.7 }}>{progressCount}</span>}
               </motion.button>
             )}
           </AnimatePresence>
-          <button
-            type="button"
-            onClick={() => setShowReorganize(true)}
-            className="proto-note-header-icon-btn"
-            title="Reorganize note by tag — destructive rewrite with snapshot"
-          >
-            <Shuffle size={14} strokeWidth={2} />
-          </button>
+
           <button
             type="button"
             onClick={() => setShowIngest(true)}
-            className="proto-note-header-icon-btn"
-            title="Ingest"
+            className="proto-note-v3-btn"
+            title="Re-ingest this note"
           >
-            <Database size={14} strokeWidth={2} />
+            <RotateCw size={12} strokeWidth={2} /> Re-ingest
+          </button>
+
+          <button
+            type="button"
+            onClick={handleCopyAsMcp}
+            className="proto-note-v3-btn"
+            title="Copy note as MCP-context for Claude / Cursor"
+          >
+            <Copy size={12} strokeWidth={2} />
+            {copiedMcp ? "Copied" : "Copy as MCP"}
+          </button>
+
+          <button
+            type="button"
+            onClick={handleSaveClick}
+            className="proto-note-v3-btn proto-note-v3-btn-primary"
+            disabled={!dirty}
+            title={dirty ? "Save · ⌘S" : "Already saved"}
+          >
+            <Save size={12} strokeWidth={2} /> Save
+          </button>
+
+          {/* Secondary icon-button row */}
+          <button
+            type="button"
+            onClick={() => setSidebarOpen((v) => !v)}
+            className="proto-note-v3-btn proto-note-v3-btn-icon"
+            aria-pressed={sidebarOpen}
+            title="Toggle Views sidebar"
+          >
+            <PanelLeft size={13} strokeWidth={2} />
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowReorganize(true)}
+            className="proto-note-v3-btn proto-note-v3-btn-icon"
+            title="Reorganize note by tag (destructive — snapshots first)"
+          >
+            <Shuffle size={13} strokeWidth={2} />
           </button>
           <button
             type="button"
             onClick={handlePickFile}
-            className="proto-note-header-icon-btn"
+            className="proto-note-v3-btn proto-note-v3-btn-icon"
             title="Change file"
           >
-            <FolderOpen size={14} strokeWidth={2} />
+            <FolderOpen size={13} strokeWidth={2} />
           </button>
         </div>
       </div>
 
-      {/* Editor body — sidebar (views) + editor area. The old tag strip
-          has been folded into the sidebar as "AI" auto-views. */}
-      <div className="proto-note-body">
-        <div className="proto-note-body-main">
+      {/* Body shell — collapsible sidebar + centered editor canvas */}
+      <div className="proto-note-v3-shell">
+        <aside
+          className="proto-note-v3-sidebar-wrap"
+          hidden={!sidebarOpen}
+          aria-hidden={!sidebarOpen}
+        >
           <NoteViewSidebar
             items={sidebarItems}
             activeKey={activeKey}
@@ -605,7 +687,9 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
             onAddTag={handleAddTag}
             onDeleteTag={handleDeleteTag}
           />
-        <div className="proto-note-editor-area">
+        </aside>
+        <div className="proto-note-v3-canvas">
+        <div className="proto-note-v3-canvas-inner">
           <NoteEditor
             filePath={rawPath}
             onSave={handleSave}
@@ -619,7 +703,7 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
             onSelectionChange={setEditorSelection}
           />
           {rawPath && (
-            <div className="proto-note-floating-stack">
+            <div className="proto-note-v3-floating-stack">
               {/* Add/remove selection → only meaningful for user views.
                   Auto-views are read-only (AI classification owns them). */}
               {activeView && activeKind === "user" && editorSelection.lines.length > 0 && (

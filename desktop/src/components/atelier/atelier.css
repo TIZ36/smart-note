@@ -1464,10 +1464,270 @@
 .proto-toggle[aria-checked="true"] { background: var(--color-accent); }
 .proto-toggle[aria-checked="true"]::after { transform: translateX(14px); }
 
+/* ════════════════════════════════════════════════════════════════
+   NOTE SURFACE — v3 stream-centric layout (overrides v2 proto-note-*)
+   - 44px breadcrumb bar at top (Notes / filename + small actions row)
+   - Sidebar collapses by default; toggleable via "Views" button
+   - Editor area is a centered max-760px column (calm reading width)
+   ════════════════════════════════════════════════════════════════ */
+
+.proto-note-v3 {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--color-bg-primary);
+  overflow: hidden;
+}
+
+/* ── Top bar (breadcrumb + actions) ──────────────────────────── */
+.proto-note-v3-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-primary);
+  min-height: 44px;
+}
+.proto-note-v3-crumbs {
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.proto-note-v3-crumbs strong {
+  color: var(--color-text-primary);
+  font-weight: 500;
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.proto-note-v3-crumbs-dirty {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  flex-shrink: 0;
+}
+.proto-note-v3-build {
+  font-size: 10.5px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.proto-note-v3-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  align-items: center;
+}
+.proto-note-v3-btn {
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  background: var(--color-bg-primary);
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: color 160ms ease-out, border-color 160ms ease-out, background 160ms ease-out;
+}
+.proto-note-v3-btn:hover {
+  color: var(--color-text-primary);
+  border-color: var(--color-text-muted);
+}
+.proto-note-v3-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.proto-note-v3-btn-primary {
+  background: var(--color-accent);
+  color: var(--color-bg-primary);
+  border-color: var(--color-accent);
+  font-weight: 500;
+}
+.proto-note-v3-btn-primary:hover {
+  color: var(--color-bg-primary);
+  opacity: 0.92;
+  border-color: var(--color-accent);
+}
+.proto-note-v3-btn-primary[aria-disabled="true"],
+.proto-note-v3-btn-primary:disabled {
+  background: var(--color-bg-elevated);
+  color: var(--color-text-muted);
+  border-color: var(--color-border);
+  cursor: default;
+}
+.proto-note-v3-btn-icon {
+  width: 28px;
+  padding: 0;
+  justify-content: center;
+}
+.proto-note-v3-btn[aria-pressed="true"] {
+  background: color-mix(in oklab, var(--color-accent) 14%, transparent);
+  color: var(--color-accent);
+  border-color: transparent;
+}
+
+/* Ingest progress pill — kept from v2 but restyled to v3 */
+.proto-note-v3-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  font-family: inherit;
+}
+.proto-note-v3-pill-dot {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--color-text-muted);
+}
+.proto-note-v3-pill-active .proto-note-v3-pill-dot {
+  background: var(--color-accent);
+  animation: proto-note-pulse 1.6s ease-out infinite;
+}
+.proto-note-v3-pill-done .proto-note-v3-pill-dot { background: var(--color-success); }
+.proto-note-v3-pill-error { color: var(--color-danger); }
+.proto-note-v3-pill-error .proto-note-v3-pill-dot { background: var(--color-danger); }
+.proto-note-v3-pill-warning { color: var(--color-warning); }
+.proto-note-v3-pill-warning .proto-note-v3-pill-dot { background: var(--color-warning); }
+
+@keyframes proto-note-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--color-accent) 22%, transparent); }
+  50%      { box-shadow: 0 0 0 4px color-mix(in oklab, var(--color-accent) 12%, transparent); }
+}
+
+/* ── Body shell: collapsible sidebar + canvas ──────────────── */
+.proto-note-v3-shell {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+.proto-note-v3-sidebar-wrap {
+  width: 240px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.proto-note-v3-sidebar-wrap[hidden] { display: none; }
+
+.proto-note-v3-canvas {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--color-bg-primary);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+.proto-note-v3-canvas-inner {
+  max-width: 760px;
+  width: 100%;
+  margin: 0 auto;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* The CodeMirror editor lives directly inside canvas-inner. We just
+   give it room to breathe — generous left/right padding so writing
+   doesn't bump the rail or sidebar edge. */
+.proto-note-v3-canvas-inner > .cm-editor,
+.proto-note-v3-canvas-inner > div:not(.proto-note-v3-floating-stack) {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Floating action stack (bookmarks, packs, jump-to-bottom) */
+.proto-note-v3-floating-stack {
+  position: absolute;
+  right: 16px;
+  top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 1;
+}
+
+/* ── Empty state (no rawPath) — calm + minimal ───────────────── */
+.proto-note-v3-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 24px;
+  background: var(--color-bg-primary);
+}
+.proto-note-v3-empty-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 380px;
+}
+.proto-note-v3-empty-eyebrow {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+.proto-note-v3-empty-title {
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+.proto-note-v3-empty-desc {
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
+  line-height: 1.55;
+  margin: 0;
+}
+.proto-note-v3-empty-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
 /* Reduced-motion respect */
 @media (prefers-reduced-motion: reduce) {
   .proto-modal-backdrop,
   .proto-modal { animation: none; }
   .proto-atelier-bottom-progress-fill { transition: none; }
   .proto-toggle::after { transition: none; }
+  .proto-note-v3-pill-active .proto-note-v3-pill-dot { animation: none; }
 }
