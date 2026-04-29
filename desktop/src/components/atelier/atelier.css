@@ -219,6 +219,31 @@
   padding: 0;
 }
 .proto-atelier-bottom-cmd:hover { color: var(--color-text-primary); }
+
+/* Live "Now reading: <agent>" badge in the ambient bar. Pulse-dot
+ * mirrors the v3 prototype's agent-active state. */
+.proto-atelier-bottom-agent {
+  color: var(--color-accent);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.proto-atelier-bottom-agent strong { font-weight: 500; }
+.proto-atelier-bottom-agent-pulse {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  box-shadow: 0 0 0 0 color-mix(in oklab, var(--color-accent) 40%, transparent);
+  animation: proto-atelier-agent-pulse 1.6s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+  flex-shrink: 0;
+}
+@keyframes proto-atelier-agent-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--color-accent) 40%, transparent); }
+  50%      { box-shadow: 0 0 0 5px color-mix(in oklab, var(--color-accent) 14%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .proto-atelier-bottom-agent-pulse { animation: none; }
+}
 .proto-atelier-bottom-cmd kbd {
   font-family: inherit;
   font-size: 10.5px;

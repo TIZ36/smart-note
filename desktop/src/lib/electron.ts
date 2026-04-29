@@ -89,6 +89,28 @@ export function onWikiIngestStatus(
   );
 }
 
+/* Cloud-pushed event types streamed over the /v1/device/relay WS.
+ * The desktop's main process forwards each one to renderers via
+ * the "smartnote:ws-event" IPC channel; here we surface them with
+ * a typed handler for ergonomic React consumption. */
+export type WsEvent =
+  | { type: "agent_active"; agent: string; tool: string; method: string; at: string }
+  | { type: "enrich_done"; document_id: string; document_name?: string; at: string }
+  | { type: "memory_proposed"; proposal_id: string; agent?: string; at: string }
+  | { type: "search_recorded"; query: string; author: string; at: string }
+  | { type: "hello-ack"; workspace_id: string; device_id: string }
+  | { type: string; [k: string]: unknown };
+
+export function onWsEvent(
+  handler: (event: WsEvent) => void
+): () => void {
+  const d = window.desktop as unknown as {
+    onWsEvent?: (cb: (data: WsEvent) => void) => () => void;
+  };
+  if (!d?.onWsEvent) return () => {};  // browser preview / older preload
+  return d.onWsEvent(handler);
+}
+
 export async function getIngestStatus(): Promise<{ noteIngestRunning: boolean; wikiIngestRunning: boolean }> {
   return getDesktop().invoke("get_ingest_status") as Promise<{ noteIngestRunning: boolean; wikiIngestRunning: boolean }>;
 }

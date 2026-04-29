@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import * as cloudApi from "@/lib/cloud-api";
+import { useAgentActivity } from "@/hooks/useAgentActivity";
 
 /* 32px ambient bottom bar — always visible, never demanding.
  *
@@ -30,6 +31,7 @@ export function BottomBar({
   onOpenWorkspace: () => void;
 }) {
   const [snap, setSnap] = useState<Snapshot | null>(null);
+  const agent = useAgentActivity();
 
   useEffect(() => {
     let alive = true;
@@ -114,6 +116,24 @@ export function BottomBar({
                 opacity: liveProgress === null ? 0.4 : 0.85,
               }}
             />
+          </span>
+        </>
+      )}
+
+      {/* Live agent activity — fed by /v1/device/relay agent_active
+       * events (cloud broadcasts each MCP tool call). Decays to
+       * idle 8s after the last hit. */}
+      {agent && (
+        <>
+          <span className="proto-atelier-bottom-sep" aria-hidden="true">·</span>
+          <span className="proto-atelier-bottom-item proto-atelier-bottom-agent">
+            <span className="proto-atelier-bottom-agent-pulse" aria-hidden="true" />
+            <span>
+              <strong>{agent.agent}</strong>
+              {agent.tool && (
+                <span style={{ color: "var(--color-text-muted)" }}> · {agent.tool}</span>
+              )}
+            </span>
           </span>
         </>
       )}

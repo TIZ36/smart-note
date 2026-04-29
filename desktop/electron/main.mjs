@@ -368,15 +368,31 @@ app.whenReady().then(() => {
   // Lazy-imported to avoid the module-init order dance with the
   // service file declared further down.
   import("./services/sync.mjs").then((m) => m.startHeartbeat()).catch(() => {});
+
+  // Start the long-lived WS to /v1/device/relay. Carries real-time
+  // events (agent_active, enrich_done, memory_proposed, search_recorded)
+  // FROM cloud TO renderer. Bound to the focused window's webContents
+  // — events are forwarded as IPC "smartnote:ws-event".
+  import("./services/ws-presence.mjs").then((m) => {
+    m.setEmit((payload) => {
+      const allWindows = BrowserWindow.getAllWindows();
+      for (const w of allWindows) {
+        try { w.webContents.send("smartnote:ws-event", payload); } catch {}
+      }
+    });
+    m.start();
+  }).catch(() => {});
+
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 
 app.on("before-quit", () => {
-  // Stop heartbeat cleanly so the device shows offline within the
-  // 60s window after the user quits, not after JWT cache TTL.
+  // Stop heartbeat + WS cleanly so the device shows offline within
+  // the 60s window after the user quits.
   import("./services/sync.mjs").then((m) => m.stopHeartbeat()).catch(() => {});
+  import("./services/ws-presence.mjs").then((m) => m.stop()).catch(() => {});
 });
 
 app.on("window-all-closed", () => {
