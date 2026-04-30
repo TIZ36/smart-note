@@ -145,7 +145,11 @@ def main() -> int:
             ),
         )
         ingest = sn.documents.ingest(doc["id"])
-        print(f"  doc={doc['id'][:8]}… ingested {ingest['chunks']} chunk(s)")
+        # /v1/ingest/document returns chunk_count (legacy endpoint
+        # returned 'chunks'). Tolerate either so older builds keep
+        # working through the demo.
+        n = ingest.get("chunk_count", ingest.get("chunks", 0))
+        print(f"  doc={doc['id'][:8]}… ingested {n} chunk(s)")
 
         section("Retrieve (hybrid)")
         # Vector + lexical: asks about retrieval design, should hit both
