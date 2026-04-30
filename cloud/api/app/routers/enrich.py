@@ -253,6 +253,22 @@ async def run_enrich(
             "VALUES ($1, $2, 'queued') RETURNING *",
             ws_uuid, doc_uuid,
         )
+    # Open the canonical processing_runs row for this enrich call.
+    # The explicit-run route at /v1/processing/.../run already does
+    # this, but legacy callers (BYOK debug, MCP-initiated requests
+    # that hit /v1/enrich/run directly) skipped the ledger entirely.
+    # finish_latest() in _write_segments_done closes whichever row
+    # was opened, so wiring start() here is sufficient.
+    try:
+        from app.services import processing_runs as runs_ledger
+        await runs_ledger.start(
+            workspace_id=identity.workspace_id, document_id=str(doc_uuid),
+            kind="ai_enrich", revision=0,
+            executor="dispatcher" if req.provider is None else "cloud_pool",
+            api_key_id=identity.api_key_id,
+        )
+    except Exception:
+        log.exception("processing_runs.start skipped (doc=%s)", doc_uuid)
 
     # Inline BYOK debug path: provider supplied in request body.
     if req.provider is not None:
@@ -450,6 +466,26 @@ async def submit_job(
                     "total_tokens": req.total_tokens,
                 }),
             )
+    # Close the canonical processing_runs row if one was opened by an
+    # earlier call. submit_job's job was created via /v1/enrich/run,
+    # which now opens a row, so this terminates it. If the job was
+    # created by a path that bypassed the ledger, finish_latest is a
+    # no-op.
+    try:
+        from app.services import processing_runs as runs_ledger
+        await runs_ledger.finish_latest(
+            workspace_id=str(ws_uuid), document_id=str(doc_uuid),
+            kind="ai_enrich", status="done",
+            result={
+                "segments_count": len(req.segments),
+                "prompt_tokens": req.prompt_tokens,
+                "completion_tokens": req.completion_tokens,
+                "total_tokens": req.total_tokens,
+                "executor": req.executor,
+            },
+        )
+    except Exception:
+        log.exception("processing_runs.finish_latest skipped (submit_job doc=%s)", doc_uuid)
     return _row_to_out(row)
 
 
