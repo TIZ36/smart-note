@@ -162,6 +162,31 @@ async def _write_segments_done(
             }),
         )
 
+    # Close out the canonical processing_runs row that processing.py
+    # opened when this enrich was triggered via the explicit-run route.
+    # Multiple paths reach here (BYOK inline, dispatcher, submit_job
+    # endpoint, MCP-initiated enrichments) — finish_latest matches the
+    # most recent running ai_enrich row by (ws, doc) so each path closes
+    # exactly the run it caused. Calls into the route never opened a
+    # row → returns False, no-op. Best-effort, never raises.
+    try:
+        from app.services import processing_runs as runs_ledger
+        await runs_ledger.finish_latest(
+            workspace_id=str(ws_uuid),
+            document_id=str(doc_uuid),
+            kind="ai_enrich",
+            status="done",
+            result={
+                "segments_count": len(segments),
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+                "executor": executor,
+            },
+        )
+    except Exception:
+        log.exception("processing_runs.finish_latest skipped (doc=%s)", doc_uuid)
+
     # Broadcast enrich_done so any open desktop renders a real-time
     # banner/toast — addresses "wiki_enrich 完成了但是用户在 wiki 界面
     # 没感受到" feedback. Fire-and-forget, never raises.
@@ -245,6 +270,14 @@ async def run_enrich(
                     "finished_at=now() WHERE id=$1 RETURNING *",
                     job["id"], str(e),
                 )
+            try:
+                from app.services import processing_runs as runs_ledger
+                await runs_ledger.finish_latest(
+                    workspace_id=str(ws_uuid), document_id=str(doc_uuid),
+                    kind="ai_enrich", status="failed", error=str(e),
+                )
+            except Exception:
+                log.exception("processing_runs.finish_latest skipped (doc=%s)", doc_uuid)
             return _row_to_out(row)
         async with pool().acquire() as conn:
             row = await _write_segments_done(

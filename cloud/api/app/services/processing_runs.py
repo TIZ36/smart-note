@@ -95,6 +95,55 @@ async def start(
         return None
 
 
+async def finish_latest(
+    *,
+    workspace_id: str,
+    document_id: str,
+    kind: str,
+    status: str,
+    result: dict[str, Any] | None = None,
+    error: str | None = None,
+) -> bool:
+    """Close out the most recent non-terminal processing_runs row for
+    (workspace_id, document_id, kind). Returns True if a row was
+    closed. For workers that don't carry the run_id from the route
+    (e.g. enrich.py's _write_segments_done is reached from multiple
+    code paths, some of which never went through processing.py).
+
+    Best-effort: a run_id-aware caller should still prefer finish()
+    so it touches the exact row it opened.
+    """
+    try:
+        async with pool().acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                UPDATE processing_runs
+                SET status      = $4,
+                    result      = $5::jsonb,
+                    error       = $6,
+                    finished_at = now()
+                WHERE id = (
+                    SELECT id FROM processing_runs
+                    WHERE workspace_id = $1
+                      AND document_id  = $2
+                      AND kind         = $3
+                      AND status IN ('queued', 'running')
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                )
+                RETURNING id
+                """,
+                UUID(workspace_id), UUID(document_id), kind, status,
+                json.dumps(result) if result is not None else None,
+                error,
+            )
+            return row is not None
+    except Exception as e:
+        log.warning("processing_runs.finish_latest(kind=%s doc=%s) failed: %s",
+                    kind, document_id, e)
+        return False
+
+
 async def finish(
     *,
     run_id: str | None,
