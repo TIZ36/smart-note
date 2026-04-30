@@ -146,17 +146,6 @@ export type DocumentKnTagSegment = {
   summary: string;
   meta: Record<string, unknown>;
 };
-export type DocumentKnEnrichJob = {
-  id: string;
-  status: string;
-  executor: string | null;
-  attempts: number;
-  error: string | null;
-  created_at: string | null;
-  dispatched_at: string | null;
-  finished_at: string | null;
-  tokens_total: number;
-};
 export type DocumentKnChapter = {
   id: string;
   ord: number;
@@ -192,10 +181,10 @@ export type DocumentKn = {
   chunks: DocumentKnChunk[];
   tag_segments: DocumentKnTagSegment[];
   wiki_chapters: DocumentKnChapter[];
-  enrich_jobs: DocumentKnEnrichJob[];
-  /** Canonical processing-run ledger (migration 021). Write-through
-   * today — `enrich_jobs` is still authoritative for UI consumption.
-   * Exposed so KP can preview the ledger before the cutover. */
+  /** Canonical processing-run ledger (migration 021). Sole UI
+   * source of run state as of commit 4def060. enrich_jobs was
+   * removed from the response; writers stay server-side for
+   * executor (mcp_pull / ws_relay) compatibility. */
   processing_runs: DocumentKnProcessingRun[];
 };
 

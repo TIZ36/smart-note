@@ -329,9 +329,9 @@ async def get_document_kn(
 ) -> dict:
     """Knowledge view of a document — what's been computed for it:
     chunks (chunk + embed pass), tag_segments (LLM enrich pass),
-    enrich_jobs history. One round-trip for the desktop's Library
-    KN tab so it can render the actual processed state instead of
-    placeholders.
+    wiki_chapters (Phase B), processing_runs (canonical run ledger).
+    One round-trip for the desktop's Library KN tab so it can render
+    the actual processed state instead of placeholders.
     """
     ws = UUID(identity.workspace_id)
     doc = UUID(document_id)
@@ -390,17 +390,10 @@ async def get_document_kn(
                 doc, ws,
             )
             wiki_chapters = []
-        jobs = await conn.fetch(
-            "SELECT id, status, executor, attempts, error, created_at, "
-            "       dispatched_at, finished_at, result "
-            "FROM enrich_jobs WHERE document_id=$1 "
-            "ORDER BY created_at DESC LIMIT 10",
-            doc,
-        )
-        # processing_runs (new canonical ledger) — read-only preview
-        # alongside enrich_jobs while the migration off the legacy
-        # surface is in flight. Kinds covered: chunk_embed, ai_enrich,
-        # wiki_abstract.
+        # processing_runs is the canonical run ledger as of commit
+        # 4def060 — UI consumers read from here. enrich_jobs is no
+        # longer surfaced (writers stay for mcp_pull / ws_relay
+        # executor compatibility; full retirement is the next pass).
         runs = await conn.fetch(
             "SELECT id, kind, status, executor, error, revision, "
             "       created_at, started_at, finished_at, result "
@@ -487,24 +480,6 @@ async def get_document_kn(
                     _json.loads(t["meta"]) if t["meta"] else {}
                 )),
             } for t in tag_segs
-        ],
-        "enrich_jobs": [
-            {
-                "id": str(j["id"]),
-                "status": j["status"],
-                "executor": j["executor"],
-                "attempts": int(j["attempts"] or 0),
-                "error": j["error"],
-                "created_at": j["created_at"].isoformat() if j["created_at"] else None,
-                "dispatched_at": j["dispatched_at"].isoformat() if j["dispatched_at"] else None,
-                "finished_at": j["finished_at"].isoformat() if j["finished_at"] else None,
-                "tokens_total": (
-                    (j["result"] if isinstance(j["result"], dict) else (
-                        _json.loads(j["result"]) if j["result"] else {}
-                    )).get("total_tokens", 0)
-                    if j["result"] else 0
-                ),
-            } for j in jobs
         ],
         "processing_runs": [
             {

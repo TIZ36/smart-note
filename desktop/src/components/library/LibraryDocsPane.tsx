@@ -173,7 +173,7 @@ export function LibraryDocsPane({ onOpenSource }: Props) {
     return () => { alive = false; };
   }, [activeId]);
 
-  // Fetch KN payload (chunks + tag_segments + enrich_jobs) lazily —
+  // Fetch KN payload (chunks + tag_segments + processing_runs) lazily —
   // only when the user opens KN mode. Cached per activeId so flipping
   // back from Raw doesn't re-fetch.
   useEffect(() => {
@@ -460,7 +460,7 @@ export function LibraryDocsPane({ onOpenSource }: Props) {
  *   Wiki  → Pipeline · Chunks · Chapters · Enrich
  *
  * Pipeline status badges read directly from the /v1/documents/{id}/kn
- * payload (chunks / tag_segments / wiki_chapters / enrich_jobs counts)
+ * payload (chunks / tag_segments / wiki_chapters / processing_runs counts)
  * — NOT from metadata flags. metadata.enrich_status / ai_tags lag the
  * actual processing state, which is why KP and Library disagreed
  * before. Single source of truth = the KN endpoint.
