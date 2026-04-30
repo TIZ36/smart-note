@@ -217,12 +217,20 @@ async def summarize_document(workspace_id: str, document_id: str) -> dict:
                 # entity-link plumbing; tag is the chapter anchor so
                 # the topology can attribute mentions back to the
                 # chapter even after edits.
+                # Best-effort: a malformed entity payload must not roll
+                # back the chapter UPDATE that just landed (the whole
+                # loop runs inside one transaction).
                 if cs.entities:
-                    await upsert_entities_for_segments(
-                        conn, workspace_id,
-                        [{"tag": f"wiki:{cs.title}", "entities": cs.entities}],
-                        source_kind="wiki_chapter",
-                    )
+                    try:
+                        await upsert_entities_for_segments(
+                            conn, workspace_id,
+                            [{"tag": f"wiki:{cs.title}", "entities": cs.entities}],
+                        )
+                    except Exception as e:
+                        log.warning(
+                            "wiki entity upsert failed for chapter %s: %s",
+                            cs.chapter_id, e,
+                        )
                 summarized += 1
 
     return {
