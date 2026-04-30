@@ -58,7 +58,7 @@ export function LibraryDocsPane({ onOpenSource }: Props) {
   //   Wiki  → Pipeline · Chunks · Chapters · Enrich history
   // Resets to "pipeline" whenever the active doc changes so the user
   // doesn't land on a wiki-only tab after switching to a note (and v.v.).
-  const [knTab, setKnTab] = useState<"pipeline" | "chunks" | "tags" | "chapters" | "enrich">("pipeline");
+  const [knTab, setKnTab] = useState<KnTab>("pipeline");
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function reload() {
@@ -465,7 +465,7 @@ export function LibraryDocsPane({ onOpenSource }: Props) {
  * actual processing state, which is why KP and Library disagreed
  * before. Single source of truth = the KN endpoint.
  */
-type KnTab = "pipeline" | "chunks" | "tags" | "chapters" | "enrich";
+type KnTab = "pipeline" | "chunks" | "tags" | "chapters" | "enrich" | "runs";
 
 function KnView({
   doc, knData, knLoading, knTab, onKnTab, isWiki,
@@ -487,6 +487,7 @@ function KnView({
       ? { key: "chapters", label: "Chapters", count: knData?.wiki_chapters.length ?? 0 }
       : { key: "tags", label: "Tag segments", count: knData?.tag_segments.length ?? 0 },
     { key: "enrich", label: "Enrich", count: knData?.enrich_jobs.length ?? 0 },
+    { key: "runs", label: "Runs", count: knData?.processing_runs?.length ?? 0 },
   ];
   // Snap back to pipeline if the active tab disappeared (e.g. doc
   // re-classified from note → wiki while open).
@@ -529,6 +530,9 @@ function KnView({
         )}
         {knTab === "enrich" && (
           <EnrichHistoryTab knData={knData} knLoading={knLoading} />
+        )}
+        {knTab === "runs" && (
+          <ProcessingRunsTab knData={knData} knLoading={knLoading} />
         )}
       </div>
     </div>
@@ -878,6 +882,73 @@ function EnrichHistoryTab({ knData, knLoading }: { knData: cloudApi.DocumentKn |
             {fmtDate(j.finished_at || j.dispatched_at || j.created_at || "")}
           </span>
           {j.error && <span title={j.error} style={{ color: "var(--color-danger)" }}>!</span>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ProcessingRunsTab({ knData, knLoading }: { knData: cloudApi.DocumentKn | null; knLoading: boolean }) {
+  if (knLoading) return <KnEmpty msg="loading…" />;
+  const runs = knData?.processing_runs ?? [];
+  if (runs.length === 0) {
+    return <KnEmpty msg="No processing runs recorded yet for this document." />;
+  }
+  // Group by kind so the chronological list is easier to scan when a
+  // doc has been re-embedded + re-enriched several times.
+  const kindLabel: Record<string, string> = {
+    chunk_embed: "embed",
+    ai_enrich: "enrich",
+    wiki_abstract: "wiki abstract",
+  };
+  const statusTone: Record<string, string> = {
+    done: "proto-tag-accent",
+    partial: "proto-tag-warn",
+    running: "proto-tag-running",
+    queued: "proto-tag-running",
+    failed: "",
+    skipped_dedup: "",
+    skipped_quota: "",
+  };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11 }}>
+      <div className="proto-form-hint" style={{ marginBottom: 6 }}>
+        Canonical processing-run ledger (write-through preview). Will replace the
+        Enrich tab's per-kind history once consumers migrate.
+      </div>
+      {runs.map((r) => (
+        <div
+          key={r.id}
+          style={{
+            display: "flex", alignItems: "center", gap: 8,
+            padding: "6px 8px", borderRadius: 4,
+            background: "var(--color-bg-soft)",
+            opacity: r.status.startsWith("skipped") ? 0.6 : 1,
+          }}
+        >
+          <span className={cn("proto-tag")} style={{ minWidth: 88 }}>
+            {kindLabel[r.kind] || r.kind}
+          </span>
+          <span className={cn("proto-tag", statusTone[r.status] || "")}>{r.status}</span>
+          {r.executor && (
+            <span style={{ color: "var(--color-text-muted)" }}>{r.executor}</span>
+          )}
+          {r.revision > 0 && (
+            <span style={{ color: "var(--color-text-muted)", fontSize: 10 }}>
+              rev {r.revision}
+            </span>
+          )}
+          <span style={{ marginLeft: "auto", color: "var(--color-text-muted)", fontSize: 10 }}>
+            {fmtDate(r.finished_at || r.started_at || r.created_at || "")}
+          </span>
+          {r.error && (
+            <span
+              title={r.error}
+              style={{ color: "var(--color-danger, #c0392b)", cursor: "help" }}
+            >
+              ●
+            </span>
+          )}
         </div>
       ))}
     </div>
