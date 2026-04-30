@@ -24,6 +24,7 @@ import logging
 from dataclasses import dataclass
 from uuid import UUID
 
+from app.common import ws_registry
 from app.common.db import pool
 from app.infra.canonical import canonical_sha, canonicalize
 from app.services.enrich.classifier import ProviderConfig, _call_llm
@@ -92,6 +93,22 @@ def _parse_response(raw: str) -> dict:
     except json.JSONDecodeError:
         log.warning("wiki Phase B response was not valid JSON: %r", raw[:200])
         return {}
+
+
+def _emit_progress(workspace_id: str, document_id: str, **fields) -> None:
+    """Fire-and-forget progress broadcast. Never raises — callers don't
+    have to guard. Stamped with `at` so the client can dedupe / order."""
+    from datetime import datetime, timezone
+    payload = {
+        "type": "wiki_abstract_progress",
+        "document_id": document_id,
+        "at": datetime.now(timezone.utc).isoformat(),
+        **fields,
+    }
+    try:
+        asyncio.create_task(ws_registry.broadcast(workspace_id, payload))
+    except Exception:  # pragma: no cover
+        log.exception("wiki progress broadcast failed")
 
 
 async def summarize_document(workspace_id: str, document_id: str) -> dict:
@@ -163,6 +180,17 @@ async def summarize_document(workspace_id: str, document_id: str) -> dict:
             "failed": 0, "prompt_tokens": 0, "completion_tokens": 0,
         }
 
+    # Tell the client the run is live so the KP page can flip from
+    # "queued" to "running 0/N" the moment the route lands. Without
+    # this the UI would sit blank until the first chapter UPDATE.
+    _emit_progress(
+        workspace_id, document_id,
+        phase="started",
+        total=len(work_items),
+        summarized=0,
+        failed=0,
+    )
+
     # ── Bounded-parallel LLM calls ──
     sem = asyncio.Semaphore(min(MAX_PARALLEL_CHAPTERS, cfg.max_concurrency))
 
@@ -193,11 +221,19 @@ async def summarize_document(workspace_id: str, document_id: str) -> dict:
     results = await asyncio.gather(*[one(*w) for w in work_items])
 
     summarized = failed = 0
+    total_work = len(work_items)
     async with pool().acquire() as conn:
         async with conn.transaction():
             for cs in results:
                 if cs is None:
                     failed += 1
+                    _emit_progress(
+                        workspace_id, document_id,
+                        phase="chapter_failed",
+                        total=total_work,
+                        summarized=summarized,
+                        failed=failed,
+                    )
                     continue
                 await conn.execute(
                     """
@@ -232,6 +268,15 @@ async def summarize_document(workspace_id: str, document_id: str) -> dict:
                             cs.chapter_id, e,
                         )
                 summarized += 1
+                _emit_progress(
+                    workspace_id, document_id,
+                    phase="chapter_done",
+                    chapter_id=str(cs.chapter_id),
+                    chapter_title=cs.title,
+                    total=total_work,
+                    summarized=summarized,
+                    failed=failed,
+                )
 
     return {
         "chapters": len(chapters),

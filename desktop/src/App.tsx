@@ -253,6 +253,20 @@ export default function App() {
             detail: { document_id: docId, kind: "ai_enrich" },
           }));
         }
+      } else if (e.type === "wiki_abstract_progress") {
+        const ev = e as {
+          document_id?: string;
+          phase?: string;
+          total?: number;
+          summarized?: number;
+          failed?: number;
+          chapter_title?: string;
+        };
+        if (ev.document_id) {
+          window.dispatchEvent(new CustomEvent("smartnote:wiki-abstract-progress", {
+            detail: ev,
+          }));
+        }
       } else if (e.type === "wiki_abstract_done") {
         const ev = e as { document_id?: string; chapters?: number; summarized?: number; failed?: number };
         const docId = ev.document_id || "";

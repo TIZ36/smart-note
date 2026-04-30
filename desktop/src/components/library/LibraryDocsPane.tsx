@@ -543,6 +543,43 @@ function PipelineStatus({
   knLoading: boolean;
   isWiki: boolean;
 }) {
+  // Live wiki-abstract progress for THIS doc. wiki_abstract_progress
+  // events from cloud arrive via App.tsx → CustomEvent. We snapshot
+  // {summarized, failed, total} so the R badge can show "3/12" while
+  // the run is in flight, without waiting for the terminal /kn
+  // refetch (which only lands on _done).
+  const [liveProgress, setLiveProgress] = useState<{
+    summarized: number; failed: number; total: number;
+  } | null>(null);
+  useEffect(() => {
+    function handler(ev: Event) {
+      const detail = (ev as CustomEvent<{
+        document_id?: string;
+        phase?: string;
+        total?: number;
+        summarized?: number;
+        failed?: number;
+      }>).detail;
+      if (!detail || detail.document_id !== doc.id) return;
+      setLiveProgress({
+        summarized: detail.summarized ?? 0,
+        failed: detail.failed ?? 0,
+        total: detail.total ?? 0,
+      });
+    }
+    window.addEventListener("smartnote:wiki-abstract-progress", handler);
+    function done(ev: Event) {
+      const detail = (ev as CustomEvent<{ document_id?: string; kind?: string }>).detail;
+      if (detail?.document_id === doc.id && detail?.kind === "wiki_abstract") {
+        setLiveProgress(null);
+      }
+    }
+    window.addEventListener("smartnote:doc-pipeline-changed", done);
+    return () => {
+      window.removeEventListener("smartnote:wiki-abstract-progress", handler);
+      window.removeEventListener("smartnote:doc-pipeline-changed", done);
+    };
+  }, [doc.id]);
   // ── Source-of-truth derivation ──
   // All badges read from the /v1/documents/{id}/kn payload, NOT from
   // metadata flags. metadata can lag the actual processed state.
@@ -612,11 +649,19 @@ function PipelineStatus({
             E: embed{embedded ? ` (${chunkCount})` : " · pending"}
           </span>
           <span
-            className={cn("proto-tag", rDone && "proto-tag-accent")}
-            title={rDetail}
+            className={cn(
+              "proto-tag",
+              rDone && "proto-tag-accent",
+              liveProgress && "proto-tag-running",
+            )}
+            title={liveProgress
+              ? `${liveProgress.summarized}/${liveProgress.total} summarized · ${liveProgress.failed} failed (live)`
+              : rDetail}
           >
             R: {rLabel}
-            {isWiki
+            {liveProgress
+              ? ` (${liveProgress.summarized}/${liveProgress.total}…)`
+              : isWiki
               ? (summarizedChapters > 0 ? ` (${summarizedChapters}/${chapterCount})` : " · pending")
               : (segmentCount > 0 ? ` (${segmentCount})` : " · pending")}
           </span>
