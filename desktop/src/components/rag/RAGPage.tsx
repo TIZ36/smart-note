@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   FileText, BookOpen, Sparkles, Database, Hash, Network as NetworkIcon,
   CheckSquare, Square, RotateCw, Plus, X, Edit3, Layers,
@@ -727,6 +727,14 @@ export function RAGPage() {
             });
           }} />
 
+          {/* Workspace-wide recent runs from the canonical processing_runs
+              ledger — covers MCP-triggered, auto-ingest, and explicit-
+              run paths uniformly. Refreshes when any pipeline event
+              fires for any doc, so users see results land without
+              reloading the page. */}
+          <RecentRunsFeed />
+
+
           {/* 6 retrieval paths — rebuild only where it makes sense
               (per-path status pill explains: embed / auto / query /
               enrich; rebuild button only on the 3 paths that actually
@@ -886,6 +894,109 @@ export function RAGPage() {
       </div>
     </div>
   );
+}
+
+function RecentRunsFeed() {
+  const [runs, setRuns] = useState<cloudApi.RecentRun[] | null>(null);
+  const [collapsed, setCollapsed] = useState(false);
+  const reload = React.useCallback(async () => {
+    try {
+      const list = await cloudApi.listRecentRuns(30);
+      setRuns(list);
+    } catch {
+      setRuns([]);
+    }
+  }, []);
+  useEffect(() => {
+    reload();
+    function onPipelineChange() { reload(); }
+    function onWikiProgress() { reload(); }
+    window.addEventListener("smartnote:doc-pipeline-changed", onPipelineChange);
+    window.addEventListener("smartnote:wiki-abstract-progress", onWikiProgress);
+    return () => {
+      window.removeEventListener("smartnote:doc-pipeline-changed", onPipelineChange);
+      window.removeEventListener("smartnote:wiki-abstract-progress", onWikiProgress);
+    };
+  }, [reload]);
+  if (runs === null) return null;
+  if (runs.length === 0) return null;
+  const kindLabel: Record<string, string> = {
+    chunk_embed: "embed",
+    ai_enrich: "enrich",
+    wiki_abstract: "wiki",
+  };
+  return (
+    <section className="proto-atelier-rag-section">
+      <div className="proto-atelier-rag-section-head">
+        <h3 className="proto-atelier-rag-section-title">
+          Recent runs · processing ledger
+        </h3>
+        <button
+          type="button"
+          onClick={() => setCollapsed((v) => !v)}
+          style={{
+            background: "transparent", border: 0, cursor: "pointer",
+            color: "var(--color-text-muted)", fontSize: 11,
+          }}
+        >
+          {collapsed ? "show" : "hide"} ({runs.length})
+        </button>
+      </div>
+      {!collapsed && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 11 }}>
+          {runs.map((r) => (
+            <div
+              key={r.id}
+              style={{
+                display: "flex", alignItems: "center", gap: 8,
+                padding: "5px 8px", borderRadius: 4,
+                background: "var(--color-bg-soft)",
+                opacity: r.status.startsWith("skipped") ? 0.6 : 1,
+              }}
+              title={r.error || ""}
+            >
+              <span className="proto-tag" style={{ minWidth: 56 }}>
+                {kindLabel[r.kind] || r.kind}
+              </span>
+              <span
+                className={cn(
+                  "proto-tag",
+                  r.status === "done" && "proto-tag-accent",
+                  r.status === "partial" && "proto-tag-warn",
+                  (r.status === "running" || r.status === "queued") && "proto-tag-running",
+                )}
+              >
+                {r.status}
+              </span>
+              <span style={{ color: "var(--color-text-secondary)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {r.document_name || r.document_id.slice(0, 8)}
+              </span>
+              {r.executor && (
+                <span style={{ color: "var(--color-text-muted)", fontSize: 10 }}>{r.executor}</span>
+              )}
+              <span style={{ color: "var(--color-text-muted)", fontSize: 10 }}>
+                {fmtRelative(r.finished_at || r.started_at || r.created_at || "")}
+              </span>
+              {r.error && (
+                <span style={{ color: "var(--color-danger, #c0392b)" }}>●</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function fmtRelative(iso: string): string {
+  if (!iso) return "—";
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return "—";
+  const d = (Date.now() - t) / 1000;
+  if (d < 60) return `${Math.round(d)}s ago`;
+  if (d < 3600) return `${Math.round(d / 60)}m ago`;
+  if (d < 86400) return `${Math.round(d / 3600)}h ago`;
+  return `${Math.round(d / 86400)}d ago`;
 }
 
 function StatusDot({ on, title, letter }: { on: boolean; title: string; letter: string }) {

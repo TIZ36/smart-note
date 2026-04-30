@@ -43,6 +43,65 @@ def _broadcast(workspace_id: str, payload: dict) -> None:
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/processing", tags=["processing"])
 
+
+class RecentRun(BaseModel):
+    id: str
+    document_id: str
+    document_name: str | None = None
+    kind: str
+    status: str
+    executor: str | None = None
+    error: str | None = None
+    revision: int = 0
+    created_at: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+
+
+@router.get(
+    "/recent",
+    response_model=list[RecentRun],
+    dependencies=[Depends(require_scope("documents:read"))],
+)
+async def list_recent_runs(
+    identity: Identity = Depends(current_identity),
+    limit: int = 50,
+) -> list[RecentRun]:
+    """Workspace-wide recent processing_runs feed for the KP page.
+    Joins documents.name so the UI doesn't need a second roundtrip
+    per row."""
+    limit = max(1, min(int(limit), 200))
+    async with pool().acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT r.id, r.document_id, d.name AS document_name,
+                   r.kind, r.status, r.executor, r.error, r.revision,
+                   r.created_at, r.started_at, r.finished_at
+            FROM processing_runs r
+            LEFT JOIN documents d ON d.id = r.document_id
+            WHERE r.workspace_id = $1
+            ORDER BY r.created_at DESC
+            LIMIT $2
+            """,
+            UUID(identity.workspace_id), limit,
+        )
+    return [
+        RecentRun(
+            id=str(r["id"]),
+            document_id=str(r["document_id"]),
+            document_name=r["document_name"],
+            kind=r["kind"],
+            status=r["status"],
+            executor=r["executor"],
+            error=r["error"],
+            revision=int(r["revision"] or 0),
+            created_at=r["created_at"].isoformat() if r["created_at"] else None,
+            started_at=r["started_at"].isoformat() if r["started_at"] else None,
+            finished_at=r["finished_at"].isoformat() if r["finished_at"] else None,
+        )
+        for r in rows
+    ]
+
 ProcessingKind = Literal["chunk_embed", "ai_enrich", "wiki_abstract"]
 
 

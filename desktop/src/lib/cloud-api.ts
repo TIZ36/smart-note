@@ -238,6 +238,22 @@ export const buildWikiAbstract = (id: string, force = true) =>
 // Back-compat alias — same call. Older callers say "smartsheet".
 export const buildWikiSmartsheet = buildWikiAbstract;
 
+export type RecentRun = {
+  id: string;
+  document_id: string;
+  document_name: string | null;
+  kind: string;
+  status: string;
+  executor: string | null;
+  error: string | null;
+  revision: number;
+  created_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+};
+export const listRecentRuns = (limit = 50) =>
+  call<RecentRun[]>("GET", `/v1/processing/recent?limit=${encodeURIComponent(limit)}`);
+
 export const createDocument = (req: {
   name: string;
   content: string;
