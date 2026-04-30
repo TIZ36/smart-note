@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 from app.common import ws_registry
 from app.common.db import pool
 from app.deps import Identity, current_identity, require_billing_scope, require_scope
+from app.services import processing_runs as runs_ledger
 
 
 def _broadcast(workspace_id: str, payload: dict) -> None:
@@ -105,16 +106,22 @@ async def run_processing(
 
     if req.kind == "wiki_abstract":
         # Inline execution path — sufficient for v1.2 Phase B and the
-        # initial Cloud Console UI. Once `processing_runs` is the
-        # ledger of record, this becomes "INSERT a queued run, return
-        # immediately, dispatcher picks it up".
+        # initial Cloud Console UI.
         #
-        # Until then, piggyback on enrich_jobs with executor='wiki_phase_b'
-        # so /v1/documents/{id}/kn (which queries enrich_jobs by
-        # document_id) can render the run in the Library KN "Enrich"
-        # tab. Without this, wiki documents had a permanently empty
-        # Enrich tab even after successful runs.
+        # Two ledgers run in parallel until consumers migrate:
+        #   - enrich_jobs (legacy): /kn already reads it, drives the
+        #     Library KN Enrich tab. Authoritative for the UI today.
+        #   - processing_runs (new): the canonical ledger from migration
+        #     021, write-through only — no consumer reads it yet, but
+        #     a future PR can flip /kn / KP onto it without losing
+        #     historical data.
         import json as _json
+        revision = 1 if req.force else 0
+        run_id = await runs_ledger.start(
+            workspace_id=ws, document_id=document_id, kind="wiki_abstract",
+            revision=revision, executor="wiki_phase_b",
+            api_key_id=identity.api_key_id,
+        )
         async with pool().acquire() as conn:
             job = await conn.fetchrow(
                 "INSERT INTO enrich_jobs (workspace_id, document_id, status, executor, "
@@ -133,6 +140,7 @@ async def run_processing(
                     "finished_at=now() WHERE id=$1",
                     job["id"], str(e),
                 )
+            await runs_ledger.finish(run_id=run_id, status="failed", error=str(e))
             raise
         if result.get("error"):
             async with pool().acquire() as conn:
@@ -141,6 +149,9 @@ async def run_processing(
                     "finished_at=now() WHERE id=$1",
                     job["id"], result["error"],
                 )
+            await runs_ledger.finish(
+                run_id=run_id, status="failed", error=result["error"],
+            )
             raise HTTPException(
                 status.HTTP_412_PRECONDITION_FAILED,
                 result["error"],
@@ -155,6 +166,9 @@ async def run_processing(
                 "result=$3::jsonb WHERE id=$1",
                 job["id"], final_status, _json.dumps(result),
             )
+        await runs_ledger.finish(
+            run_id=run_id, status=final_status, result=result,
+        )
         # Tell every connected desktop that this doc's wiki summaries
         # just changed so Library KN view + KP page can refetch /kn
         # without waiting for the user to reload.
@@ -185,7 +199,22 @@ async def run_processing(
             try: meta = _json.loads(meta)
             except Exception: meta = {}
         snt = meta.get("smartnote_type") if isinstance(meta, dict) else None
-        ran = await knowledge.ingest_document_for_kind(ws, document_id, snt)
+        revision = 1 if req.force else 0
+        run_id = await runs_ledger.start(
+            workspace_id=ws, document_id=document_id, kind="chunk_embed",
+            revision=revision, executor="inline",
+            api_key_id=identity.api_key_id,
+        )
+        try:
+            ran = await knowledge.ingest_document_for_kind(ws, document_id, snt)
+        except Exception as e:
+            await runs_ledger.finish(run_id=run_id, status="failed", error=str(e))
+            raise
+        await runs_ledger.finish(
+            run_id=run_id,
+            status="done" if ran else "skipped_dedup",
+            result={"smartnote_type": snt or "doc", "ran": bool(ran)},
+        )
         if ran:
             _broadcast(ws, {
                 "type": "chunk_embed_done",
@@ -193,35 +222,44 @@ async def run_processing(
                 "smartnote_type": snt or "doc",
             })
         return RunResponse(
-            run_id=f"inline:chunk_embed:{document_id}",
+            run_id=run_id or f"inline:chunk_embed:{document_id}",
             status="done" if ran else "skipped_dedup",
             dedup_skipped=not ran,
-            revision=0,
+            revision=revision,
         )
 
     if req.kind == "ai_enrich":
         from app.contexts.enrichment import service as enrichment
+        revision = 1 if req.force else 0
+        run_id = await runs_ledger.start(
+            workspace_id=ws, document_id=document_id, kind="ai_enrich",
+            revision=revision, executor="dispatcher",
+            api_key_id=identity.api_key_id,
+        )
         queued = await enrichment.queue_enrich_if_eligible(
             ws, document_id,
             smartnote_type=(doc["metadata"] or {}).get("smartnote_type")
                 if isinstance(doc["metadata"], dict) else None,
             force=req.force,
         )
+        # Note: ai_enrich is queue-based — terminal status lands in
+        # enrich.py:_write_segments_done. The processing_runs row
+        # stays `running` until the executor migration teaches that
+        # writer to call runs_ledger.finish(). For now skip-cases
+        # close out, eligible runs stay open.
+        if not queued:
+            await runs_ledger.finish(run_id=run_id, status="skipped_dedup")
         if queued:
-            # Job *queued*, not yet finished — the worker will fire
-            # enrich_done from enrich.py:_write_segments_done. We
-            # still emit a queued event so the KP page can flip the
-            # status pill to "running" immediately.
             _broadcast(ws, {
                 "type": "ai_enrich_queued",
                 "document_id": document_id,
                 "force": bool(req.force),
             })
         return RunResponse(
-            run_id=f"inline:ai_enrich:{document_id}",
+            run_id=run_id or f"inline:ai_enrich:{document_id}",
             status="done" if queued else "skipped_dedup",
             dedup_skipped=not queued,
-            revision=0,
+            revision=revision,
         )
 
     # Unreachable per the Literal type, but defensive.

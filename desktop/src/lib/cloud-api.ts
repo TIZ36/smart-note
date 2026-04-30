@@ -193,6 +193,25 @@ export type DocumentKn = {
   tag_segments: DocumentKnTagSegment[];
   wiki_chapters: DocumentKnChapter[];
   enrich_jobs: DocumentKnEnrichJob[];
+  /** Canonical processing-run ledger (migration 021). Write-through
+   * today — `enrich_jobs` is still authoritative for UI consumption.
+   * Exposed so KP can preview the ledger before the cutover. */
+  processing_runs: DocumentKnProcessingRun[];
+};
+
+export type DocumentKnProcessingRun = {
+  id: string;
+  /** chunk_embed | ai_enrich | wiki_abstract */
+  kind: string;
+  /** queued | running | done | failed | partial | skipped_dedup | skipped_quota */
+  status: string;
+  executor: string | null;
+  error: string | null;
+  revision: number;
+  created_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  result: Record<string, unknown> | null;
 };
 export const getDocumentKn = (id: string) =>
   call<DocumentKn>("GET", `/v1/documents/${id}/kn`);

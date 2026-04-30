@@ -397,6 +397,17 @@ async def get_document_kn(
             "ORDER BY created_at DESC LIMIT 10",
             doc,
         )
+        # processing_runs (new canonical ledger) — read-only preview
+        # alongside enrich_jobs while the migration off the legacy
+        # surface is in flight. Kinds covered: chunk_embed, ai_enrich,
+        # wiki_abstract.
+        runs = await conn.fetch(
+            "SELECT id, kind, status, executor, error, revision, "
+            "       created_at, started_at, finished_at, result "
+            "FROM processing_runs WHERE document_id=$1 "
+            "ORDER BY created_at DESC LIMIT 20",
+            doc,
+        )
         # G-badge truth: count entities attributed to this document via
         # tag_entities. tag_entities is workspace-scoped (the entity row
         # may have come from another doc sharing the same tag), so this
@@ -494,6 +505,22 @@ async def get_document_kn(
                     if j["result"] else 0
                 ),
             } for j in jobs
+        ],
+        "processing_runs": [
+            {
+                "id": str(r["id"]),
+                "kind": r["kind"],
+                "status": r["status"],
+                "executor": r["executor"],
+                "error": r["error"],
+                "revision": int(r["revision"] or 0),
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+                "started_at": r["started_at"].isoformat() if r["started_at"] else None,
+                "finished_at": r["finished_at"].isoformat() if r["finished_at"] else None,
+                "result": r["result"] if isinstance(r["result"], dict) else (
+                    _json.loads(r["result"]) if r["result"] else None
+                ),
+            } for r in runs
         ],
     }
 
