@@ -271,11 +271,15 @@ export default function App() {
         const ev = e as { document_id?: string; chapters?: number; summarized?: number; failed?: number };
         const docId = ev.document_id || "";
         const failed = ev.failed || 0;
+        const chapters = ev.chapters || 0;
+        const summarized = ev.summarized || 0;
         setToast({
-          message: failed > 0
-            ? `Wiki abstract: ${ev.summarized || 0}/${ev.chapters || 0} chapters · ${failed} failed`
-            : `Wiki abstract built — ${ev.summarized || 0}/${ev.chapters || 0} chapters`,
-          type: failed > 0 ? "info" : "success",
+          message: chapters === 0
+            ? "Wiki abstract: 0 chapters found. Run Embedding first to extract H2 sections."
+            : failed > 0
+            ? `Wiki abstract: ${summarized}/${chapters} chapters · ${failed} failed`
+            : `Wiki abstract built — ${summarized}/${chapters} chapters`,
+          type: chapters === 0 ? "info" : failed > 0 ? "info" : "success",
         });
         setBuildVersion((v) => v + 1);
         if (docId) {

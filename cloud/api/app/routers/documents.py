@@ -32,19 +32,33 @@ _AUTO_INGEST_KINDS = {"note", "wiki_topic"}
 def _schedule_auto_ingest(
     bg: BackgroundTasks, workspace_id: str, doc_id: str, metadata: dict | None,
 ) -> None:
+    """Schedule chunk + embed for the doc as a background task.
+
+    Dispatches BY KIND via the knowledge wiring helper so:
+      - smartnote_type='note'       → pipeline.ingest_document
+      - smartnote_type='wiki_topic' → wiki_processor.process_wiki_document
+                                      (the only path that fills
+                                      wiki_chapters; without it,
+                                      "Build wiki abstract" sees
+                                      0/0 chapters)
+    Also opens a processing_runs row + broadcasts chunk_embed_done
+    so the desktop's KP page and Library KN view see auto-ingest
+    activity in real time.
+    """
     md = metadata or {}
     snt = md.get("smartnote_type") if isinstance(md, dict) else None
     if snt not in _AUTO_INGEST_KINDS:
         return
-    from app.services.ingest.pipeline import ingest_document as _ingest
+    from app.contexts.knowledge.wiring import _record_and_run
 
     async def _runner():
         try:
-            await _ingest(workspace_id, doc_id)
+            await _record_and_run(workspace_id, doc_id, snt)
         except Exception:
             import logging
             logging.getLogger(__name__).warning(
-                "auto-ingest failed for %s/%s", workspace_id, doc_id, exc_info=True,
+                "auto-ingest failed for %s/%s (kind=%s)",
+                workspace_id, doc_id, snt, exc_info=True,
             )
 
     bg.add_task(_runner)
