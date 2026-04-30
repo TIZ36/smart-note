@@ -176,7 +176,7 @@ async def run_processing(
         )
         from app.contexts.knowledge.wiki_phase_b import summarize_document
         try:
-            result = await summarize_document(ws, document_id)
+            result = await summarize_document(ws, document_id, force=req.force)
         except Exception as e:
             log.exception("wiki_phase_b raised for doc %s", document_id)
             await runs_ledger.finish(run_id=run_id, status="failed", error=str(e))

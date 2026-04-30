@@ -268,18 +268,28 @@ export default function App() {
           }));
         }
       } else if (e.type === "wiki_abstract_done") {
-        const ev = e as { document_id?: string; chapters?: number; summarized?: number; failed?: number };
+        const ev = e as {
+          document_id?: string;
+          chapters?: number;
+          summarized?: number;
+          skipped?: number;
+          failed?: number;
+        };
         const docId = ev.document_id || "";
         const failed = ev.failed || 0;
         const chapters = ev.chapters || 0;
         const summarized = ev.summarized || 0;
+        const skipped = ev.skipped || 0;
+        const allSkipped = chapters > 0 && summarized === 0 && skipped === chapters;
         setToast({
           message: chapters === 0
             ? "Wiki abstract: 0 chapters found. Run Embedding first to extract H2 sections."
+            : allSkipped
+            ? `Wiki abstract: all ${chapters} chapters already up-to-date (no LLM call needed)`
             : failed > 0
             ? `Wiki abstract: ${summarized}/${chapters} chapters · ${failed} failed`
-            : `Wiki abstract built — ${summarized}/${chapters} chapters`,
-          type: chapters === 0 ? "info" : failed > 0 ? "info" : "success",
+            : `Wiki abstract built — ${summarized}/${chapters} chapters${skipped > 0 ? ` (${skipped} skipped)` : ""}`,
+          type: chapters === 0 || allSkipped ? "info" : failed > 0 ? "info" : "success",
         });
         setBuildVersion((v) => v + 1);
         if (docId) {

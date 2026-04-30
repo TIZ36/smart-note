@@ -121,11 +121,22 @@ def _emit_progress(workspace_id: str, document_id: str, **fields) -> None:
         log.exception("wiki progress broadcast failed")
 
 
-async def summarize_document(workspace_id: str, document_id: str) -> dict:
+async def summarize_document(
+    workspace_id: str, document_id: str, *, force: bool = False,
+) -> dict:
     """Phase B for one wiki document. Reads chapters from
     wiki_chapters, summarizes the ones whose canonical-text-sha
     differs from their stored summary_sha, writes back summary +
     keywords + linked entities.
+
+    `force=True` bypasses the per-chapter sha skip so every chapter
+    re-runs even when content is unchanged. Used by explicit
+    "rebuild" requests where the user wants to refresh against a
+    new prompt version, an updated tag vocabulary, or just retry a
+    suspect run. Without this, force=True at the route level only
+    bumps processing_runs.revision but every chapter still skips
+    against its own summary_sha — so the run completes in <1s and
+    visibly does nothing.
 
     Returns: { chapters: int, summarized: int, skipped: int,
                failed: int, prompt_tokens: int, completion_tokens: int }
@@ -173,13 +184,15 @@ async def summarize_document(workspace_id: str, document_id: str) -> dict:
 
     content_lines = (doc_row["content"] or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
 
-    # Decide which chapters need work.
+    # Decide which chapters need work. force=True bypasses the
+    # summary_sha skip so every chapter re-runs even when content
+    # is byte-identical to the last successful pass.
     work_items: list[tuple] = []  # (chapter_row, chapter_text, sha)
     skipped = 0
     for ch in chapters:
         body = "\n".join(content_lines[ch["line_start"] - 1: ch["line_end"]])
         sha = canonical_sha(body)
-        if ch["summary_sha"] == sha and sha != "":
+        if not force and ch["summary_sha"] == sha and sha != "":
             skipped += 1
             continue
         work_items.append((ch, body, sha))
