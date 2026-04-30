@@ -16,15 +16,28 @@ Scope rules (§6.4):
 
 from __future__ import annotations
 
+import asyncio as _asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
+from app.common import ws_registry
 from app.common.db import pool
 from app.deps import Identity, current_identity, require_billing_scope, require_scope
+
+
+def _broadcast(workspace_id: str, payload: dict) -> None:
+    """Fire-and-forget WS broadcast. Never raises — pipelines are
+    free to call without try/except."""
+    payload.setdefault("at", datetime.now(timezone.utc).isoformat())
+    try:
+        _asyncio.create_task(ws_registry.broadcast(workspace_id, payload))
+    except Exception:  # pragma: no cover — defensive, ws_registry shouldn't raise here
+        log.exception("processing broadcast failed: %s", payload.get("type"))
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/processing", tags=["processing"])
@@ -102,6 +115,17 @@ async def run_processing(
                 status.HTTP_412_PRECONDITION_FAILED,
                 result["error"],
             )
+        # Tell every connected desktop that this doc's wiki summaries
+        # just changed so Library KN view + KP page can refetch /kn
+        # without waiting for the user to reload.
+        _broadcast(ws, {
+            "type": "wiki_abstract_done",
+            "document_id": document_id,
+            "chapters": int(result.get("chapters") or 0),
+            "summarized": int(result.get("summarized") or 0),
+            "skipped": int(result.get("skipped") or 0),
+            "failed": int(result.get("failed") or 0),
+        })
         # Synthesize a run_id from the document — until the ledger
         # exists, callers don't have one to poll.
         return RunResponse(
@@ -124,6 +148,12 @@ async def run_processing(
             except Exception: meta = {}
         snt = meta.get("smartnote_type") if isinstance(meta, dict) else None
         ran = await knowledge.ingest_document_for_kind(ws, document_id, snt)
+        if ran:
+            _broadcast(ws, {
+                "type": "chunk_embed_done",
+                "document_id": document_id,
+                "smartnote_type": snt or "doc",
+            })
         return RunResponse(
             run_id=f"inline:chunk_embed:{document_id}",
             status="done" if ran else "skipped_dedup",
@@ -139,6 +169,16 @@ async def run_processing(
                 if isinstance(doc["metadata"], dict) else None,
             force=req.force,
         )
+        if queued:
+            # Job *queued*, not yet finished — the worker will fire
+            # enrich_done from enrich.py:_write_segments_done. We
+            # still emit a queued event so the KP page can flip the
+            # status pill to "running" immediately.
+            _broadcast(ws, {
+                "type": "ai_enrich_queued",
+                "document_id": document_id,
+                "force": bool(req.force),
+            })
         return RunResponse(
             run_id=f"inline:ai_enrich:{document_id}",
             status="done" if queued else "skipped_dedup",

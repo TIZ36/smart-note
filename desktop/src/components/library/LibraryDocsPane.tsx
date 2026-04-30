@@ -187,6 +187,20 @@ export function LibraryDocsPane({ onOpenSource }: Props) {
     return () => { alive = false; };
   }, [viewMode, activeId, knData]);
 
+  // Auto-refetch when a pipeline event lands for the doc currently
+  // open in KN mode. The cloud emits doc-pipeline-changed via App.tsx
+  // for wiki_abstract_done / chunk_embed_done / ai_enrich_done.
+  useEffect(() => {
+    if (viewMode !== "kn" || !activeId) return;
+    function handler(ev: Event) {
+      const detail = (ev as CustomEvent<{ document_id?: string }>).detail;
+      if (!detail?.document_id || detail.document_id !== activeId) return;
+      cloudApi.getDocumentKn(activeId).then((d) => setKnData(d)).catch(() => {});
+    }
+    window.addEventListener("smartnote:doc-pipeline-changed", handler);
+    return () => window.removeEventListener("smartnote:doc-pipeline-changed", handler);
+  }, [viewMode, activeId]);
+
   // Direct reference — a stable URI that, when pasted into a Claude /
   // Cursor prompt, lets the agent resolve THIS exact document via
   // SmartNote MCP. Uses smartnote:// scheme + full UUID for unambiguity

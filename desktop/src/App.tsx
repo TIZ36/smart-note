@@ -247,6 +247,43 @@ export default function App() {
         // strip and other tag chips reflect the new vocabulary
         // without an app restart.
         refreshTags();
+        const docId = (e as { document_id?: string }).document_id;
+        if (docId) {
+          window.dispatchEvent(new CustomEvent("smartnote:doc-pipeline-changed", {
+            detail: { document_id: docId, kind: "ai_enrich" },
+          }));
+        }
+      } else if (e.type === "wiki_abstract_done") {
+        const ev = e as { document_id?: string; chapters?: number; summarized?: number; failed?: number };
+        const docId = ev.document_id || "";
+        const failed = ev.failed || 0;
+        setToast({
+          message: failed > 0
+            ? `Wiki abstract: ${ev.summarized || 0}/${ev.chapters || 0} chapters · ${failed} failed`
+            : `Wiki abstract built — ${ev.summarized || 0}/${ev.chapters || 0} chapters`,
+          type: failed > 0 ? "info" : "success",
+        });
+        setBuildVersion((v) => v + 1);
+        if (docId) {
+          window.dispatchEvent(new CustomEvent("smartnote:doc-pipeline-changed", {
+            detail: { document_id: docId, kind: "wiki_abstract" },
+          }));
+        }
+      } else if (e.type === "chunk_embed_done") {
+        const ev = e as { document_id?: string; smartnote_type?: string };
+        setBuildVersion((v) => v + 1);
+        if (ev.document_id) {
+          window.dispatchEvent(new CustomEvent("smartnote:doc-pipeline-changed", {
+            detail: { document_id: ev.document_id, kind: "chunk_embed" },
+          }));
+        }
+      } else if (e.type === "ai_enrich_queued") {
+        const ev = e as { document_id?: string };
+        if (ev.document_id) {
+          window.dispatchEvent(new CustomEvent("smartnote:doc-pipeline-changed", {
+            detail: { document_id: ev.document_id, kind: "ai_enrich_queued" },
+          }));
+        }
       } else if (e.type === "memory_proposed") {
         const ev = e as { agent?: string; kind?: string; preview?: string };
         setToast({
