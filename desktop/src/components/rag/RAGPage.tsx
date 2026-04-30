@@ -6,6 +6,7 @@ import {
 import * as cloudApi from "@/lib/cloud-api";
 import { cn } from "@/lib/cn";
 import { RAGProcessingPanel } from "./RAGProcessingPanel";
+import { useKPSession, KPSessionPanel, type KPDocRef } from "./KPSession";
 
 /* RAG — knowledge processing center.
  *
@@ -304,37 +305,38 @@ export function RAGPage() {
     );
   }
 
+  // Resolve doc id → KPDocRef for the session panel. Captured here
+  // so the session keeps the doc name even after the source list
+  // refreshes mid-flight.
+  function _kpDocs(ids: Iterable<string>): KPDocRef[] {
+    const byId = new Map((sources ?? []).map((s) => [s.id, s]));
+    return [...ids].flatMap((id) => {
+      const s = byId.get(id);
+      return s ? [{ id: s.id, name: s.name, kind: s.kind }] : [];
+    });
+  }
+
+  // Lift session state above the action handlers so the inline "Run
+  // Embedding now" fix on a wiki preflight blocker can call back into
+  // this same submitter.
+  const session = useKPSession({
+    cloudProviderReady,
+    runEmbedding: async (docIds: string[]) => {
+      session.submit("embed", _kpDocs(docIds));
+    },
+  });
+
   async function runEmbedding() {
     if (selected.size === 0) return;
-    // Per-doc parallel ingestDocument, NOT bulkIngest. The cloud's
-    // /ingest/bulk runs all docs serially in a single request which
-    // pegs the HTTP connection for minutes; per-doc calls let the UI
-    // reflect each completion immediately + lets us bound concurrency.
-    await runBulk("embed", [...selected], "Embedded", (id) => cloudApi.ingestDocument(id));
+    session.submit("embed", _kpDocs(selected));
   }
 
   async function runEnrich() {
     if (selected.size === 0) return;
-    if (!cloudProviderReady) {
-      flashSet("Cloud AI provider not configured — open Cloud panel → Cloud AI provider.", "err");
-      return;
-    }
-    // Split by kind: wiki_topic docs reject /v1/enrich/run with 409
-    // (chapter summarization replaces tag_segments) and must go
-    // through /v1/processing/{id}/run kind=wiki_abstract instead.
-    const kindOf = new Map((sources ?? []).map((s) => [s.id, s.kind]));
-    await runBulk("enrich", [...selected], "Enriched", (id) => {
-      if (kindOf.get(id) === "wiki") {
-        return cloudApi.buildWikiAbstract(id) as unknown as Promise<unknown>;
-      }
-      return cloudApi.runEnrich(id);
-    }, 3);
+    session.submit("enrich", _kpDocs(selected), { force: true });
   }
 
   async function runWikiSmartsheet() {
-    // Filter selection to wiki-typed docs only — chapter-based
-    // concept extraction only makes sense on docs that have
-    // chapter structure (smartnote_type=wiki_topic).
     const wikiIds = (sources ?? [])
       .filter((s) => selected.has(s.id) && s.kind === "wiki")
       .map((s) => s.id);
@@ -342,17 +344,7 @@ export function RAGPage() {
       flashSet("Select at least one Wiki topic to build a smartsheet.", "err");
       return;
     }
-    if (!cloudProviderReady) {
-      flashSet("Cloud AI provider not configured — open Cloud panel → Cloud AI provider.", "err");
-      return;
-    }
-    await runBulk(
-      "tag",  // re-using the tag run kind for this stage's progress slot
-      wikiIds,
-      "Wiki abstract built for",
-      async (id) => { await cloudApi.buildWikiAbstract(id); },
-      2,
-    );
+    session.submit("wiki_abstract", _kpDocs(wikiIds), { force: true });
   }
 
   async function runGraphRebuild() {
@@ -722,6 +714,13 @@ export function RAGPage() {
               />
             </div>
           </section>
+
+          {/* KP Session — chat-style timeline. Each click on the
+              action tiles below opens a "turn" here with preflight
+              checks, live progress, and inline remediation when
+              blocked (e.g. a wiki doc with 0 chapters gets a
+              "Run Embedding now" button right in the turn). */}
+          <KPSessionPanel session={session} />
 
           {/* Live processing panel — auto-shows while jobs are
               running, fades after completion. Combines client-side

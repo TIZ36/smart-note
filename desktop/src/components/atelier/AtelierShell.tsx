@@ -49,6 +49,15 @@ export function AtelierShell({
   const openCloud = useCallback(() => setCloudOpen(true), []);
   const closeCloud = useCallback(() => setCloudOpen(false), []);
 
+  // Allow nested components (e.g. KPSession's "Open Cloud panel"
+  // remediation button) to request the modal without prop-drilling
+  // openCloud through every layer.
+  useEffect(() => {
+    function handler() { setCloudOpen(true); }
+    window.addEventListener("smartnote:open-cloud-panel", handler);
+    return () => window.removeEventListener("smartnote:open-cloud-panel", handler);
+  }, []);
+
   // Global ⌘K. Esc unwinds whatever is open.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {

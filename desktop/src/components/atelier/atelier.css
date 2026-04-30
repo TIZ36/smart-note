@@ -700,6 +700,142 @@
   color: var(--color-accent);
   border-color: transparent;
 }
+/* ──────────────────────────────────────────────────────────────
+   KP SESSION PANEL — chat-like timeline above the action tiles.
+   See components/rag/KPSession.tsx.
+   ────────────────────────────────────────────────────────────── */
+.kp-session {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0 14px;
+}
+.kp-turn {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg-elevated);
+  padding: 10px 12px;
+  font-size: 12px;
+}
+.kp-turn-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.kp-turn-status {
+  display: inline-flex;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.kp-turn-status-preflight,
+.kp-turn-status-running {
+  background: color-mix(in oklab, var(--color-accent) 15%, transparent);
+  color: var(--color-accent);
+  animation: proto-tag-pulse 1.6s ease-in-out infinite;
+}
+.kp-turn-status-done {
+  background: color-mix(in oklab, var(--color-success, #2ecc71) 15%, transparent);
+  color: var(--color-success, #2ecc71);
+}
+.kp-turn-status-failed {
+  background: color-mix(in oklab, var(--color-danger, #c0392b) 15%, transparent);
+  color: var(--color-danger, #c0392b);
+}
+.kp-turn-status-blocked {
+  background: color-mix(in oklab, oklch(0.78 0.18 75) 15%, transparent);
+  color: oklch(0.55 0.18 75);
+}
+.kp-turn-action {
+  font-weight: 600;
+}
+.kp-turn-docs {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 320px;
+}
+.kp-turn-elapsed {
+  margin-left: auto;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.kp-turn-dismiss {
+  background: transparent;
+  border: 0;
+  font-size: 14px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 0 4px;
+}
+.kp-turn-dismiss:hover {
+  color: var(--color-text-primary);
+}
+.kp-turn-summary {
+  margin: 6px 0 4px 0;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+.kp-turn-steps {
+  list-style: none;
+  margin: 6px 0 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.kp-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  font-size: 11px;
+  flex-wrap: wrap;
+}
+.kp-step-icon {
+  width: 14px;
+  text-align: center;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  flex-shrink: 0;
+}
+.kp-step-label {
+  color: var(--color-text-primary);
+}
+.kp-step-progress {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-accent);
+}
+.kp-step-detail {
+  color: var(--color-text-secondary);
+  font-size: 10px;
+}
+.kp-step-fix {
+  margin-left: auto;
+  padding: 2px 8px;
+  font-size: 10px;
+  border-radius: 3px;
+  border: 1px solid var(--color-accent);
+  background: transparent;
+  color: var(--color-accent);
+  cursor: pointer;
+}
+.kp-step-fix:hover {
+  background: color-mix(in oklab, var(--color-accent) 8%, transparent);
+}
+.kp-step-running .kp-step-icon { color: var(--color-accent); animation: proto-tag-pulse 1.4s ease-in-out infinite; }
+.kp-step-done    .kp-step-icon { color: var(--color-success, #2ecc71); }
+.kp-step-failed  .kp-step-icon,
+.kp-step-failed  .kp-step-detail { color: var(--color-danger, #c0392b); }
+.kp-step-skipped { opacity: 0.55; }
+.kp-step-skipped .kp-step-icon { color: var(--color-text-muted); }
+
 .proto-tag-warn {
   /* Partial / degraded state — chunk has rows but missing embeddings,
      run aborted mid-flight, etc. Amber-leaning so the green vs amber
