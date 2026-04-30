@@ -17,13 +17,37 @@ from app.config import get_settings
 from app.db import close_pool, init_pool, run_migrations
 from app.mcp_http import build_mcp_asgi, mcp as mcp_server
 from app.routers import (
-    auth, console, dev, devices, documents, enrich, enrich_config, graph,
-    health, ingest, memories, preferences, processing, proposals, retrieve,
-    search_history, tags as tags_router, usage_route, wiki, workspaces,
+    auth,
+    console,
+    dev,
+    devices,
+    documents,
+    enrich,
+    enrich_config,
+    graph,
+    health,
+    ingest,
+    memories,
+    preferences,
+    processing,
+    proposals,
+    retrieve,
+    search_history,
+    tags as tags_router,
+    usage_route,
+    wiki,
+    workspaces,
 )
+from app.contexts.enrichment import wiring as enrichment_wiring
+from app.contexts.knowledge import wiring as knowledge_wiring
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+)
 log = logging.getLogger("smartnote-cloud")
+
+knowledge_wiring.register()
+enrichment_wiring.register()
 
 
 async def _sweep_loop():
@@ -34,6 +58,7 @@ async def _sweep_loop():
     (workspace_id, kind, created_at) WHERE status IN ('queued','running')."""
     import asyncio as _asyncio
     from app.services import processing_runs as runs_ledger
+
     while True:
         try:
             await runs_ledger.sweep_stuck_runs(older_than_minutes=30)
@@ -45,6 +70,7 @@ async def _sweep_loop():
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     import asyncio as _asyncio
+
     log.info("starting up; connecting to Postgres")
     await init_pool()
     await run_migrations()
@@ -102,6 +128,7 @@ app.include_router(devices.router)
 app.include_router(console.router)
 
 from app import ws_relay  # noqa: E402
+
 app.include_router(ws_relay.router)
 app.include_router(workspaces.router)
 app.include_router(usage_route.router)

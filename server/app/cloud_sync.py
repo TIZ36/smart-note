@@ -104,6 +104,7 @@ def _ensure_configured() -> tuple[str, str]:
 
 def _get_jwt(url: str, key: str) -> str:
     import time
+
     with _jwt_lock:
         cached = _jwt_cache.get(key)
         if cached and cached[1] > int(time.time()) + _JWT_MARGIN:
@@ -120,7 +121,9 @@ def _get_jwt(url: str, key: str) -> str:
 
 
 def _cloud_request(
-    method: str, path: str, *,
+    method: str,
+    path: str,
+    *,
     json_body: Any | None = None,
     params: dict | None = None,
 ) -> httpx.Response:
@@ -128,8 +131,10 @@ def _cloud_request(
     jwt = _get_jwt(url, key)
     with httpx.Client(timeout=30.0) as c:
         r = c.request(
-            method, f"{url}{path}",
-            json=json_body, params=params,
+            method,
+            f"{url}{path}",
+            json=json_body,
+            params=params,
             headers={"Authorization": f"Bearer {jwt}"},
         )
         if r.status_code == 401:
@@ -138,8 +143,10 @@ def _cloud_request(
                 _jwt_cache.pop(key, None)
             jwt = _get_jwt(url, key)
             r = c.request(
-                method, f"{url}{path}",
-                json=json_body, params=params,
+                method,
+                f"{url}{path}",
+                json=json_body,
+                params=params,
                 headers={"Authorization": f"Bearer {jwt}"},
             )
     return r
@@ -147,14 +154,16 @@ def _cloud_request(
 
 # ── Serializers ────────────────────────────────────────────────
 
+
 @dataclass
 class LocalEntity:
     """A thing on the local side that we sync. `local_id` is the key
     stored in sync_state (file path / topic name / table name)."""
-    kind: str                      # 'note' | 'wiki_topic' | 'smart_table'
+
+    kind: str  # 'note' | 'wiki_topic' | 'smart_table'
     local_id: str
-    name: str                      # human-readable (shown in cloud listing)
-    content: str                   # canonical serialized form
+    name: str  # human-readable (shown in cloud listing)
+    content: str  # canonical serialized form
     metadata: dict
 
 
@@ -183,25 +192,42 @@ def _gather_note_bundle(path: str) -> dict:
                 "WHERE view_id = ? ORDER BY ord, line_hash",
                 (v[0],),
             ).fetchall()
-            bundle["views"].append({
-                "name": v[1], "rule_json": v[2], "display_json": v[3],
-                "sort_order": v[4], "created_at": v[5], "updated_at": v[6],
-                "members": [
-                    {"line_hash": m[0], "source": m[1], "excluded": m[2], "ord": m[3]}
-                    for m in members
-                ],
-            })
+            bundle["views"].append(
+                {
+                    "name": v[1],
+                    "rule_json": v[2],
+                    "display_json": v[3],
+                    "sort_order": v[4],
+                    "created_at": v[5],
+                    "updated_at": v[6],
+                    "members": [
+                        {
+                            "line_hash": m[0],
+                            "source": m[1],
+                            "excluded": m[2],
+                            "ord": m[3],
+                        }
+                        for m in members
+                    ],
+                }
+            )
         for r in conn.execute(
             "SELECT line_hash, line_no_last, line_preview, ts, bookmark, "
             "highlight_color, highlight_note FROM note_lines WHERE file_path = ? "
             "ORDER BY line_no_last",
             (path,),
         ).fetchall():
-            bundle["lines"].append({
-                "line_hash": r[0], "line_no_last": r[1], "line_preview": r[2],
-                "ts": r[3], "bookmark": r[4], "highlight_color": r[5],
-                "highlight_note": r[6],
-            })
+            bundle["lines"].append(
+                {
+                    "line_hash": r[0],
+                    "line_no_last": r[1],
+                    "line_preview": r[2],
+                    "ts": r[3],
+                    "bookmark": r[4],
+                    "highlight_color": r[5],
+                    "highlight_note": r[6],
+                }
+            )
         # tag_segments: AI classifications. We preserve them across
         # devices so a freshly-pulled install doesn't have to re-pay
         # the LLM. They get rebuilt on next ingest, but keeping them
@@ -215,9 +241,12 @@ def _gather_note_bundle(path: str) -> dict:
             ).fetchall()
             bundle["segments"] = [
                 {
-                    "tag": s[0], "topic_name": s[1],
-                    "line_start": s[2], "line_end": s[3],
-                    "summary": s[4], "keywords_json": s[5],
+                    "tag": s[0],
+                    "topic_name": s[1],
+                    "line_start": s[2],
+                    "line_end": s[3],
+                    "summary": s[4],
+                    "keywords_json": s[5],
                 }
                 for s in seg_rows
             ]
@@ -302,7 +331,11 @@ def _serialize_smart_table(table_name: str) -> LocalEntity | None:
             # in cloud sync. Keep this call right.
             sheet = smart_table.get_sheet(table_name, sheet_meta["name"])
         except Exception as e:
-            log.warning("serialize_smart_table: skipping sheet %s (%s)", sheet_meta.get("name"), e)
+            log.warning(
+                "serialize_smart_table: skipping sheet %s (%s)",
+                sheet_meta.get("name"),
+                e,
+            )
             continue
         payload["sheets"].append(sheet)
     # Sort keys for stable serialization — otherwise dict ordering
@@ -496,7 +529,9 @@ def _apply_remote_wiki_topic(local_id: str, content: str) -> None:
 # Rule of thumb: if it can be regenerated by re-running ingest against
 # the synced source, it belongs in DERIVED INDEX. Sync the inputs; let
 # each device / agent build its own index.
-_REGISTRY: dict[str, tuple[Callable[[], list[str]], Callable[[str], LocalEntity | None]]] = {
+_REGISTRY: dict[
+    str, tuple[Callable[[], list[str]], Callable[[str], LocalEntity | None]]
+] = {
     "note": (_discover_notes, _serialize_note),
     "smart_table": (_discover_smart_tables, _serialize_smart_table),
     "wiki_topic": (_discover_wiki_topics, _serialize_wiki_topic),
@@ -504,7 +539,9 @@ _REGISTRY: dict[str, tuple[Callable[[], list[str]], Callable[[str], LocalEntity 
 }
 
 
-def _apply_remote_note(local_id: str, content: str, metadata: dict | None = None) -> None:
+def _apply_remote_note(
+    local_id: str, content: str, metadata: dict | None = None
+) -> None:
     """Overwrite the local note file AND restore the per-note bundle
     (custom views, line marks, tag segments) from cloud metadata.
 
@@ -534,17 +571,24 @@ def _apply_remote_note(local_id: str, content: str, metadata: dict | None = None
                 "INSERT INTO note_lines (file_path, line_hash, line_no_last, "
                 "line_preview, ts, bookmark, highlight_color, highlight_note) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (local_id, ln.get("line_hash") or "", int(ln.get("line_no_last") or 0),
-                 ln.get("line_preview") or "", ln.get("ts"),
-                 ln.get("bookmark") or "", ln.get("highlight_color") or "",
-                 ln.get("highlight_note") or ""),
+                (
+                    local_id,
+                    ln.get("line_hash") or "",
+                    int(ln.get("line_no_last") or 0),
+                    ln.get("line_preview") or "",
+                    ln.get("ts"),
+                    ln.get("bookmark") or "",
+                    ln.get("highlight_color") or "",
+                    ln.get("highlight_note") or "",
+                ),
             )
 
         # Views: delete existing for this raw_path then re-insert.
         # note_view_member rows cascade on view_id deletion if FK is
         # set, but be explicit so this works on either schema.
         old_view_ids = [
-            r[0] for r in conn.execute(
+            r[0]
+            for r in conn.execute(
                 "SELECT id FROM note_view WHERE raw_path = ?", (local_id,)
             ).fetchall()
         ]
@@ -559,19 +603,28 @@ def _apply_remote_note(local_id: str, content: str, metadata: dict | None = None
             cur = conn.execute(
                 "INSERT INTO note_view (raw_path, name, rule_json, display_json, "
                 "sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (local_id, v.get("name") or "(unnamed)",
-                 v.get("rule_json") or "{}", v.get("display_json") or "{}",
-                 int(v.get("sort_order") or 0),
-                 v.get("created_at"), v.get("updated_at")),
+                (
+                    local_id,
+                    v.get("name") or "(unnamed)",
+                    v.get("rule_json") or "{}",
+                    v.get("display_json") or "{}",
+                    int(v.get("sort_order") or 0),
+                    v.get("created_at"),
+                    v.get("updated_at"),
+                ),
             )
             new_view_id = cur.lastrowid
             for m in v.get("members") or []:
                 conn.execute(
                     "INSERT INTO note_view_member (view_id, line_hash, source, excluded, ord) "
                     "VALUES (?, ?, ?, ?, ?)",
-                    (new_view_id, m.get("line_hash") or "",
-                     m.get("source") or "manual",
-                     int(m.get("excluded") or 0), int(m.get("ord") or 0)),
+                    (
+                        new_view_id,
+                        m.get("line_hash") or "",
+                        m.get("source") or "manual",
+                        int(m.get("excluded") or 0),
+                        int(m.get("ord") or 0),
+                    ),
                 )
 
         # Tag segments — best-effort. If the table shape on this
@@ -584,10 +637,15 @@ def _apply_remote_note(local_id: str, content: str, metadata: dict | None = None
                     "INSERT INTO tag_segments (source_file, tag, topic_name, "
                     "line_start, line_end, summary, keywords_json) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (local_id, s.get("tag") or "others",
-                     s.get("topic_name") or "",
-                     int(s.get("line_start") or 1), int(s.get("line_end") or 1),
-                     s.get("summary") or "", s.get("keywords_json") or "[]"),
+                    (
+                        local_id,
+                        s.get("tag") or "others",
+                        s.get("topic_name") or "",
+                        int(s.get("line_start") or 1),
+                        int(s.get("line_end") or 1),
+                        s.get("summary") or "",
+                        s.get("keywords_json") or "[]",
+                    ),
                 )
         except Exception as e:
             log.warning("tag_segments restore skipped for %s: %s", local_id, e)
@@ -613,7 +671,10 @@ def _apply_remote_smart_table(local_id: str, content: str) -> None:
         smart_table.create_sheet(table_name, sheet_name)
         for col in sheet_payload.get("columns", []):
             smart_table.add_column(
-                table_name, sheet_name, col["name"], col.get("type") or "text",
+                table_name,
+                sheet_name,
+                col["name"],
+                col.get("type") or "text",
             )
         # Rebuild rows with preserved cell values. We go row-by-row so
         # we can re-use the existing add_row / update_cell APIs — this
@@ -631,8 +692,11 @@ def _apply_remote_smart_table(local_id: str, content: str) -> None:
                     continue
                 try:
                     smart_table.update_cell(
-                        table_name, sheet_name,
-                        int(local_row["id"]), col_name, value,
+                        table_name,
+                        sheet_name,
+                        int(local_row["id"]),
+                        col_name,
+                        value,
                     )
                 except Exception as e:
                     log.debug("update_cell during sync failed: %s", e)
@@ -647,6 +711,7 @@ _APPLIERS: dict[str, Callable[[str, str], None]] = {
 
 
 # ── sync_state CRUD ─────────────────────────────────────────────
+
 
 @dataclass
 class SyncRow:
@@ -674,7 +739,9 @@ def _get_state(kind: str, local_id: str) -> SyncRow | None:
 
 
 def _upsert_state(
-    kind: str, local_id: str, *,
+    kind: str,
+    local_id: str,
+    *,
     cloud_doc_id: str | None = None,
     local_hash: str | None = None,
     remote_hash: str | None = None,
@@ -689,17 +756,23 @@ def _upsert_state(
             sets = []
             args: list[Any] = []
             if cloud_doc_id is not None:
-                sets.append("cloud_doc_id = ?"); args.append(cloud_doc_id)
+                sets.append("cloud_doc_id = ?")
+                args.append(cloud_doc_id)
             if local_hash is not None:
-                sets.append("local_hash = ?"); args.append(local_hash)
+                sets.append("local_hash = ?")
+                args.append(local_hash)
             if remote_hash is not None:
-                sets.append("remote_hash = ?"); args.append(remote_hash)
+                sets.append("remote_hash = ?")
+                args.append(remote_hash)
             if remote_updated_at is not None:
-                sets.append("remote_updated_at = ?"); args.append(remote_updated_at)
+                sets.append("remote_updated_at = ?")
+                args.append(remote_updated_at)
             if pushed:
-                sets.append("last_pushed_at = ?"); args.append(now)
+                sets.append("last_pushed_at = ?")
+                args.append(now)
             if pulled:
-                sets.append("last_pulled_at = ?"); args.append(now)
+                sets.append("last_pulled_at = ?")
+                args.append(now)
             if not sets:
                 return
             args.extend([kind, local_id])
@@ -715,8 +788,12 @@ def _upsert_state(
                 "  last_pushed_at, last_pulled_at) "
                 "VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    kind, local_id, cloud_doc_id,
-                    local_hash or "", remote_hash or "", remote_updated_at,
+                    kind,
+                    local_id,
+                    cloud_doc_id,
+                    local_hash or "",
+                    remote_hash or "",
+                    remote_updated_at,
                     now if pushed else None,
                     now if pulled else None,
                 ),
@@ -725,8 +802,11 @@ def _upsert_state(
 
 
 def _record_conflict(
-    kind: str, local_id: str, cloud_doc_id: str | None,
-    direction: str, lost_content: str,
+    kind: str,
+    local_id: str,
+    cloud_doc_id: str | None,
+    direction: str,
+    lost_content: str,
 ) -> None:
     """Persist the side that lost an LWW round so the user can recover."""
     with connect() as conn:
@@ -739,6 +819,7 @@ def _record_conflict(
 
 
 # ── Push / Pull / Full sync ─────────────────────────────────────
+
 
 def _identifying_field(kind: str) -> str:
     """Which metadata field identifies the local entity for this kind.
@@ -761,7 +842,8 @@ def _find_remote_doc_id(kind: str, local_id: str) -> str | None:
     field = _identifying_field(kind)
     try:
         r = _cloud_request(
-            "GET", "/v1/documents",
+            "GET",
+            "/v1/documents",
             params={"smartnote_type": kind, "limit": 500},
         )
         if r.status_code != 200:
@@ -797,15 +879,21 @@ def _push_entity(entity: LocalEntity) -> dict:
         r_head = _cloud_request("GET", f"/v1/documents/{state.cloud_doc_id}")
         if r_head.status_code == 200:
             remote = r_head.json()
-            remote_hash = _content_hash(remote.get("content") or "", remote.get("metadata"))
+            remote_hash = _content_hash(
+                remote.get("content") or "", remote.get("metadata")
+            )
             if state.remote_hash and remote_hash != state.remote_hash:
                 _record_conflict(
-                    entity.kind, entity.local_id, state.cloud_doc_id,
-                    "push_overwrote_remote", remote.get("content") or "",
+                    entity.kind,
+                    entity.local_id,
+                    state.cloud_doc_id,
+                    "push_overwrote_remote",
+                    remote.get("content") or "",
                 )
         # Patch existing doc.
         r = _cloud_request(
-            "PATCH", f"/v1/documents/{state.cloud_doc_id}",
+            "PATCH",
+            f"/v1/documents/{state.cloud_doc_id}",
             json_body={
                 "name": entity.name,
                 "content": entity.content,
@@ -815,10 +903,11 @@ def _push_entity(entity: LocalEntity) -> dict:
         r.raise_for_status()
         doc = r.json()
         _upsert_state(
-            entity.kind, entity.local_id,
+            entity.kind,
+            entity.local_id,
             cloud_doc_id=doc["id"],
             local_hash=local_hash,
-            remote_hash=local_hash,          # parity after push
+            remote_hash=local_hash,  # parity after push
             remote_updated_at=doc.get("updated_at"),
             pushed=True,
         )
@@ -826,7 +915,8 @@ def _push_entity(entity: LocalEntity) -> dict:
 
     # First push — POST.
     r = _cloud_request(
-        "POST", "/v1/documents",
+        "POST",
+        "/v1/documents",
         json_body={
             "name": entity.name,
             "content": entity.content,
@@ -837,7 +927,8 @@ def _push_entity(entity: LocalEntity) -> dict:
     r.raise_for_status()
     doc = r.json()
     _upsert_state(
-        entity.kind, entity.local_id,
+        entity.kind,
+        entity.local_id,
         cloud_doc_id=doc["id"],
         local_hash=local_hash,
         remote_hash=local_hash,
@@ -847,7 +938,9 @@ def _push_entity(entity: LocalEntity) -> dict:
     # Trigger server-side ingest in the background so retrieve() picks
     # up the new content. Non-fatal on failure — sync itself succeeded.
     try:
-        _cloud_request("POST", f"/v1/documents/{doc['id']}/ingest")
+        _cloud_request(
+            "POST", "/v1/ingest/document", json_body={"document_id": doc["id"]}
+        )
     except Exception as e:
         log.debug("post-push ingest kick failed: %s", e)
     return {"action": "create", "cloud_doc_id": doc["id"]}
@@ -949,7 +1042,8 @@ def _classify_remote(doc: dict) -> dict:
     if not current_local:
         return {
             "action": "new",
-            "kind": kind, "local_id": local_id,
+            "kind": kind,
+            "local_id": local_id,
             "remote_size": len(remote_content),
             "cloud_doc_id": doc.get("id"),
         }
@@ -963,8 +1057,11 @@ def _classify_remote(doc: dict) -> dict:
     # is the dangerous case we want to surface to the user.
     is_conflict = bool(state and state.local_hash and state.local_hash != local_hash)
     return {
-        "action": "would-overwrite-conflict" if is_conflict else "would-overwrite-clean",
-        "kind": kind, "local_id": local_id,
+        "action": "would-overwrite-conflict"
+        if is_conflict
+        else "would-overwrite-clean",
+        "kind": kind,
+        "local_id": local_id,
         "local_size": local_size,
         "remote_size": len(remote_content),
         "cloud_doc_id": doc.get("id"),
@@ -994,12 +1091,21 @@ def _apply_remote(doc: dict, *, force: bool = False) -> dict:
     # In-sync short-circuit. force=True bypasses so a "force pull" still
     # rewrites the local file even when hashes match — useful when the
     # local file is corrupted but the hash table thinks it's fine.
-    if not force and state and state.remote_hash == remote_hash and state.local_hash == remote_hash:
+    if (
+        not force
+        and state
+        and state.remote_hash == remote_hash
+        and state.local_hash == remote_hash
+    ):
         return {"action": "skip", "reason": "in-sync"}
 
     _, serializer = _REGISTRY[kind]
     current_local = serializer(local_id)
-    local_hash = _content_hash(current_local.content, current_local.metadata) if current_local else ""
+    local_hash = (
+        _content_hash(current_local.content, current_local.metadata)
+        if current_local
+        else ""
+    )
 
     if state and local_hash and local_hash != state.local_hash:
         # Local changed since last sync — conflict. LWW: whoever has
@@ -1009,7 +1115,9 @@ def _apply_remote(doc: dict, *, force: bool = False) -> dict:
         # stale local. Stash the local snapshot for recovery.
         if local_hash != remote_hash:
             _record_conflict(
-                kind, local_id, doc.get("id"),
+                kind,
+                local_id,
+                doc.get("id"),
                 "force_pull_overwrote_local" if force else "pull_overwrote_local",
                 current_local.content if current_local else "",
             )
@@ -1029,9 +1137,10 @@ def _apply_remote(doc: dict, *, force: bool = False) -> dict:
         return {"action": "error", "error": str(e)}
 
     _upsert_state(
-        kind, local_id,
+        kind,
+        local_id,
         cloud_doc_id=doc.get("id"),
-        local_hash=remote_hash,       # after apply, local == remote
+        local_hash=remote_hash,  # after apply, local == remote
         remote_hash=remote_hash,
         remote_updated_at=doc.get("updated_at") or doc.get("created_at"),
         pulled=True,
@@ -1068,9 +1177,15 @@ def _iter_remote_docs(force: bool):
                 full.raise_for_status()
                 yield kind_filter, full.json(), None
             except Exception as e:
-                yield kind_filter, None, {
-                    "action": "error", "doc_id": doc_brief.get("id"), "error": str(e),
-                }
+                yield (
+                    kind_filter,
+                    None,
+                    {
+                        "action": "error",
+                        "doc_id": doc_brief.get("id"),
+                        "error": str(e),
+                    },
+                )
 
 
 def pull_all(force: bool = False) -> dict:
@@ -1107,7 +1222,8 @@ def dedupe_cloud() -> dict:
         field = _identifying_field(kind)
         try:
             r = _cloud_request(
-                "GET", "/v1/documents",
+                "GET",
+                "/v1/documents",
                 params={"smartnote_type": kind, "limit": 500},
             )
             r.raise_for_status()
@@ -1128,7 +1244,10 @@ def dedupe_cloud() -> dict:
                 kept += 1
                 continue
             # Keep the newest (largest updated_at); delete the rest.
-            group.sort(key=lambda d: d.get("updated_at") or d.get("created_at") or "", reverse=True)
+            group.sort(
+                key=lambda d: d.get("updated_at") or d.get("created_at") or "",
+                reverse=True,
+            )
             kept += 1
             for d in group[1:]:
                 try:
@@ -1152,8 +1271,14 @@ def pull_diff() -> dict:
     `pull_all` but never writes.
     """
     rows: list[dict] = []
-    counts = {"new": 0, "in-sync": 0, "would-overwrite-clean": 0,
-              "would-overwrite-conflict": 0, "skip": 0, "error": 0}
+    counts = {
+        "new": 0,
+        "in-sync": 0,
+        "would-overwrite-clean": 0,
+        "would-overwrite-conflict": 0,
+        "skip": 0,
+        "error": 0,
+    }
     for kind, doc, err in _iter_remote_docs(force=True):
         if err is not None:
             counts["error"] += 1
@@ -1189,7 +1314,9 @@ def test_connection(
     the main Save button. When overrides are omitted, falls back to
     the persisted app_settings values.
     """
-    url = (override_url or getattr(app_settings, "cloud_sync_url", "") or "").rstrip("/")
+    url = (override_url or getattr(app_settings, "cloud_sync_url", "") or "").rstrip(
+        "/"
+    )
     key = override_api_key or getattr(app_settings, "cloud_sync_api_key", "") or ""
     if not url or not key:
         return {
@@ -1209,10 +1336,15 @@ def test_connection(
     try:
         t = httpx.post(f"{url}/v1/auth/token", json={"api_key": key}, timeout=10.0)
         if t.status_code == 401:
-            return {"ok": False, "error": "API key rejected (401) — check for typos or revocation."}
+            return {
+                "ok": False,
+                "error": "API key rejected (401) — check for typos or revocation.",
+            }
         t.raise_for_status()
         jwt = t.json()["jwt"]
-        r = httpx.get(f"{url}/v1/usage", headers={"Authorization": f"Bearer {jwt}"}, timeout=10.0)
+        r = httpx.get(
+            f"{url}/v1/usage", headers={"Authorization": f"Bearer {jwt}"}, timeout=10.0
+        )
         r.raise_for_status()
     except Exception as e:
         return {"ok": False, "error": f"credentials rejected: {e}"}
@@ -1242,17 +1374,21 @@ def preview() -> dict:
             state = _get_state(kind, local_id)
             h = _sha256(entity.content)
             if not state or not state.cloud_doc_id:
-                status = "new"; new_count += 1
+                status = "new"
+                new_count += 1
             elif state.local_hash != h:
-                status = "changed"; changed_count += 1
+                status = "changed"
+                changed_count += 1
             else:
                 status = "unchanged"
-            items.append({
-                "local_id": local_id,
-                "name": entity.name,
-                "size": size,
-                "status": status,
-            })
+            items.append(
+                {
+                    "local_id": local_id,
+                    "name": entity.name,
+                    "size": size,
+                    "status": status,
+                }
+            )
         per_kind[kind] = {
             "count": len(items),
             "new": new_count,
@@ -1280,6 +1416,7 @@ def preview() -> dict:
 # helpers let the UI read/write the cloud-side proposal queue without
 # having to also know the URL + key directly.
 
+
 def list_cloud_proposals(kind: str | None = None, limit: int = 100) -> dict:
     params: dict[str, Any] = {"limit": limit}
     if kind:
@@ -1294,7 +1431,8 @@ def accept_cloud_proposal(proposal_id: str, patch: dict | None = None) -> dict:
     pinned / confidence / supersedes — keys the cloud accept endpoint
     understands."""
     r = _cloud_request(
-        "POST", f"/v1/memories/proposals/{proposal_id}/accept",
+        "POST",
+        f"/v1/memories/proposals/{proposal_id}/accept",
         json_body=patch or {},
     )
     r.raise_for_status()
@@ -1303,7 +1441,8 @@ def accept_cloud_proposal(proposal_id: str, patch: dict | None = None) -> dict:
 
 def reject_cloud_proposal(proposal_id: str, reason: str | None = None) -> dict:
     r = _cloud_request(
-        "POST", f"/v1/memories/proposals/{proposal_id}/reject",
+        "POST",
+        f"/v1/memories/proposals/{proposal_id}/reject",
         json_body={"reason": reason} if reason else {},
     )
     r.raise_for_status()
@@ -1312,7 +1451,8 @@ def reject_cloud_proposal(proposal_id: str, reason: str | None = None) -> dict:
 
 def batch_accept_cloud_proposals(ids: list[str]) -> dict:
     r = _cloud_request(
-        "POST", "/v1/memories/proposals/batch-accept",
+        "POST",
+        "/v1/memories/proposals/batch-accept",
         json_body={"ids": ids},
     )
     r.raise_for_status()
@@ -1326,15 +1466,18 @@ def sync_status() -> dict:
             "SELECT local_kind, COUNT(*) as n, MAX(last_pushed_at) as last_push, "
             "MAX(last_pulled_at) as last_pull FROM sync_state GROUP BY local_kind"
         ).fetchall()
-        conflict_count = conn.execute(
-            "SELECT COUNT(*) FROM sync_conflicts"
-        ).fetchone()[0]
+        conflict_count = conn.execute("SELECT COUNT(*) FROM sync_conflicts").fetchone()[
+            0
+        ]
     enabled = bool(getattr(app_settings, "cloud_sync_enabled", False))
     url, key = _cfg()
     return {
         "enabled": enabled,
         "configured": bool(url and key),
         "cloud_url": url,
-        "entities": [dict(zip(("local_kind", "count", "last_push", "last_pull"), r)) for r in rows],
+        "entities": [
+            dict(zip(("local_kind", "count", "last_push", "last_pull"), r))
+            for r in rows
+        ],
         "conflicts": conflict_count,
     }

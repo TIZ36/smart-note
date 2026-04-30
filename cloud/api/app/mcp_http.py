@@ -63,6 +63,7 @@ mcp = FastMCP(
 
 # ── auth + HTTP proxy helpers ────────────────────────────────────
 
+
 async def _jwt_for(key: str) -> str:
     now = int(time.time())
     cached = _jwt_cache.get(key)
@@ -80,8 +81,11 @@ async def _jwt_for(key: str) -> str:
 
 
 async def _call(
-    method: str, path: str,
-    *, json: Any | None = None, params: dict | None = None,
+    method: str,
+    path: str,
+    *,
+    json: Any | None = None,
+    params: dict | None = None,
     _tool_name: str | None = None,
 ) -> httpx.Response:
     key = _api_key_ctx.get()
@@ -100,6 +104,7 @@ async def _call(
         from app.services.enrich.executors import mcp_pull as _mp
         from app.common import ws_registry
         import asyncio as _asyncio
+
         claims = _vj(jwt)
         if claims:
             _mp.mark_active(claims.workspace_id)
@@ -109,15 +114,19 @@ async def _call(
                 "agent": agent_name,
                 "tool": _tool_name or path.lstrip("/").split("/", 1)[-1],
                 "method": method,
-                "at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+                "at": __import__("datetime")
+                .datetime.now(__import__("datetime").timezone.utc)
+                .isoformat(),
             }
             _asyncio.create_task(ws_registry.broadcast(claims.workspace_id, payload))
     except Exception:
         pass
     async with httpx.AsyncClient(timeout=30.0) as c:
         r = await c.request(
-            method, f"{_SELF_BASE}{path}",
-            json=json, params=params,
+            method,
+            f"{_SELF_BASE}{path}",
+            json=json,
+            params=params,
             headers={"Authorization": f"Bearer {jwt}"},
         )
         if r.status_code == 401:
@@ -125,8 +134,10 @@ async def _call(
             _jwt_cache.pop(key, None)
             jwt = await _jwt_for(key)
             r = await c.request(
-                method, f"{_SELF_BASE}{path}",
-                json=json, params=params,
+                method,
+                f"{_SELF_BASE}{path}",
+                json=json,
+                params=params,
                 headers={"Authorization": f"Bearer {jwt}"},
             )
     return r
@@ -149,12 +160,14 @@ def _fail(r: httpx.Response, action: str) -> str:
 # UUID at the end (copyable for get_memory). Agents that really need
 # full content inline pass verbose=True.
 
+
 def _truncate(text: str, limit: int = 60) -> str:
     t = " ".join((text or "").split())
     return t if len(t) <= limit else t[: limit - 1] + "…"
 
 
 # ── Tools ──────────────────────────────────────────────────────
+
 
 @mcp.tool()
 async def search_memory(
@@ -198,12 +211,12 @@ async def search_memory(
         return "\n".join(lines)
     chips = []
     for hit in results:
-        preview = _truncate(hit['content'], 60)
+        preview = _truncate(hit["content"], 60)
         chips.append(
             f"[{hit['kind']}·{hit.get('score', 0):.2f}] {preview} · id={hit['id']}"
         )
     return (
-        f"{len(results)} match(es) for \"{query}\":\n"
+        f'{len(results)} match(es) for "{query}":\n'
         + "\n".join(chips)
         + "\n\n→ get_memory(id) for full content"
     )
@@ -222,8 +235,11 @@ async def add_memory(
     | document_ref. For durable user preferences, prefer `set_preference`
     (cleaner supersede history)."""
     body: dict[str, Any] = {
-        "kind": kind, "content": content, "scope": scope,
-        "tags": tags or [], "pinned": pinned,
+        "kind": kind,
+        "content": content,
+        "scope": scope,
+        "tags": tags or [],
+        "pinned": pinned,
     }
     if structured is not None:
         body["structured"] = structured
@@ -243,8 +259,10 @@ async def list_memories(
     """List memories newest-first. Compact by default. Prefer
     `search_memory` when hunting for specific content."""
     params: dict[str, Any] = {"limit": limit}
-    if kind: params["kind"] = kind
-    if scope: params["scope"] = scope
+    if kind:
+        params["kind"] = kind
+    if scope:
+        params["scope"] = scope
     r = await _call("GET", "/v1/memories", params=params)
     if r.status_code != 200:
         return _fail(r, "list_memories")
@@ -254,7 +272,7 @@ async def list_memories(
     out = [f"{len(rows)} memor{'y' if len(rows) == 1 else 'ies'}:"]
     for row in rows:
         pin = "📌" if row.get("pinned") else " "
-        body = row['content'] if verbose else _truncate(row['content'], 60)
+        body = row["content"] if verbose else _truncate(row["content"], 60)
         out.append(f"{pin} [{row['kind']}] {body} · id={row['id']}")
     if not verbose:
         out.append("\n→ get_memory(id) for full content")
@@ -293,10 +311,14 @@ async def update_memory(
     """Partial update. Updating `content` re-embeds so future searches
     reflect the revised meaning."""
     body: dict[str, Any] = {}
-    if content is not None: body["content"] = content
-    if tags is not None: body["tags"] = tags
-    if pinned is not None: body["pinned"] = pinned
-    if structured is not None: body["structured"] = structured
+    if content is not None:
+        body["content"] = content
+    if tags is not None:
+        body["tags"] = tags
+    if pinned is not None:
+        body["pinned"] = pinned
+    if structured is not None:
+        body["structured"] = structured
     if not body:
         return "Nothing to update."
     r = await _call("PATCH", f"/v1/memories/{memory_id}", json=body)
@@ -322,8 +344,11 @@ async def set_preference(
 ) -> str:
     """Set a durable user preference. Old value is superseded (history
     kept for audit)."""
-    r = await _call("PUT", f"/v1/preferences/{key}",
-                    json={"value": value, "description": description})
+    r = await _call(
+        "PUT",
+        f"/v1/preferences/{key}",
+        json={"value": value, "description": description},
+    )
     if r.status_code != 200:
         return _fail(r, "set_preference")
     note = f" ({description})" if description else ""
@@ -379,16 +404,18 @@ async def add_document(
 ) -> str:
     """Upload a document and chunk + embed it so its content becomes
     retrievable via search_memory."""
-    r = await _call("POST", "/v1/documents",
-                    json={"name": name, "content": content, "kind": "text"})
+    r = await _call(
+        "POST", "/v1/documents", json={"name": name, "content": content, "kind": "text"}
+    )
     if r.status_code != 200:
         return _fail(r, "add_document")
     doc = r.json()
     chunks = 0
     if ingest:
-        ri = await _call("POST", f"/v1/documents/{doc['id']}/ingest")
+        ri = await _call("POST", "/v1/ingest/document", json={"document_id": doc["id"]})
         if ri.status_code == 200:
-            chunks = ri.json().get("chunks", 0)
+            body = ri.json()
+            chunks = body.get("chunk_count", body.get("chunks", 0))
     tail = f" — ingested {chunks} chunk(s)" if ingest else " — not ingested"
     return f"Added document id={doc['id']} ({doc['byte_size']} bytes){tail}"
 
@@ -429,7 +456,8 @@ async def get_document(document_id: str, max_bytes: int = 200_000) -> str:
         if rl.status_code != 200:
             return _fail(rl, "get_document")
         matches = [
-            d for d in (rl.json().get("documents") or [])
+            d
+            for d in (rl.json().get("documents") or [])
             if str(d.get("id", "")).startswith(target)
         ]
         if not matches:
@@ -445,12 +473,17 @@ async def get_document(document_id: str, max_bytes: int = 200_000) -> str:
     doc = r.json()
     content = doc.get("content") or ""
     if len(content) > max_bytes:
-        content = content[:max_bytes] + f"\n\n[truncated — full size {len(content)}B; raise max_bytes to see more]"
+        content = (
+            content[:max_bytes]
+            + f"\n\n[truncated — full size {len(content)}B; raise max_bytes to see more]"
+        )
     md = doc.get("metadata") or {}
     snt = md.get("smartnote_type") if isinstance(md, dict) else None
     head = f"# {doc.get('name')} ({doc.get('byte_size')}B"
-    if snt: head += f" · {snt}"
-    if doc.get("ingested_at"): head += " · ingested"
+    if snt:
+        head += f" · {snt}"
+    if doc.get("ingested_at"):
+        head += " · ingested"
     head += f")\nid: {doc.get('id')}\n\n"
     return head + content
 
@@ -489,11 +522,12 @@ async def search_documents(
     for h in hits:
         # Compact line: doc-name · L<start>–<end> · score · 100-char preview
         text = (h.get("text") or "").replace("\n", " ").strip()
-        if len(text) > 120: text = text[:118] + "…"
+        if len(text) > 120:
+            text = text[:118] + "…"
         out.append(
-            f"- {h.get('document_name','?')} · "
-            f"L{h.get('line_start',0)}–{h.get('line_end',0)} · "
-            f"score {h.get('score',0):.2f} · doc={h.get('document_id','?')[:8]}\n"
+            f"- {h.get('document_name', '?')} · "
+            f"L{h.get('line_start', 0)}–{h.get('line_end', 0)} · "
+            f"score {h.get('score', 0):.2f} · doc={h.get('document_id', '?')[:8]}\n"
             f"    {text}"
         )
     out.append("\n→ call get_document(id) on any of the doc=… ids for full content.")
@@ -527,7 +561,9 @@ async def queue_enrich_jobs(
     queued = skipped = errored = 0
     seen_ids: set[str] = set()
     for t in types:
-        list_r = await _call("GET", "/v1/documents", params={"smartnote_type": t, "limit": 500})
+        list_r = await _call(
+            "GET", "/v1/documents", params={"smartnote_type": t, "limit": 500}
+        )
         if list_r.status_code != 200:
             return _fail(list_r, "queue_enrich_jobs")
         for d in list_r.json().get("documents") or []:
@@ -642,8 +678,7 @@ async def full_ingest(
         return _fail(r, "full_ingest")
     d = r.json()
     out = [
-        f"Bulk ingest done: {d['ingested']}/{d['total']} docs · "
-        f"{d['chunks']} chunks"
+        f"Bulk ingest done: {d['ingested']}/{d['total']} docs · {d['chunks']} chunks"
     ]
     if d.get("failures"):
         out.append(f"{len(d['failures'])} failure(s):")
@@ -662,15 +697,16 @@ async def full_ingest(
         types = [smartnote_type] if smartnote_type else ["note", "wiki_topic"]
         enriched = enrich_failed = 0
         for t in types:
-            list_r = await _call("GET", "/v1/documents",
-                                params={"smartnote_type": t, "limit": 500})
+            list_r = await _call(
+                "GET", "/v1/documents", params={"smartnote_type": t, "limit": 500}
+            )
             if list_r.status_code != 200:
                 continue
             for doc in list_r.json().get("documents") or []:
                 er = await _call(
-                    "POST", "/v1/enrich/run",
-                    json={"document_id": doc["id"],
-                          "executor_prefs": ["cloud_pool"]},
+                    "POST",
+                    "/v1/enrich/run",
+                    json={"document_id": doc["id"], "executor_prefs": ["cloud_pool"]},
                 )
                 if er.status_code != 200:
                     enrich_failed += 1
@@ -722,11 +758,16 @@ async def propose_memory(
             reviewer overrides.
     """
     body: dict[str, Any] = {
-        "content": content, "kind": kind, "scope": scope,
-        "tags": tags or [], "confidence": confidence,
+        "content": content,
+        "kind": kind,
+        "scope": scope,
+        "tags": tags or [],
+        "confidence": confidence,
     }
-    if reason: body["reason"] = reason
-    if structured is not None: body["structured"] = structured
+    if reason:
+        body["reason"] = reason
+    if structured is not None:
+        body["structured"] = structured
     r = await _call("POST", "/v1/memories/proposals", json=body)
     if r.status_code != 200:
         return _fail(r, "propose_memory")
@@ -739,6 +780,7 @@ async def propose_memory(
         from app.common import ws_registry
         import asyncio as _asyncio
         from datetime import datetime, timezone
+
         jwt = await _jwt_for(_api_key_ctx.get())
         claims = _vj(jwt)
         if claims:
@@ -758,9 +800,13 @@ async def propose_memory(
     similar = data.get("similar_existing") or []
     if similar:
         lines.append("")
-        lines.append("⚠ similar memories already exist — consider merging by setting supersedes on accept:")
+        lines.append(
+            "⚠ similar memories already exist — consider merging by setting supersedes on accept:"
+        )
         for s in similar[:3]:
-            lines.append(f"  - {s['id']} (similarity={s['similarity']:.2f}) {s['content'][:80]}")
+            lines.append(
+                f"  - {s['id']} (similarity={s['similarity']:.2f}) {s['content'][:80]}"
+            )
     return "\n".join(lines)
 
 
@@ -784,7 +830,7 @@ async def list_proposals(
         return "Draft queue is empty."
     out = [f"{len(rows)} of {total} draft(s):"]
     for p in rows:
-        body = p['content'] if verbose else _truncate(p['content'], 60)
+        body = p["content"] if verbose else _truncate(p["content"], 60)
         line = (
             f"[{p['kind']}·{p['confidence']:.2f}·{p['author_agent']}] "
             f"{body} · id={p['id']}"
@@ -812,10 +858,14 @@ async def accept_proposal(
     `similar_existing`.
     """
     body: dict[str, Any] = {}
-    if content is not None: body["content"] = content
-    if tags is not None: body["tags"] = tags
-    if pinned is not None: body["pinned"] = pinned
-    if supersedes: body["supersedes"] = supersedes
+    if content is not None:
+        body["content"] = content
+    if tags is not None:
+        body["tags"] = tags
+    if pinned is not None:
+        body["pinned"] = pinned
+    if supersedes:
+        body["supersedes"] = supersedes
     r = await _call("POST", f"/v1/memories/proposals/{proposal_id}/accept", json=body)
     if r.status_code != 200:
         return _fail(r, "accept_proposal")
@@ -832,8 +882,11 @@ async def reject_proposal(
     """Archive a draft proposal — it won't appear in retrieval results.
     Reason (optional) is appended to the row for auditing.
     """
-    r = await _call("POST", f"/v1/memories/proposals/{proposal_id}/reject",
-                    json={"reason": reason} if reason else {})
+    r = await _call(
+        "POST",
+        f"/v1/memories/proposals/{proposal_id}/reject",
+        json={"reason": reason} if reason else {},
+    )
     if r.status_code != 200:
         return _fail(r, "reject_proposal")
     return f"Rejected proposal id={proposal_id} (archived)"
@@ -852,8 +905,11 @@ async def ingest_notes(
     plan — at zero extra token cost to the user. Otherwise the job
     waits for the workspace's primary device or cloud pool to handle it.
     """
-    r = await _call("POST", "/v1/documents",
-                    json={"name": name, "content": content, "kind": "markdown"})
+    r = await _call(
+        "POST",
+        "/v1/documents",
+        json={"name": name, "content": content, "kind": "markdown"},
+    )
     if r.status_code != 200:
         return _fail(r, "ingest_notes")
     doc = r.json()
@@ -917,7 +973,10 @@ async def list_pending_enrichments(
         if include_content:
             shown = body
             if len(shown) > max_chars_per_doc:
-                shown = shown[:max_chars_per_doc] + "\n[TRUNCATED — call get_enrichment_job for full body]"
+                shown = (
+                    shown[:max_chars_per_doc]
+                    + "\n[TRUNCATED — call get_enrichment_job for full body]"
+                )
             # Number every line so segment line_start/line_end are
             # unambiguous in the agent's reply.
             numbered = "\n".join(
@@ -958,8 +1017,10 @@ async def get_enrichment_job(job_id: str) -> str:
                 f"TAGS  {j['tags']}\n"
                 f"BODY:\n{numbered}"
             )
-    return f"No queued job with id={job_id}. Maybe it's already done — "\
-           "try get_memory(job_id) or run list_pending_enrichments again."
+    return (
+        f"No queued job with id={job_id}. Maybe it's already done — "
+        "try get_memory(job_id) or run list_pending_enrichments again."
+    )
 
 
 @mcp.tool()
@@ -1004,8 +1065,14 @@ async def classify_segment(
     Reply must be a JSON array of segments per the prompt's schema.
     """
     used_tags = tags or [
-        "learn", "work", "life", "todo", "idea",
-        "password", "reference", "others",
+        "learn",
+        "work",
+        "life",
+        "todo",
+        "idea",
+        "password",
+        "reference",
+        "others",
     ]
     tag_block = "\n".join(f"- {t}" for t in used_tags)
     lines = (text or "").splitlines() or [""]
@@ -1038,6 +1105,7 @@ async def get_usage() -> str:
 
 
 # ── ASGI middleware: extract Authorization → contextvar ──────────
+
 
 class ApiKeyMiddleware:
     """Pulls `Authorization: Bearer …` off every incoming request and
@@ -1074,7 +1142,10 @@ class ApiKeyMiddleware:
                 if agent_name:
                     _agent_name_ctx.set(agent_name)
                     import asyncio as _asyncio
-                    _asyncio.create_task(_upsert_agent_device(api_key, agent_name, user_agent))
+
+                    _asyncio.create_task(
+                        _upsert_agent_device(api_key, agent_name, user_agent)
+                    )
         await self.app(scope, receive, send)
 
 
@@ -1102,7 +1173,12 @@ def _detect_agent(ua: str) -> str | None:
         return None
     if "/" in ua:
         first = ua.split("/", 1)[0].strip()
-        if 2 <= len(first) <= 40 and first.lower() not in {"python-httpx", "python-requests", "curl", "wget"}:
+        if 2 <= len(first) <= 40 and first.lower() not in {
+            "python-httpx",
+            "python-requests",
+            "curl",
+            "wget",
+        }:
             return first
     return None
 
@@ -1113,6 +1189,7 @@ async def _upsert_agent_device(api_key: str, name: str, ua: str) -> None:
     just bump last_seen_at."""
     try:
         from app.common.db import pool as _pool
+
         # Parse `prefix.secret` like the auth router does.
         parts = api_key.split(".", 1) if "." in api_key else None
         if not parts:
@@ -1132,7 +1209,8 @@ async def _upsert_agent_device(api_key: str, name: str, ua: str) -> None:
             existing = await conn.fetchrow(
                 "SELECT id FROM devices "
                 "WHERE workspace_id=$1 AND platform='ai-cli' AND name=$2",
-                ws, name,
+                ws,
+                name,
             )
             if existing:
                 await conn.execute(
@@ -1143,7 +1221,8 @@ async def _upsert_agent_device(api_key: str, name: str, ua: str) -> None:
                 await conn.execute(
                     "INSERT INTO devices (workspace_id, name, platform, last_seen_at) "
                     "VALUES ($1, $2, 'ai-cli', now())",
-                    ws, name,
+                    ws,
+                    name,
                 )
     except Exception:
         # Self-identification is purely a UX improvement — never

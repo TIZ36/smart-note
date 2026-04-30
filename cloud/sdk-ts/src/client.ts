@@ -223,8 +223,8 @@ class DocumentsResource {
     });
   }
 
-  ingest(id: string): Promise<{ ok: boolean; chunks: number }> {
-    return this.client.request("POST", `/v1/documents/${id}/ingest`);
+  ingest(id: string): Promise<{ ingest_run_id: string; chunk_count: number; dimension: string; status: string }> {
+    return this.client.request("POST", "/v1/ingest/document", { json: { document_id: id } });
   }
 
   async list(): Promise<Document[]> {

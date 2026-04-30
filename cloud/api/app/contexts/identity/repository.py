@@ -12,10 +12,8 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from app.db import pool
-# DEVICE_ONLINE_WINDOW_SEC stays in routers/devices.py as the canonical
-# heartbeat window; we reuse the constant rather than redefining it so
-# the device list and console "primary online" badge can't diverge.
-from app.routers.devices import DEVICE_ONLINE_WINDOW_SEC
+
+DEVICE_ONLINE_WINDOW_SEC = 60
 
 
 async def count_devices(workspace_id: str) -> int:

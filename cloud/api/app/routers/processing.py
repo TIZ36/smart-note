@@ -40,6 +40,7 @@ def _broadcast(workspace_id: str, payload: dict) -> None:
     except Exception:  # pragma: no cover — defensive, ws_registry shouldn't raise here
         log.exception("processing broadcast failed: %s", payload.get("type"))
 
+
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/processing", tags=["processing"])
 
@@ -83,7 +84,8 @@ async def list_recent_runs(
             ORDER BY r.created_at DESC
             LIMIT $2
             """,
-            UUID(identity.workspace_id), limit,
+            UUID(identity.workspace_id),
+            limit,
         )
     return [
         RecentRun(
@@ -102,6 +104,7 @@ async def list_recent_runs(
         for r in rows
     ]
 
+
 ProcessingKind = Literal["chunk_embed", "ai_enrich", "wiki_abstract"]
 
 
@@ -119,7 +122,7 @@ class RunResponse(BaseModel):
     dedup_skipped: bool = Field(
         default=False,
         description="True when an existing `done` row was returned "
-                    "instead of starting a new run.",
+        "instead of starting a new run.",
     )
     revision: int = 0
 
@@ -158,7 +161,8 @@ async def run_processing(
     async with pool().acquire() as conn:
         doc = await conn.fetchrow(
             "SELECT id, metadata FROM documents WHERE id=$1 AND workspace_id=$2",
-            UUID(document_id), UUID(ws),
+            UUID(document_id),
+            UUID(ws),
         )
     if doc is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "document not found")
@@ -170,11 +174,15 @@ async def run_processing(
         # migration 026.
         revision = 1 if req.force else 0
         run_id = await runs_ledger.start(
-            workspace_id=ws, document_id=document_id, kind="wiki_abstract",
-            revision=revision, executor="wiki_phase_b",
+            workspace_id=ws,
+            document_id=document_id,
+            kind="wiki_abstract",
+            revision=revision,
+            executor="wiki_phase_b",
             api_key_id=identity.api_key_id,
         )
         from app.contexts.knowledge.wiki_phase_b import summarize_document
+
         try:
             result = await summarize_document(ws, document_id, force=req.force)
         except Exception as e:
@@ -183,7 +191,9 @@ async def run_processing(
             raise
         if result.get("error"):
             await runs_ledger.finish(
-                run_id=run_id, status="failed", error=result["error"],
+                run_id=run_id,
+                status="failed",
+                error=result["error"],
             )
             raise HTTPException(
                 status.HTTP_412_PRECONDITION_FAILED,
@@ -194,19 +204,24 @@ async def run_processing(
         # a second query.
         final_status = "done" if (result.get("failed") or 0) == 0 else "partial"
         await runs_ledger.finish(
-            run_id=run_id, status=final_status, result=result,
+            run_id=run_id,
+            status=final_status,
+            result=result,
         )
         # Tell every connected desktop that this doc's wiki summaries
         # just changed so Library KN view + KP page can refetch /kn
         # without waiting for the user to reload.
-        _broadcast(ws, {
-            "type": "wiki_abstract_done",
-            "document_id": document_id,
-            "chapters": int(result.get("chapters") or 0),
-            "summarized": int(result.get("summarized") or 0),
-            "skipped": int(result.get("skipped") or 0),
-            "failed": int(result.get("failed") or 0),
-        })
+        _broadcast(
+            ws,
+            {
+                "type": "wiki_abstract_done",
+                "document_id": document_id,
+                "chapters": int(result.get("chapters") or 0),
+                "summarized": int(result.get("summarized") or 0),
+                "skipped": int(result.get("skipped") or 0),
+                "failed": int(result.get("failed") or 0),
+            },
+        )
         return RunResponse(
             run_id=str(run_id) if run_id else f"inline:wiki_abstract:{document_id}",
             status=final_status,
@@ -220,16 +235,23 @@ async def run_processing(
         # with or without `force`. Dispatch by smartnote_type so wikis
         # go through the chapter splitter.
         from app.contexts.knowledge import service as knowledge
+
         meta = doc["metadata"] or {}
         if isinstance(meta, str):
             import json as _json
-            try: meta = _json.loads(meta)
-            except Exception: meta = {}
+
+            try:
+                meta = _json.loads(meta)
+            except Exception:
+                meta = {}
         snt = meta.get("smartnote_type") if isinstance(meta, dict) else None
         revision = 1 if req.force else 0
         run_id = await runs_ledger.start(
-            workspace_id=ws, document_id=document_id, kind="chunk_embed",
-            revision=revision, executor="inline",
+            workspace_id=ws,
+            document_id=document_id,
+            kind="chunk_embed",
+            revision=revision,
+            executor="inline",
             api_key_id=identity.api_key_id,
         )
         try:
@@ -243,11 +265,14 @@ async def run_processing(
             result={"smartnote_type": snt or "doc", "ran": bool(ran)},
         )
         if ran:
-            _broadcast(ws, {
-                "type": "chunk_embed_done",
-                "document_id": document_id,
-                "smartnote_type": snt or "doc",
-            })
+            _broadcast(
+                ws,
+                {
+                    "type": "chunk_embed_done",
+                    "document_id": document_id,
+                    "smartnote_type": snt or "doc",
+                },
+            )
         return RunResponse(
             run_id=run_id or f"inline:chunk_embed:{document_id}",
             status="done" if ran else "skipped_dedup",
@@ -257,35 +282,46 @@ async def run_processing(
 
     if req.kind == "ai_enrich":
         from app.contexts.enrichment import service as enrichment
+
         revision = 1 if req.force else 0
-        run_id = await runs_ledger.start(
-            workspace_id=ws, document_id=document_id, kind="ai_enrich",
-            revision=revision, executor="dispatcher",
+        queued_run_id = await enrichment.queue_enrich_if_eligible(
+            ws,
+            document_id,
+            smartnote_type=(doc["metadata"] or {}).get("smartnote_type")
+            if isinstance(doc["metadata"], dict)
+            else None,
+            force=req.force,
+            revision=revision,
             api_key_id=identity.api_key_id,
         )
-        queued = await enrichment.queue_enrich_if_eligible(
-            ws, document_id,
-            smartnote_type=(doc["metadata"] or {}).get("smartnote_type")
-                if isinstance(doc["metadata"], dict) else None,
-            force=req.force,
-        )
-        # Note: ai_enrich is queue-based — terminal status lands in
-        # enrich.py:_write_segments_done. The processing_runs row
-        # stays `running` until the executor migration teaches that
-        # writer to call runs_ledger.finish(). For now skip-cases
-        # close out, eligible runs stay open.
-        if not queued:
+        # ai_enrich is queue-based when no inline executor is available;
+        # the enrichment service owns the actual run row and terminal
+        # status. This route only records a skipped row when policy says
+        # no enrich should run.
+        run_id: str | None = None
+        if not queued_run_id:
+            run_id = await runs_ledger.start(
+                workspace_id=ws,
+                document_id=document_id,
+                kind="ai_enrich",
+                revision=revision,
+                executor="dispatcher",
+                api_key_id=identity.api_key_id,
+            )
             await runs_ledger.finish(run_id=run_id, status="skipped_dedup")
-        if queued:
-            _broadcast(ws, {
-                "type": "ai_enrich_queued",
-                "document_id": document_id,
-                "force": bool(req.force),
-            })
+        if queued_run_id:
+            _broadcast(
+                ws,
+                {
+                    "type": "ai_enrich_queued",
+                    "document_id": document_id,
+                    "force": bool(req.force),
+                },
+            )
         return RunResponse(
-            run_id=run_id or f"inline:ai_enrich:{document_id}",
-            status="done" if queued else "skipped_dedup",
-            dedup_skipped=not queued,
+            run_id=queued_run_id or run_id or f"inline:ai_enrich:{document_id}",
+            status="queued" if queued_run_id else "skipped_dedup",
+            dedup_skipped=not queued_run_id,
             revision=revision,
         )
 

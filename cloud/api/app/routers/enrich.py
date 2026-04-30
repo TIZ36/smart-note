@@ -20,9 +20,7 @@ call for `dispatcher.dispatch(job)`.
 
 from __future__ import annotations
 
-import asyncio
 import json
-import logging
 from typing import Any
 from uuid import UUID
 
@@ -30,17 +28,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from app.common.db import pool
+from app.contexts.enrichment import service as enrichment
 from app.deps import Identity, require_scope
-from app.services.enrich import dispatcher
-from app.services.enrich.classifier import (
-    DEFAULT_TAGS,
-    ProviderConfig,
-    run_classify,
-)
-from app.services.enrich.protocols import EnrichJob
+from app.services.enrich.classifier import DEFAULT_TAGS, ProviderConfig
 
 router = APIRouter(prefix="/v1/enrich", tags=["enrich"])
-log = logging.getLogger(__name__)
 
 
 class ProviderIn(BaseModel):
@@ -110,102 +102,29 @@ def _row_to_out(r) -> EnrichJobOut:
 
 
 async def _write_segments_done(
-    conn, ws_uuid, doc_uuid, run_id, segments, executor: str,
-    prompt_tokens=0, completion_tokens=0, total_tokens=0,
+    conn,
+    ws_uuid,
+    doc_uuid,
+    run_id,
+    segments,
+    executor: str,
+    prompt_tokens=0,
+    completion_tokens=0,
+    total_tokens=0,
 ):
-    """Land the enriched segments + close the processing_runs row.
-
-    `run_id` is a processing_runs.id (the canonical ledger). Legacy
-    enrich_jobs writes were dropped — every read consumer migrated to
-    the ledger in 4def060/f1f37f5, and the executor queue now polls
-    processing_runs.
-    """
-    from app.services.kb.entity_graph import upsert_entities_for_segments
-    from app.common import ws_registry
-    from app.services import processing_runs as runs_ledger
-    import asyncio as _asyncio
-    from datetime import datetime, timezone
-
-    async with conn.transaction():
-        await conn.execute("DELETE FROM tag_segments WHERE document_id=$1", doc_uuid)
-        # Re-ingesting clears prior entity_links for this doc's segments
-        # by rebuilding from scratch — the fresh segments have new
-        # entity sets so any stale edges from the prior run wouldn't
-        # belong here. We don't delete `entities` rows themselves
-        # (their mention_count is workspace-scoped, not per-doc).
-        for seg in segments:
-            await conn.execute(
-                """
-                INSERT INTO tag_segments
-                    (workspace_id, document_id, start_line, end_line,
-                     tag, confidence, summary, meta)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb)
-                """,
-                ws_uuid, doc_uuid,
-                int(seg.get("line_start", 0)),
-                int(seg.get("line_end", 0)),
-                str(seg.get("tag") or "others"),
-                float(seg.get("confidence", 0.0)),
-                str(seg.get("summary") or ""),
-                json.dumps({
-                    "secondary_tags": seg.get("secondary_tags", []),
-                    "topic_name": seg.get("topic_name", ""),
-                    "keywords": seg.get("keywords", []),
-                    "entities": seg.get("entities", []),
-                    "is_credential": bool(seg.get("is_credential", False)),
-                }),
-            )
-        # Persist entities + co-occurrence edges. Best-effort: if the
-        # enrich run somehow returns malformed segments we still want
-        # the tag_segments writes to land.
-        try:
-            await upsert_entities_for_segments(conn, str(ws_uuid), segments)
-        except Exception as e:
-            log.warning("entity graph upsert failed for doc %s: %s", doc_uuid, e)
-
-    # Close out the canonical processing_runs row. Prefer finish() on
-    # the explicit run_id; fall back to finish_latest() when the
-    # caller didn't have an id (legacy auto-trigger path that we still
-    # support during the transition).
-    result_payload = {
-        "segments_count": len(segments),
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-        "total_tokens": total_tokens,
-        "executor": executor,
-    }
-    if run_id is not None:
-        await runs_ledger.finish(
-            run_id=run_id, status="done", result=result_payload,
-        )
-    else:
-        await runs_ledger.finish_latest(
-            workspace_id=str(ws_uuid), document_id=str(doc_uuid),
-            kind="ai_enrich", status="done", result=result_payload,
-        )
-
-    # Broadcast enrich_done so any open desktop renders a real-time
-    # banner/toast — addresses "wiki_enrich 完成了但是用户在 wiki 界面
-    # 没感受到" feedback. Fire-and-forget, never raises.
-    try:
-        # Lookup document name for nicer UI rendering.
-        name_row = await conn.fetchrow(
-            "SELECT name FROM documents WHERE id=$1", doc_uuid
-        )
-        payload = {
-            "type": "enrich_done",
-            "document_id": str(doc_uuid),
-            "document_name": name_row["name"] if name_row else None,
-            "segments_count": len(segments),
-            "tokens_total": total_tokens,
-            "executor": executor,
-            "at": datetime.now(timezone.utc).isoformat(),
-        }
-        _asyncio.create_task(ws_registry.broadcast(str(ws_uuid), payload))
-    except Exception:
-        pass
-
-    return row
+    """Compatibility shim for MCP submit path; canonical write lives in
+    enrichment.service.write_segments_done."""
+    await enrichment.write_segments_done(
+        conn,
+        ws_uuid,
+        doc_uuid,
+        run_id,
+        segments,
+        executor,
+        prompt_tokens,
+        completion_tokens,
+        total_tokens,
+    )
 
 
 @router.post(
@@ -217,100 +136,23 @@ async def run_enrich(
     req: EnrichRunRequest,
     identity: Identity = Depends(require_scope("documents:write")),
 ) -> EnrichJobOut:
-    ws_uuid = UUID(identity.workspace_id)
-    doc_uuid = UUID(req.document_id)
-
-    async with pool().acquire() as conn:
-        doc = await conn.fetchrow(
-            "SELECT id, content, metadata FROM documents WHERE id=$1 AND workspace_id=$2",
-            doc_uuid, ws_uuid,
+    try:
+        run_id = await enrichment.run_enrich(
+            workspace_id=identity.workspace_id,
+            document_id=req.document_id,
+            api_key_id=identity.api_key_id,
+            tags=req.tags,
+            provider=ProviderConfig(**req.provider.model_dump())
+            if req.provider
+            else None,
+            executor_prefs=list(req.executor_prefs or []),
         )
-        if not doc:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "document not found")
-        # Wiki documents have their own enrich path — Phase B chapter
-        # summarization writes wiki_chapters.summary, which is the
-        # natural unit for a topic-shaped doc. Running the line-range
-        # classifier on top would produce tag_segments that duplicate
-        # (and disagree with) the chapter abstracts. Reject early so
-        # callers route through /v1/processing/{id}/run kind=wiki_abstract.
-        meta = doc["metadata"] or {}
-        if isinstance(meta, str):
-            try:
-                meta = json.loads(meta)
-            except Exception:
-                meta = {}
-        if (meta.get("smartnote_type") or "") == "wiki_topic":
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "wiki_topic documents enrich via /v1/processing/{id}/run "
-                "kind=wiki_abstract — chapter summarization replaces tag_segments",
-            )
-
-    # processing_runs is the canonical queue + audit trail. Open the
-    # row in 'queued' so /v1/enrich/pending can pick it up if no inline
-    # executor takes the work.
-    from app.services import processing_runs as runs_ledger
-    run_id = await runs_ledger.start(
-        workspace_id=identity.workspace_id, document_id=str(doc_uuid),
-        kind="ai_enrich", revision=0,
-        executor="dispatcher" if req.provider is None else "cloud_pool",
-        api_key_id=identity.api_key_id,
-        status="queued",
-    )
-    if run_id is None:
-        # Dedup hit and lookup also failed — synthesize an error row.
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "processing_runs ledger unavailable",
-        )
-
-    # Inline BYOK debug path: provider supplied in request body.
-    if req.provider is not None:
-        await runs_ledger.promote_queued_to_running(run_id=run_id)
-        cfg = ProviderConfig(**req.provider.model_dump())
-        try:
-            lines = (doc["content"] or "").splitlines()
-            out = await asyncio.to_thread(
-                run_classify, lines, cfg, req.tags or DEFAULT_TAGS,
-            )
-        except Exception as e:
-            log.exception("inline enrich failed")
-            await runs_ledger.finish(run_id=run_id, status="failed", error=str(e))
-            return await _read_run_as_job(run_id)
-        async with pool().acquire() as conn:
-            await _write_segments_done(
-                conn, ws_uuid, doc_uuid, run_id, out.segments, "cloud_pool",
-                out.prompt_tokens, out.completion_tokens, out.total_tokens,
-            )
-        return await _read_run_as_job(run_id)
-
-    # Default path: hand to dispatcher (Executor Registry).
-    ej = EnrichJob(
-        job_id=run_id,
-        workspace_id=identity.workspace_id,
-        document_id=str(doc_uuid),
-        content=doc["content"] or "",
-        tags=req.tags or list(DEFAULT_TAGS),
-        executor_prefs=list(req.executor_prefs) if req.executor_prefs else [],
-    )
-    await runs_ledger.promote_queued_to_running(run_id=run_id)
-    outcome = await dispatcher.dispatch(ej)
-    if outcome.executor and outcome.segments:
-        async with pool().acquire() as conn:
-            await _write_segments_done(
-                conn, ws_uuid, doc_uuid, run_id,
-                outcome.segments, outcome.executor,
-                outcome.prompt_tokens, outcome.completion_tokens, outcome.total_tokens,
-            )
-    else:
-        # No executor took it inline — flip back to 'queued' so the
-        # external agent (cc_mcp via /pending) can pick it up.
-        async with pool().acquire() as conn:
-            await conn.execute(
-                "UPDATE processing_runs SET status='queued', started_at=NULL "
-                "WHERE id=$1 AND status='running'",
-                UUID(run_id),
-            )
+    except enrichment.EnrichDocumentNotFound:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "document not found")
+    except enrichment.EnrichUnsupportedKind as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e))
+    except enrichment.EnrichmentError as e:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(e))
     return await _read_run_as_job(run_id)
 
 
@@ -334,6 +176,7 @@ class PendingJob(BaseModel):
     """A queued job packaged for an external classifier (the cc_mcp
     executor). Carries everything the agent needs to run the LLM call
     without round-tripping back to fetch the document."""
+
     id: str
     document_id: str
     document_name: str
@@ -361,6 +204,7 @@ async def list_pending(
     same row. Replaces the legacy enrich_jobs WHERE status='queued'
     poll."""
     from app.services import processing_runs as runs_ledger
+
     claimed = await runs_ledger.claim_queued(
         workspace_id=identity.workspace_id,
         kind="ai_enrich",
@@ -368,8 +212,10 @@ async def list_pending(
     )
     return [
         PendingJob(
-            id=c["id"], document_id=c["document_id"],
-            document_name=c["document_name"], content=c["content"],
+            id=c["id"],
+            document_id=c["document_id"],
+            document_name=c["document_name"],
+            content=c["content"],
             tags=DEFAULT_TAGS,
             created_at=c["created_at"],
         )
@@ -422,7 +268,8 @@ async def submit_job(
             run = await conn.fetchrow(
                 "SELECT id, document_id, status, kind FROM processing_runs "
                 "WHERE id = $1 AND workspace_id = $2 FOR UPDATE",
-                run_uuid, ws_uuid,
+                run_uuid,
+                ws_uuid,
             )
             if not run:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "run not found")
@@ -441,9 +288,15 @@ async def submit_job(
     # the caller already validated state above).
     async with pool().acquire() as conn:
         await _write_segments_done(
-            conn, ws_uuid, doc_uuid, str(run_uuid),
-            [s.model_dump() for s in req.segments], req.executor,
-            req.prompt_tokens, req.completion_tokens, req.total_tokens,
+            conn,
+            ws_uuid,
+            doc_uuid,
+            str(run_uuid),
+            [s.model_dump() for s in req.segments],
+            req.executor,
+            req.prompt_tokens,
+            req.completion_tokens,
+            req.total_tokens,
         )
     return await _read_run_as_job(str(run_uuid))
 
@@ -494,7 +347,8 @@ async def delete_job(
         result = await conn.execute(
             "DELETE FROM processing_runs "
             "WHERE id = $1 AND workspace_id = $2 AND kind = 'ai_enrich'",
-            UUID(job_id), UUID(identity.workspace_id),
+            UUID(job_id),
+            UUID(identity.workspace_id),
         )
     return {"ok": True, "deleted": int(result.rsplit(" ", 1)[-1])}
 
@@ -512,10 +366,7 @@ async def bulk_delete_jobs(
     processing_runs."""
     ws_uuid = UUID(identity.workspace_id)
     args: list[Any] = [ws_uuid]
-    sql = (
-        "DELETE FROM processing_runs "
-        "WHERE workspace_id = $1 AND kind = 'ai_enrich'"
-    )
+    sql = "DELETE FROM processing_runs WHERE workspace_id = $1 AND kind = 'ai_enrich'"
     if status_filter:
         args.append(status_filter)
         sql += f" AND status = ${len(args)}"

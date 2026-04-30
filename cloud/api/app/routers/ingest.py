@@ -30,6 +30,8 @@ import json as _json
 from uuid import UUID
 
 from app.common.db import pool
+from app.contexts.enrichment import service as enrichment
+from app.contexts.knowledge import service as knowledge
 from app.deps import Identity, require_scope
 from app.services.ingest.pipeline import ingest_document, ingest_run_status
 from app.services.kb import chunk_search
@@ -40,6 +42,7 @@ log = logging.getLogger(__name__)
 
 
 # ── /v1/ingest ─────────────────────────────────────────────────
+
 
 class IngestDocumentRequest(BaseModel):
     document_id: str
@@ -73,9 +76,9 @@ async def ingest_one(
     """
     async with pool().acquire() as conn:
         meta_row = await conn.fetchrow(
-            "SELECT metadata FROM documents "
-            "WHERE id=$1 AND workspace_id=$2",
-            UUID(req.document_id), UUID(identity.workspace_id),
+            "SELECT metadata FROM documents WHERE id=$1 AND workspace_id=$2",
+            UUID(req.document_id),
+            UUID(identity.workspace_id),
         )
     if not meta_row:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "document not found")
@@ -87,11 +90,12 @@ async def ingest_one(
             meta = {}
     snt = meta.get("smartnote_type") if isinstance(meta, dict) else None
 
-    # Same wiring auto-ingest uses — opens processing_runs row +
-    # broadcasts chunk_embed_done on success.
-    from app.contexts.knowledge.wiring import _record_and_run
     try:
-        await _record_and_run(identity.workspace_id, req.document_id, snt)
+        await knowledge.record_and_ingest_document_for_kind(
+            identity.workspace_id,
+            req.document_id,
+            snt,
+        )
     except Exception as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
 
@@ -102,7 +106,8 @@ async def ingest_one(
             "SELECT id, chunk_count, status FROM ingest_runs "
             "WHERE workspace_id=$1 AND document_id=$2 "
             "ORDER BY created_at DESC LIMIT 1",
-            UUID(identity.workspace_id), UUID(req.document_id),
+            UUID(identity.workspace_id),
+            UUID(req.document_id),
         )
     return IngestDocumentResponse(
         ingest_run_id=str(row["id"]) if row else "",
@@ -115,7 +120,7 @@ async def ingest_one(
 class BulkIngestRequest(BaseModel):
     document_ids: list[str] = Field(default_factory=list)
     smartnote_type: str | None = None  # filter by metadata.smartnote_type
-    topic_prefix: str | None = None    # filter wiki by relative_path prefix
+    topic_prefix: str | None = None  # filter wiki by relative_path prefix
     # Tri-state: True forces enrich, False disables, None reads the
     # workspace's auto_enrich_on_ingest setting (default off).
     enrich_with_ai: bool | None = None
@@ -171,7 +176,8 @@ async def ingest_bulk(
                 WHERE workspace_id = $1
                   AND (metadata->>'smartnote_type') = $2
                 """,
-                ws, t,
+                ws,
+                t,
             )
         for r in rows:
             md = r["metadata"] or {}
@@ -201,12 +207,12 @@ async def ingest_bulk(
     # Same fix as the single-doc /v1/ingest/document route — without
     # this branching, wiki docs in a bulk re-ingest end up with
     # chunks but no wiki_chapters.
-    from app.contexts.knowledge.wiring import _record_and_run
     async with pool().acquire() as conn:
         meta_rows = await conn.fetch(
             "SELECT id, metadata FROM documents "
             "WHERE id = ANY($1::uuid[]) AND workspace_id = $2",
-            [UUID(d) for d in ordered], UUID(identity.workspace_id),
+            [UUID(d) for d in ordered],
+            UUID(identity.workspace_id),
         )
     snt_by_id: dict[str, str | None] = {}
     for r in meta_rows:
@@ -216,12 +222,16 @@ async def ingest_bulk(
                 m = _json.loads(m)
             except Exception:
                 m = {}
-        snt_by_id[str(r["id"])] = m.get("smartnote_type") if isinstance(m, dict) else None
+        snt_by_id[str(r["id"])] = (
+            m.get("smartnote_type") if isinstance(m, dict) else None
+        )
 
     for doc_id in ordered:
         try:
-            await _record_and_run(
-                identity.workspace_id, doc_id, snt_by_id.get(doc_id),
+            await knowledge.record_and_ingest_document_for_kind(
+                identity.workspace_id,
+                doc_id,
+                snt_by_id.get(doc_id),
             )
             # Read back the ingest_run row for chunk_count.
             async with pool().acquire() as conn:
@@ -229,17 +239,20 @@ async def ingest_bulk(
                     "SELECT chunk_count, status FROM ingest_runs "
                     "WHERE workspace_id=$1 AND document_id=$2 "
                     "ORDER BY created_at DESC LIMIT 1",
-                    UUID(identity.workspace_id), UUID(doc_id),
+                    UUID(identity.workspace_id),
+                    UUID(doc_id),
                 )
             if row and row["status"] == "done":
                 ingested_count += 1
                 chunks_total += int(row["chunk_count"] or 0)
                 successfully_ingested.append(doc_id)
             else:
-                failures.append({
-                    "document_id": doc_id,
-                    "error": (row and row["status"]) or "no ingest_run row",
-                })
+                failures.append(
+                    {
+                        "document_id": doc_id,
+                        "error": (row and row["status"]) or "no ingest_run row",
+                    }
+                )
         except Exception as e:
             log.exception("bulk ingest failed for %s", doc_id)
             failures.append({"document_id": doc_id, "error": str(e)})
@@ -250,6 +263,7 @@ async def ingest_bulk(
     # setting (auto_enrich_on_ingest, default false).
     if req.enrich_with_ai is None:
         from app.services.enrich.executors.cloud_pool import _load_provider
+
         cfg = await _load_provider(identity.workspace_id)
         do_enrich = bool(cfg and getattr(cfg, "auto_enrich_on_ingest", False))
     else:
@@ -260,11 +274,14 @@ async def ingest_bulk(
         # so the UI can prompt "configure provider first" instead of
         # firing 18 jobs that all immediately fail.
         from app.services.enrich.executors.cloud_pool import _load_provider
+
         cfg = await _load_provider(identity.workspace_id)
         if not cfg:
             enrich_skipped_no_provider = True
-            log.info("bulk_ingest: enrich_with_ai requested but no "
-                     "provider config — skipping enrich step")
+            log.info(
+                "bulk_ingest: enrich_with_ai requested but no "
+                "provider config — skipping enrich step"
+            )
         else:
             # Enrich is fire-and-forget. Each /v1/enrich/run call is
             # synchronous against deepseek/openai (run_classify uses
@@ -279,24 +296,32 @@ async def ingest_bulk(
             ws_id = identity.workspace_id
             scope_for_run = identity  # snapshot identity for the task
             for doc_id in successfully_ingested:
+                if snt_by_id.get(doc_id) == "wiki_topic":
+                    continue
+
                 async def _runner(doc_id=doc_id, ws_id=ws_id, identity=scope_for_run):
                     try:
-                        from app.routers.enrich import EnrichRunRequest, run_enrich
-                        await run_enrich(
-                            EnrichRunRequest(
-                                document_id=doc_id,
-                                executor_prefs=["cloud_pool"],
-                            ),
-                            identity=identity,
+                        await enrichment.run_enrich(
+                            workspace_id=ws_id,
+                            document_id=doc_id,
+                            api_key_id=identity.api_key_id,
+                            executor_prefs=["cloud_pool"],
                         )
                     except Exception:
                         log.exception("bg enrich failed for %s", doc_id)
+
                 background_tasks.add_task(_runner)
-            enrich_scheduled = len(successfully_ingested)
+            enrich_scheduled = sum(
+                1
+                for doc_id in successfully_ingested
+                if snt_by_id.get(doc_id) != "wiki_topic"
+            )
 
     return BulkIngestResponse(
-        total=len(ordered), ingested=ingested_count,
-        chunks=chunks_total, failures=failures,
+        total=len(ordered),
+        ingested=ingested_count,
+        chunks=chunks_total,
+        failures=failures,
         enriched=enrich_scheduled,  # treat 'scheduled' as 'will-be-enriched'
         enrich_failed=0,
         enrich_skipped_no_provider=enrich_skipped_no_provider,
@@ -330,6 +355,7 @@ async def get_run(
 
 
 # ── /v1/ingest/sources + /v1/ingest/topics ─────────────────────
+
 
 class ChunkSource(BaseModel):
     document_id: str
@@ -414,6 +440,7 @@ async def list_topics(
 
 # ── /v1/chunks/search ──────────────────────────────────────────
 
+
 class ChunkSearchRequest(BaseModel):
     query: str
     topk: int = 20
@@ -449,15 +476,21 @@ async def search_chunks(
     identity: Identity = Depends(require_scope("documents:read")),
 ) -> ChunkSearchResponse:
     hits = await chunk_search.search(
-        req.query, identity.workspace_id,
-        topk=req.topk, dimension=req.dimension,
+        req.query,
+        identity.workspace_id,
+        topk=req.topk,
+        dimension=req.dimension,
     )
     # Record into search_history for cross-device "recent searches".
     # Best-effort — failure here doesn't block the response.
     try:
         from app.routers.search_history import record as _record_history
+
         await _record_history(
-            identity.workspace_id, req.query, len(hits), req.dimension,
+            identity.workspace_id,
+            req.query,
+            len(hits),
+            req.dimension,
         )
     except Exception:
         pass
@@ -465,10 +498,17 @@ async def search_chunks(
         query_embedded=any(h.path_scores.get("vec", 0) > 0 for h in hits),
         results=[
             ChunkSearchHit(
-                id=h.id, document_id=h.document_id, document_name=h.document_name,
-                dimension=h.dimension, text=h.text, keywords=h.keywords,
-                line_start=h.line_start, line_end=h.line_end,
-                source_ref=h.source_ref, score=h.score, path_scores=h.path_scores,
+                id=h.id,
+                document_id=h.document_id,
+                document_name=h.document_name,
+                dimension=h.dimension,
+                text=h.text,
+                keywords=h.keywords,
+                line_start=h.line_start,
+                line_end=h.line_end,
+                source_ref=h.source_ref,
+                score=h.score,
+                path_scores=h.path_scores,
             )
             for h in hits
         ],
@@ -476,6 +516,7 @@ async def search_chunks(
 
 
 # ── /v1/chunks/{id}/source — preview context ────────────────────
+
 
 class ChunkSourceLine(BaseModel):
     line: int
@@ -514,7 +555,8 @@ async def chunk_source(
             FROM chunks c JOIN documents d ON d.id = c.document_id
             WHERE c.id = $1 AND c.workspace_id = $2
             """,
-            UUID(chunk_id), UUID(identity.workspace_id),
+            UUID(chunk_id),
+            UUID(identity.workspace_id),
         )
     if not row:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "chunk not found")

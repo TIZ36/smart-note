@@ -9,10 +9,16 @@ wiki) still live in `app.services.kb.*` and migrate later.
 from __future__ import annotations
 
 import logging
+import asyncio
+from datetime import datetime, timezone
 
+from app.common import ws_registry
 from app.contexts.knowledge.repository import (
-    KnowledgeCounts, cleanup_document_refs, count_for as _count_for,
+    KnowledgeCounts,
+    cleanup_document_refs,
+    count_for as _count_for,
 )
+from app.services import processing_runs as runs_ledger
 
 log = logging.getLogger(__name__)
 
@@ -22,7 +28,9 @@ _INGEST_KINDS = {"note", "wiki_topic"}
 
 
 async def ingest_document_for_kind(
-    workspace_id: str, document_id: str, smartnote_type: str | None,
+    workspace_id: str,
+    document_id: str,
+    smartnote_type: str | None,
 ) -> bool:
     """Run chunk + embed for an enrichable document. Returns True iff
     we actually invoked a pipeline (i.e. the kind is on the
@@ -47,17 +55,72 @@ async def ingest_document_for_kind(
         # a circular import between wiki_processor and ingest pipeline.
         if smartnote_type == "wiki_topic":
             from app.contexts.knowledge.wiki_processor import process_wiki_document
+
             await process_wiki_document(workspace_id, document_id)
         else:
             from app.services.ingest.pipeline import ingest_document
+
             await ingest_document(workspace_id, document_id)
         return True
     except Exception:
         log.warning(
             "ingest failed for %s/%s (kind=%s)",
-            workspace_id, document_id, smartnote_type, exc_info=True,
+            workspace_id,
+            document_id,
+            smartnote_type,
+            exc_info=True,
         )
         return False
+
+
+def _broadcast_embed_done(
+    workspace_id: str, document_id: str, smartnote_type: str | None
+) -> None:
+    """Same shape as processing.py's chunk_embed_done so the desktop
+    has a single handler. Fire-and-forget."""
+    payload = {
+        "type": "chunk_embed_done",
+        "document_id": document_id,
+        "smartnote_type": smartnote_type or "doc",
+        "at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        asyncio.create_task(ws_registry.broadcast(workspace_id, payload))
+    except Exception:
+        log.exception("auto-ingest broadcast failed")
+
+
+async def record_and_ingest_document_for_kind(
+    workspace_id: str,
+    document_id: str,
+    smartnote_type: str | None,
+) -> None:
+    """Run kind-aware ingest with the canonical processing_runs ledger.
+
+    Trigger info points at 'auto' unless the caller passed an API key to
+    the lower-level processing endpoint. This is the single shared path
+    for storage events, explicit /v1/ingest/document, and bulk ingest.
+    """
+    run_id = await runs_ledger.start(
+        workspace_id=workspace_id,
+        document_id=document_id,
+        kind="chunk_embed",
+        revision=0,
+        executor="auto_ingest",
+        api_key_id=None,
+    )
+    try:
+        ran = await ingest_document_for_kind(workspace_id, document_id, smartnote_type)
+    except Exception as e:
+        await runs_ledger.finish(run_id=run_id, status="failed", error=str(e))
+        raise
+    await runs_ledger.finish(
+        run_id=run_id,
+        status="done" if ran else "skipped_dedup",
+        result={"smartnote_type": smartnote_type or "doc", "ran": bool(ran)},
+    )
+    if ran:
+        _broadcast_embed_done(workspace_id, document_id, smartnote_type)
 
 
 async def count_for(workspace_id: str) -> KnowledgeCounts:
@@ -76,10 +139,14 @@ async def on_document_deleted(workspace_id: str, document_id: str) -> None:
         if deleted:
             log.info(
                 "cleaned %d document_ref memories for %s/%s",
-                deleted, workspace_id, document_id,
+                deleted,
+                workspace_id,
+                document_id,
             )
     except Exception:
         log.warning(
             "document_ref cleanup failed for %s/%s",
-            workspace_id, document_id, exc_info=True,
+            workspace_id,
+            document_id,
+            exc_info=True,
         )

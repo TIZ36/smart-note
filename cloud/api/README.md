@@ -2,28 +2,26 @@
 
 FastAPI + Supabase auth + Postgres (pgvector).
 
-## Endpoint plan (MVP)
-
-Filled in as each ticket lands. Unchecked = not yet implemented.
+## Endpoint Snapshot
 
 - [x] `GET  /v1/health`
-- [ ] `POST /v1/auth/token`         — exchange API key for JWT
+- [x] `POST /v1/auth/token`         — exchange API key for JWT
 - [ ] `POST /v1/auth/refresh`       — refresh JWT with refresh_token
 - [ ] `GET  /v1/me`                 — current identity + scopes
-- [ ] `POST /v1/workspaces`
-- [ ] `GET  /v1/workspaces`
-- [ ] `POST /v1/workspaces/{id}/api-keys`
-- [ ] `DELETE /v1/workspaces/{id}/api-keys/{key_id}`
-- [ ] `POST /v1/memories`
-- [ ] `GET  /v1/memories`            — filters: kind, scope, tag, q, since
-- [ ] `GET  /v1/memories/{id}`
-- [ ] `PATCH /v1/memories/{id}`
-- [ ] `DELETE /v1/memories/{id}`
-- [ ] `GET  /v1/preferences`         — flat KV sugar over kind=preference
-- [ ] `PUT  /v1/preferences/{key}`
-- [ ] `POST /v1/retrieve`            — hybrid retrieval over memories
-- [ ] `POST /v1/documents`
-- [ ] `POST /v1/documents/{id}/ingest`
+- [x] `POST /v1/workspaces`
+- [x] `GET  /v1/workspaces`
+- [x] `POST /v1/workspaces/{id}/api-keys`
+- [x] `DELETE /v1/workspaces/{id}/api-keys/{key_id}`
+- [x] `POST /v1/memories`
+- [x] `GET  /v1/memories`            — filters: kind, scope, tag, q, since
+- [x] `GET  /v1/memories/{id}`
+- [x] `PATCH /v1/memories/{id}`
+- [x] `DELETE /v1/memories/{id}`
+- [x] `GET  /v1/preferences`         — flat KV sugar over kind=preference
+- [x] `PUT  /v1/preferences/{key}`
+- [x] `POST /v1/retrieve`            — hybrid retrieval over memories
+- [x] `POST /v1/documents`
+- [x] `POST /v1/ingest/document`     — kind-aware chunk/embed ingest
 
 ## Running (without docker)
 

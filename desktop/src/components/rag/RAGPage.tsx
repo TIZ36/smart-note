@@ -1,11 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  FileText, BookOpen, Sparkles, Database, Hash, Network as NetworkIcon,
-  CheckSquare, Square, RotateCw, Plus, X, Edit3, Layers,
+  Sparkles, Database, Network as NetworkIcon,
+  CheckSquare, Square, Plus, X, Edit3,
 } from "lucide-react";
 import * as cloudApi from "@/lib/cloud-api";
 import { cn } from "@/lib/cn";
-import { RAGProcessingPanel } from "./RAGProcessingPanel";
 import { useKPSession, KPSessionPanel, type KPDocRef } from "./KPSession";
 
 /* RAG — knowledge processing center.
@@ -38,6 +37,7 @@ type Source = {
   embedded: boolean;   // chunks + embeddings present
   enriched: boolean;   // an enrich job ran to completion
   tagged:   boolean;   // AI tags / classification applied
+  tagCount: number;
 };
 
 export type RunKind = "embed" | "enrich" | "tag" | "graph";
@@ -52,42 +52,10 @@ export type RunStatus = {
   name: string;
 };
 
-type RetrievalPath = {
-  key: string;
-  name: string;
-  desc: string;
-  icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
-  /** When the index is built (drives the small status pill) */
-  built: "embed" | "auto" | "query" | "enrich";
-  /** Only show Rebuild button when re-indexing is actually meaningful.
-   *  fts is trigger-maintained; ngram/sub are query-time only — no
-   *  index to rebuild. vec/kw/tag_meta have rebuild surfaces because
-   *  they go stale when the upstream model/prompt/classifier changes. */
-  rebuild?: { label: string; rationale: string };
-};
-
-const RETRIEVAL_PATHS: RetrievalPath[] = [
-  { key: "vec",     name: "Vector",       desc: "Cosine similarity on chunk embedding.",                       icon: Sparkles, built: "embed",
-    rebuild: { label: "Re-embed all", rationale: "Run after switching embedding model — old vectors won't match the new dimensionality." } },
-  { key: "fts",     name: "FTS",          desc: "Postgres FTS token match. Auto-maintained by trigger; no manual rebuild needed.", icon: FileText, built: "auto" },
-  { key: "ngram",   name: "N-gram",       desc: "Char-bigram overlap, computed at query time. No index to rebuild.",            icon: Hash,     built: "query" },
-  { key: "sub",     name: "Substring",    desc: "LIKE substring match, computed at query time. No index to rebuild.",           icon: Database, built: "query" },
-  { key: "kw",      name: "Keyword",      desc: "Token overlap on chunk.keywords. Populated by Enrich.",                          icon: Hash,     built: "enrich",
-    rebuild: { label: "Re-extract", rationale: "Run after changing the Enrich prompt or model — keyword set will refresh across all chunks." } },
-  { key: "tagmeta", name: "Tag-meta",     desc: "Chunk dimension/scope match. Populated by chapter splitter (wiki) + Enrich (note).", icon: BookOpen, built: "enrich",
-    rebuild: { label: "Re-classify", rationale: "Run after changing classifier logic / tag schema — re-applies dimension+scope across all chunks." } },
-];
-
-const PATH_BUILT_LABEL: Record<string, string> = {
-  embed:  "embed",
-  auto:   "auto",
-  query:  "query-time",
-  enrich: "enrich",
-};
-
 export function RAGPage() {
   const [sources, setSources] = useState<Source[] | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [activeSourceId, setActiveSourceId] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [flash, setFlash] = useState<{ msg: string; tone: "ok" | "err" } | null>(null);
   // Real-time per-doc run map. Powers the Processing panel + the
@@ -185,6 +153,7 @@ export function RAGPage() {
             embedded: d.ingested_at != null,
             enriched: !!lastDone,
             tagged,
+            tagCount: Array.isArray(md.ai_tags) ? (md.ai_tags as unknown[]).length : 0,
           };
         });
         setSources(mapped);
@@ -214,6 +183,18 @@ export function RAGPage() {
     return sources.filter((s) => s.name.toLowerCase().includes(q));
   }, [sources, filter]);
 
+  useEffect(() => {
+    if (!sources || sources.length === 0) return;
+    if (activeSourceId && sources.some((s) => s.id === activeSourceId)) return;
+    setActiveSourceId(sources[0].id);
+    setSelected(new Set([sources[0].id]));
+  }, [sources, activeSourceId]);
+
+  const activeSource = useMemo(() => {
+    if (!sources || sources.length === 0) return null;
+    return sources.find((s) => s.id === activeSourceId) || sources[0];
+  }, [sources, activeSourceId]);
+
   const counts = useMemo(() => {
     const all = sources?.length ?? 0;
     const notes = sources?.filter((s) => s.kind === "note").length ?? 0;
@@ -223,22 +204,21 @@ export function RAGPage() {
   }, [sources]);
 
   function toggle(id: string) {
-    setSelected((cur) => {
-      const next = new Set(cur);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+    setActiveSourceId(id);
+    setSelected(new Set([id]));
   }
 
   function selectAll() {
     setSelected(new Set(filtered.map((s) => s.id)));
+    if (filtered[0]) setActiveSourceId(filtered[0].id);
   }
   function selectNone() {
     setSelected(new Set());
   }
   function selectKind(kind: SourceKind) {
-    setSelected(new Set(filtered.filter((s) => s.kind === kind).map((s) => s.id)));
+    const items = filtered.filter((s) => s.kind === kind);
+    setSelected(new Set(items.map((s) => s.id)));
+    if (items[0]) setActiveSourceId(items[0].id);
   }
 
   // ── Bulk actions ────────────────────────────────────────────────
@@ -336,17 +316,6 @@ export function RAGPage() {
     session.submit("enrich", _kpDocs(selected), { force: true });
   }
 
-  async function runWikiSmartsheet() {
-    const wikiIds = (sources ?? [])
-      .filter((s) => selected.has(s.id) && s.kind === "wiki")
-      .map((s) => s.id);
-    if (wikiIds.length === 0) {
-      flashSet("Select at least one Wiki topic to build a smartsheet.", "err");
-      return;
-    }
-    session.submit("wiki_abstract", _kpDocs(wikiIds), { force: true });
-  }
-
   async function runGraphRebuild() {
     const id = "__graph__";
     setRuns((prev) => {
@@ -439,11 +408,6 @@ export function RAGPage() {
         : stage === "enrich" ? `${fresh} source${fresh === 1 ? "" : "s"} not yet enriched — LLM classifier + tag generation.`
         :                       `${fresh} source${fresh === 1 ? "" : "s"} not yet tagged — AI tag pass.`,
     };
-  }
-
-  // ── Per-path rebuild (placeholder until backend exposes per-path) ──
-  function rebuildPath(key: string) {
-    flashSet(`${key} rebuild — backend endpoint coming Phase 4`);
   }
 
   // ── Tag CRUD ────────────────────────────────────────────────────
@@ -617,7 +581,7 @@ export function RAGPage() {
                           <StatusDot
                             on={s.enriched}
                             title={s.kind === "wiki" ? "Wiki knowledge-sheet — per-chapter summaries" : "AI segment — line-range tag classification"}
-                            letter="R"
+                            letter="A"
                           />
                           <StatusDot
                             on={s.enriched}
@@ -626,7 +590,7 @@ export function RAGPage() {
                           />
                         </span>
                         <span className="proto-atelier-rag-tree-item-meta">
-                          {Math.round(s.byteSize / 1024)}k
+                          Tags {s.tagCount}
                         </span>
                       </button>
                     );
@@ -637,20 +601,18 @@ export function RAGPage() {
           </div>
         </aside>
 
-        {/* Right scroll panel — bulk actions, 6 paths, tag CRUD */}
+        {/* Right scroll panel — selected-file workbench + supporting surfaces */}
         <div className="proto-atelier-rag-panel">
 
-          {/* Bulk actions */}
-          <section className="proto-atelier-rag-section">
-            <div className="proto-atelier-rag-section-head">
-              <h3 className="proto-atelier-rag-section-title">Process selected</h3>
-              <div className="proto-atelier-rag-section-meta">
-                {selected.size === 0
-                  ? "No sources selected"
-                  : `${selected.size} source${selected.size === 1 ? "" : "s"} selected`}
+          <section className="proto-atelier-rag-workbench">
+            <div className="proto-atelier-rag-workbench-head">
+              <div>
+                <h3 className="proto-atelier-rag-section-title">KP Workbench</h3>
+                <div className="proto-atelier-rag-section-meta">
+                  {activeSource ? activeSource.name : "Select a file to inspect its knowledge process"}
+                </div>
               </div>
-            </div>
-            <div className="proto-atelier-rag-actions-grid">
+              <div className="proto-atelier-rag-actions-row">
               {(() => { const e = actionLabel("embed"); return (
                 <ActionTile
                   icon={<Database size={14} />}
@@ -668,40 +630,17 @@ export function RAGPage() {
                   icon={<Sparkles size={14} />}
                   title={e.title}
                   tone="llm"
-                  desc={cloudProviderReady === false
-                    ? "Cloud AI provider not set — open Cloud panel to add one."
+                  desc={activeSource?.kind === "wiki"
+                    ? "Wiki uses LOCAL AI, then uploads a Cloud artifact. Notes use Cloud AI enrich."
+                    : cloudProviderReady === false
+                    ? "Cloud AI provider not set — wiki still uses LOCAL AI; notes need Cloud AI."
                     : e.desc}
-                  disabled={selected.size === 0 || busyKinds.has("enrich") || cloudProviderReady === false}
+                  disabled={selected.size === 0 || busyKinds.has("enrich")}
                   running={busyKinds.has("enrich")}
                   progress={runStats.enrich.total > 0 ? { done: runStats.enrich.done + runStats.enrich.failed, total: runStats.enrich.total } : undefined}
                   onClick={runEnrich}
                 />
               ); })()}
-              {/* Build wiki-smartsheet — chapter-based concept
-                  matrix. Distinct LLM action from generic enrich.
-                  Only applicable when selection includes wiki docs. */}
-              {(() => {
-                const wikiSelCount = (sources ?? [])
-                  .filter((s) => selected.has(s.id) && s.kind === "wiki").length;
-                return (
-                  <ActionTile
-                    icon={<Layers size={14} />}
-                    title="Build wiki-smartsheet"
-                    tone="llm"
-                    desc={
-                      cloudProviderReady === false
-                        ? "Cloud AI provider not set — open Cloud panel to add one."
-                        : wikiSelCount === 0
-                        ? "Per-chapter concept matrix (entities × claims × refs). Select Wiki docs first."
-                        : `${wikiSelCount} wiki doc${wikiSelCount === 1 ? "" : "s"} selected — extract chapter concepts.`
-                    }
-                    disabled={wikiSelCount === 0 || busyKinds.has("tag") || cloudProviderReady === false}
-                    running={busyKinds.has("tag")}
-                    progress={runStats.tag.total > 0 ? { done: runStats.tag.done + runStats.tag.failed, total: runStats.tag.total } : undefined}
-                    onClick={runWikiSmartsheet}
-                  />
-                );
-              })()}
               <ActionTile
                 icon={<NetworkIcon size={14} />}
                 title="Rebuild entity graph"
@@ -712,101 +651,13 @@ export function RAGPage() {
                 onClick={runGraphRebuild}
                 wholeWorkspace
               />
-            </div>
-          </section>
-
-          {/* KP Session — chat-style timeline. Each click on the
-              action tiles below opens a "turn" here with preflight
-              checks, live progress, and inline remediation when
-              blocked (e.g. a wiki doc with 0 chapters gets a
-              "Run Embedding now" button right in the turn). */}
-          <KPSessionPanel session={session} />
-
-          {/* Live processing panel — auto-shows while jobs are
-              running, fades after completion. Combines client-side
-              real-time runs (embedding/enrich dispatched from this
-              session) with cloud-polled enrich jobs (catches
-              MCP-triggered runs from agents). */}
-          <RAGProcessingPanel clientRuns={runs} onClearDone={() => {
-            setRuns((prev) => {
-              const next = new Map(prev);
-              for (const [id, r] of prev) if (r.status === "done" || r.status === "failed") next.delete(id);
-              return next;
-            });
-          }} />
-
-          {/* Workspace-wide recent runs from the canonical processing_runs
-              ledger — covers MCP-triggered, auto-ingest, and explicit-
-              run paths uniformly. Refreshes when any pipeline event
-              fires for any doc, so users see results land without
-              reloading the page. */}
-          <RecentRunsFeed />
-
-
-          {/* 6 retrieval paths — rebuild only where it makes sense
-              (per-path status pill explains: embed / auto / query /
-              enrich; rebuild button only on the 3 paths that actually
-              go stale). */}
-          <section className="proto-atelier-rag-section">
-            <div className="proto-atelier-rag-section-head">
-              <h3 className="proto-atelier-rag-section-title">Retrieval paths · 6-path hybrid</h3>
-              <div className="proto-atelier-rag-section-meta">
-                Per <code>P1-2</code> · no path is the single source of rank
               </div>
             </div>
-            <div className="proto-atelier-rag-paths">
-              {RETRIEVAL_PATHS.map((p) => {
-                const Icon = p.icon;
-                return (
-                  <div key={p.key} className="proto-atelier-rag-path">
-                    <span className="proto-atelier-rag-path-icon"><Icon size={13} strokeWidth={1.7} /></span>
-                    <div className="proto-atelier-rag-path-body">
-                      <div className="proto-atelier-rag-path-name">{p.name}</div>
-                      <div className="proto-atelier-rag-path-desc">{p.desc}</div>
-                    </div>
-                    <span
-                      className={cn(
-                        "proto-atelier-rag-path-status",
-                        `proto-atelier-rag-path-status-${p.built}`,
-                      )}
-                      title={
-                        p.built === "embed"  ? "Built when you run Embedding."
-                        : p.built === "auto"   ? "Maintained automatically by Postgres trigger."
-                        : p.built === "query"  ? "Computed at query time. No index, nothing to rebuild."
-                        :                        "Populated when you run Enrich."
-                      }
-                    >
-                      {PATH_BUILT_LABEL[p.built]}
-                    </span>
-                    {p.rebuild ? (
-                      <button
-                        type="button"
-                        onClick={() => rebuildPath(p.key)}
-                        className="proto-atelier-rag-path-btn"
-                        title={p.rebuild.rationale}
-                      >
-                        <RotateCw size={11} strokeWidth={2} /> {p.rebuild.label}
-                      </button>
-                    ) : (
-                      <span
-                        className="proto-atelier-rag-path-noop"
-                        title={
-                          p.built === "auto"  ? "Postgres trigger keeps this in sync — never needs rebuild."
-                          : p.built === "query" ? "No index — recomputed on every search."
-                          : "Auto-maintained."
-                        }
-                      >
-                        no rebuild
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-
-          {/* Tags CRUD */}
-          <section className="proto-atelier-rag-section">
+            <KPFileInspector source={activeSource} turns={session.turns} />
+            <div className="proto-atelier-rag-workbench-lower">
+              <KPSessionPanel session={session} />
+              {activeSource?.kind === "note" && (
+          <section className="proto-atelier-rag-tags-section">
             <div className="proto-atelier-rag-section-head">
               <h3 className="proto-atelier-rag-section-title">Workspace tags</h3>
               <div className="proto-atelier-rag-section-meta">
@@ -898,113 +749,13 @@ export function RAGPage() {
               )}
             </div>
           </section>
+          )}
+            </div>
+          </section>
         </div>
       </div>
     </div>
   );
-}
-
-function RecentRunsFeed() {
-  const [runs, setRuns] = useState<cloudApi.RecentRun[] | null>(null);
-  const [collapsed, setCollapsed] = useState(false);
-  const reload = React.useCallback(async () => {
-    try {
-      const list = await cloudApi.listRecentRuns(30);
-      setRuns(list);
-    } catch {
-      setRuns([]);
-    }
-  }, []);
-  useEffect(() => {
-    reload();
-    function onPipelineChange() { reload(); }
-    function onWikiProgress() { reload(); }
-    window.addEventListener("smartnote:doc-pipeline-changed", onPipelineChange);
-    window.addEventListener("smartnote:wiki-abstract-progress", onWikiProgress);
-    return () => {
-      window.removeEventListener("smartnote:doc-pipeline-changed", onPipelineChange);
-      window.removeEventListener("smartnote:wiki-abstract-progress", onWikiProgress);
-    };
-  }, [reload]);
-  if (runs === null) return null;
-  if (runs.length === 0) return null;
-  const kindLabel: Record<string, string> = {
-    chunk_embed: "embed",
-    ai_enrich: "enrich",
-    wiki_abstract: "wiki",
-  };
-  return (
-    <section className="proto-atelier-rag-section">
-      <div className="proto-atelier-rag-section-head">
-        <h3 className="proto-atelier-rag-section-title">
-          Recent runs · processing ledger
-        </h3>
-        <button
-          type="button"
-          onClick={() => setCollapsed((v) => !v)}
-          style={{
-            background: "transparent", border: 0, cursor: "pointer",
-            color: "var(--color-text-muted)", fontSize: 11,
-          }}
-        >
-          {collapsed ? "show" : "hide"} ({runs.length})
-        </button>
-      </div>
-      {!collapsed && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 11 }}>
-          {runs.map((r) => (
-            <div
-              key={r.id}
-              style={{
-                display: "flex", alignItems: "center", gap: 8,
-                padding: "5px 8px", borderRadius: 4,
-                background: "var(--color-bg-soft)",
-                opacity: r.status.startsWith("skipped") ? 0.6 : 1,
-              }}
-              title={r.error || ""}
-            >
-              <span className="proto-tag" style={{ minWidth: 56 }}>
-                {kindLabel[r.kind] || r.kind}
-              </span>
-              <span
-                className={cn(
-                  "proto-tag",
-                  r.status === "done" && "proto-tag-accent",
-                  r.status === "partial" && "proto-tag-warn",
-                  (r.status === "running" || r.status === "queued") && "proto-tag-running",
-                )}
-              >
-                {r.status}
-              </span>
-              <span style={{ color: "var(--color-text-secondary)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {r.document_name || r.document_id.slice(0, 8)}
-              </span>
-              {r.executor && (
-                <span style={{ color: "var(--color-text-muted)", fontSize: 10 }}>{r.executor}</span>
-              )}
-              <span style={{ color: "var(--color-text-muted)", fontSize: 10 }}>
-                {fmtRelative(r.finished_at || r.started_at || r.created_at || "")}
-              </span>
-              {r.error && (
-                <span style={{ color: "var(--color-danger, #c0392b)" }}>●</span>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function fmtRelative(iso: string): string {
-  if (!iso) return "—";
-  const t = new Date(iso).getTime();
-  if (Number.isNaN(t)) return "—";
-  const d = (Date.now() - t) / 1000;
-  if (d < 60) return `${Math.round(d)}s ago`;
-  if (d < 3600) return `${Math.round(d / 60)}m ago`;
-  if (d < 86400) return `${Math.round(d / 3600)}h ago`;
-  return `${Math.round(d / 86400)}d ago`;
 }
 
 function StatusDot({ on, title, letter }: { on: boolean; title: string; letter: string }) {
@@ -1019,6 +770,82 @@ function StatusDot({ on, title, letter }: { on: boolean; title: string; letter: 
     >
       {letter}
     </span>
+  );
+}
+
+function KPFileInspector({
+  source,
+  turns,
+}: {
+  source: Source | null;
+  turns: ReturnType<typeof useKPSession>["turns"];
+}) {
+  if (!source) {
+    return (
+      <div className="proto-atelier-rag-inspector-empty">
+        Select a file to inspect its knowledge process.
+      </div>
+    );
+  }
+  const activeTurn = turns.find((t) => t.docs.some((d) => d.id === source.id));
+  const isWiki = source.kind === "wiki";
+  const aiSource = isWiki ? "LOCAL AI · Desktop llmapi" : "Cloud AI · enrich provider";
+  const artifact = isWiki ? "Cloud artifact · wiki_chapters" : "Cloud artifact · tag_segments";
+  const steps = activeTurn?.steps.filter((s) => !s.id.startsWith("preflight")) || [];
+  return (
+    <div className="proto-atelier-rag-inspector">
+      <div className="proto-atelier-rag-inspector-main">
+        <div className="proto-atelier-rag-file-head">
+          <div>
+            <div className="proto-atelier-rag-file-kind">{source.kind}</div>
+            <h4>{source.name}</h4>
+          </div>
+          <div className="proto-atelier-rag-file-badges">
+            <span className="proto-atelier-rag-file-badge">{aiSource}</span>
+            <span className="proto-atelier-rag-file-badge proto-atelier-rag-file-badge-cloud">{artifact}</span>
+          </div>
+        </div>
+        <div className="proto-atelier-rag-inspector-process">
+          {(steps.length > 0 ? steps : [
+            { id: "idle-parse", label: "Parse sections", status: source.embedded ? "done" : "pending", detail: source.embedded ? "Chunks available" : "Run Embedding first for chunks" },
+            { id: "idle-ai", label: isWiki ? "Summarize chapters" : "Classify note segments", status: source.enriched ? "done" : "pending", detail: source.enriched ? "Artifact exists" : "Run Enrich to build artifact" },
+            { id: "idle-upload", label: "Upload cloud artifact", status: source.enriched ? "done" : "pending", detail: artifact },
+            { id: "idle-graph", label: "Graph status", status: source.enriched ? "done" : "pending", detail: source.enriched ? "Entities ready" : "Waiting for enrich artifact" },
+          ] as Array<{ id: string; label: string; status: string; detail?: string; progress?: { current: number; total: number } }>).map((s, index) => (
+            <div key={s.id} className={cn("proto-atelier-rag-inspector-step", `proto-atelier-rag-inspector-step-${s.status}`)}>
+              <span className="proto-atelier-rag-inspector-step-index">
+                {s.status === "done" ? "✓" : s.status === "failed" ? "×" : s.status === "running" ? "▸" : index + 1}
+              </span>
+              <span className="proto-atelier-rag-inspector-step-body">
+                <strong>{s.label}</strong>
+                {s.detail && <em>{s.detail}</em>}
+                {s.progress && s.progress.total > 0 && (
+                  <small>{s.progress.current}/{s.progress.total}</small>
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <aside className="proto-atelier-rag-inspector-side">
+        <div className="proto-atelier-rag-state-grid">
+          <span>Embedding</span><strong>{source.embedded ? "Complete" : "Pending"}</strong>
+          <span>Artifact</span><strong>{source.enriched ? "Available" : "Missing"}</strong>
+          <span>Graph</span><strong>{source.enriched ? "Ready" : "Pending"}</strong>
+          <span>Tags</span><strong>{source.tagCount}</strong>
+          <span>AI source</span><strong>{aiSource}</strong>
+          <span>Cloud</span><strong>Storage only</strong>
+        </div>
+        <div className="proto-atelier-rag-recovery-box">
+          <strong>Recovery</strong>
+          <span>{activeTurn?.status === "failed" ? "Failed steps can be continued from this file." : "No failed chapters for this file."}</span>
+          <div>
+            <button type="button" disabled={activeTurn?.status !== "failed"}>Continue failed only</button>
+            <button type="button">Re-run all</button>
+          </div>
+        </div>
+      </aside>
+    </div>
   );
 }
 

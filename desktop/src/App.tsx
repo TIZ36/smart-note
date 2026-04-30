@@ -283,7 +283,7 @@ export default function App() {
         const allSkipped = chapters > 0 && summarized === 0 && skipped === chapters;
         setToast({
           message: chapters === 0
-            ? "Wiki abstract: 0 chapters found. Run Embedding first to extract H2 sections."
+            ? "Wiki abstract: no sections found in this document."
             : allSkipped
             ? `Wiki abstract: all ${chapters} chapters already up-to-date (no LLM call needed)`
             : failed > 0

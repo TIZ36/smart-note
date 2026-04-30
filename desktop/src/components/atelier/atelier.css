@@ -2968,7 +2968,7 @@
 
 /* ── Left source tree ──────────────────────────────────────────── */
 .proto-atelier-rag-tree {
-  width: 240px;
+  width: 320px;
   flex-shrink: 0;
   border-right: 1px solid var(--color-border);
   background: var(--color-bg-elevated);
@@ -3056,8 +3056,8 @@
 .proto-atelier-rag-tree-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 10px;
+  gap: 9px;
+  padding: 8px 10px;
   font-size: 12px;
   color: var(--color-text-secondary);
   cursor: pointer;
@@ -3088,6 +3088,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 1.25;
 }
 .proto-atelier-rag-tree-item-meta {
   font-size: 10px;
@@ -3125,206 +3126,6 @@
   opacity: 1;
 }
 
-/* Live processing panel — auto-shows while jobs running, tucked
-   into RAG right-panel between bulk actions and 6 paths */
-.proto-atelier-rag-progress {
-  max-width: 880px;
-  margin: 0 auto 28px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-bg-primary);
-  overflow: hidden;
-}
-.proto-atelier-rag-progress-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 14px;
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-bg-elevated);
-}
-.proto-atelier-rag-progress-title {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-weight: 500;
-  color: var(--color-text-secondary);
-}
-.proto-atelier-rag-progress-stats {
-  display: inline-flex;
-  gap: 6px;
-  font-size: 10.5px;
-  font-variant-numeric: tabular-nums;
-}
-.proto-atelier-rag-progress-stat {
-  padding: 1px 7px;
-  border-radius: 999px;
-  background: var(--color-bg-primary);
-  border: 1px solid var(--color-border);
-  color: var(--color-text-secondary);
-}
-.proto-atelier-rag-progress-stat-running {
-  background: color-mix(in oklab, var(--color-accent) 14%, transparent);
-  color: var(--color-accent);
-  border-color: transparent;
-}
-.proto-atelier-rag-progress-stat-done {
-  background: color-mix(in oklab, var(--color-success) 14%, transparent);
-  color: var(--color-success);
-  border-color: transparent;
-}
-.proto-atelier-rag-progress-stat-failed {
-  background: color-mix(in oklab, var(--color-danger) 14%, transparent);
-  color: var(--color-danger);
-  border-color: transparent;
-}
-
-.proto-atelier-rag-progress-list {
-  display: flex;
-  flex-direction: column;
-}
-.proto-atelier-rag-progress-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 14px;
-  border-top: 1px solid var(--color-border);
-  font-size: 12px;
-}
-.proto-atelier-rag-progress-row:first-child { border-top: none; }
-.proto-atelier-rag-progress-row-failed { background: color-mix(in oklab, var(--color-danger) 4%, transparent); }
-.proto-atelier-rag-progress-row-done   { opacity: 0.7; }
-.proto-atelier-rag-progress-row-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  flex-shrink: 0;
-  margin-top: 1px;
-  color: var(--color-text-muted);
-}
-.proto-atelier-rag-progress-row-failed .proto-atelier-rag-progress-row-icon { color: var(--color-danger); }
-.proto-atelier-rag-progress-row-done   .proto-atelier-rag-progress-row-icon { color: var(--color-success); }
-.proto-atelier-rag-progress-row-body { flex: 1; min-width: 0; }
-.proto-atelier-rag-progress-row-line {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 4px;
-}
-.proto-atelier-rag-progress-row-name {
-  font-weight: 500;
-  color: var(--color-text-primary);
-  flex-shrink: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.proto-atelier-rag-progress-row-phase {
-  font-size: 10.5px;
-  color: var(--color-text-muted);
-  font-variant-numeric: tabular-nums;
-  flex-shrink: 0;
-}
-.proto-atelier-rag-progress-bar {
-  height: 3px;
-  border-radius: 2px;
-  background: var(--color-bg-hover);
-  overflow: hidden;
-}
-.proto-atelier-rag-progress-bar-fill {
-  display: block;
-  height: 100%;
-  background: var(--color-accent);
-  transition: width 280ms ease-out;
-}
-.proto-atelier-rag-progress-row-failed .proto-atelier-rag-progress-bar-fill { background: var(--color-danger); }
-.proto-atelier-rag-progress-row-done   .proto-atelier-rag-progress-bar-fill { background: var(--color-success); }
-
-.proto-atelier-rag-progress-row-kind {
-  font-size: 9px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-weight: 500;
-  color: var(--color-text-muted);
-  padding: 1px 5px;
-  border: 1px solid var(--color-border);
-  border-radius: 3px;
-  background: var(--color-bg-elevated);
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
-  flex-shrink: 0;
-}
-.proto-atelier-rag-progress-clear {
-  margin-left: auto;
-  width: 18px;
-  height: 18px;
-  border: none;
-  background: transparent;
-  color: var(--color-text-muted);
-  border-radius: 3px;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-.proto-atelier-rag-progress-clear:hover {
-  color: var(--color-text-primary);
-  background: var(--color-bg-hover);
-}
-
-/* Drain queue button — for ENRICH·BG jobs that no executor will
- * pick up. Auto-shows when staleQueued > 0. */
-.proto-atelier-rag-progress-drain {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  font-size: 10.5px;
-  border: 1px solid color-mix(in oklab, var(--color-danger) 30%, var(--color-border));
-  background: var(--color-bg-primary);
-  color: var(--color-danger);
-  border-radius: 4px;
-  cursor: pointer;
-  font-family: inherit;
-  font-variant-numeric: tabular-nums;
-}
-.proto-atelier-rag-progress-drain:hover {
-  background: color-mix(in oklab, var(--color-danger) 10%, transparent);
-}
-/* Per-row × delete (only on cloud-side enrich jobs) */
-.proto-atelier-rag-progress-row-del {
-  width: 18px;
-  height: 18px;
-  border: none;
-  background: transparent;
-  color: var(--color-text-muted);
-  border-radius: 3px;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  align-self: center;
-  opacity: 0;
-  transition: opacity 160ms ease-out;
-}
-.proto-atelier-rag-progress-row:hover .proto-atelier-rag-progress-row-del {
-  opacity: 1;
-}
-.proto-atelier-rag-progress-row-del:hover {
-  color: var(--color-danger);
-  background: color-mix(in oklab, var(--color-danger) 10%, transparent);
-}
-.proto-atelier-rag-progress-more {
-  padding: 6px 14px 10px;
-  font-size: 10.5px;
-  color: var(--color-text-muted);
-  font-style: italic;
-}
-
 /* Action tile in-flight progress bar (under desc) */
 .proto-atelier-rag-action-running { border-color: color-mix(in oklab, var(--color-accent) 30%, var(--color-border)); }
 .proto-atelier-rag-action-bar {
@@ -3351,13 +3152,26 @@
 /* ── Right scrollable panel ────────────────────────────────────── */
 .proto-atelier-rag-panel {
   flex: 1;
+  display: flex;
+  flex-direction: column;
   overflow-y: auto;
   min-height: 0;
-  padding: 20px 28px 48px;
+  padding: 0;
+  background: var(--color-bg-primary);
 }
 .proto-atelier-rag-section {
   max-width: 880px;
   margin: 0 auto 28px;
+}
+.proto-atelier-rag-workbench-lower .proto-atelier-rag-section {
+  max-width: none;
+  margin: 0;
+}
+.proto-atelier-rag-workbench-lower .kp-session {
+  margin: 0;
+}
+.proto-atelier-rag-workbench-lower .kp-turn {
+  background: var(--color-bg-primary);
 }
 .proto-atelier-rag-section-head {
   display: flex;
@@ -3388,10 +3202,60 @@
 }
 
 /* Bulk action tiles */
+.proto-atelier-rag-workbench {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: 100%;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--color-bg-primary);
+  overflow: hidden;
+}
+.proto-atelier-rag-workbench-lower {
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  padding: 14px 24px 18px;
+  display: grid;
+  gap: 14px;
+}
+.proto-atelier-rag-workbench-lower:empty {
+  display: none;
+}
+.proto-atelier-rag-workbench-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 24px 14px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+}
+.proto-atelier-rag-actions-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(120px, 1fr));
+  gap: 6px;
+  min-width: min(500px, 100%);
+}
 .proto-atelier-rag-actions-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+.proto-atelier-rag-actions-row .proto-atelier-rag-action {
+  padding: 8px 10px;
+  border-radius: 6px;
+}
+.proto-atelier-rag-actions-row .proto-atelier-rag-action-icon {
+  display: none;
+}
+.proto-atelier-rag-actions-row .proto-atelier-rag-action-desc {
+  display: none;
+}
+.proto-atelier-rag-actions-row .proto-atelier-rag-action-head {
+  gap: 6px;
 }
 .proto-atelier-rag-action {
   display: flex;
@@ -3471,115 +3335,153 @@
   line-height: 1.5;
 }
 
-/* 6-path retrieval rows */
-.proto-atelier-rag-paths {
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  overflow: hidden;
-  background: var(--color-bg-primary);
+.proto-atelier-rag-inspector-empty {
+  padding: 28px 24px;
+  font-size: 12px;
+  color: var(--color-text-muted);
 }
-.proto-atelier-rag-path {
+.proto-atelier-rag-inspector {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.65fr);
+  align-items: start;
+  gap: 24px;
+  padding: 24px;
+}
+.proto-atelier-rag-inspector-main,
+.proto-atelier-rag-inspector-side {
+  min-width: 0;
+}
+.proto-atelier-rag-file-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+.proto-atelier-rag-file-kind {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--color-text-muted);
+  margin-bottom: 4px;
+}
+.proto-atelier-rag-file-head h4 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  line-height: 1.35;
+}
+.proto-atelier-rag-file-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.proto-atelier-rag-file-badge {
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in oklab, var(--color-accent) 34%, var(--color-border));
+  color: var(--color-accent);
+  background: color-mix(in oklab, var(--color-accent) 8%, transparent);
+  white-space: nowrap;
+}
+.proto-atelier-rag-file-badge-cloud {
+  border-color: var(--color-border);
+  color: var(--color-text-secondary);
+  background: var(--color-bg-elevated);
+}
+.proto-atelier-rag-inspector-process {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.proto-atelier-rag-inspector-step {
+  display: grid;
+  grid-template-columns: 22px 1fr;
   gap: 12px;
-  padding: 10px 14px;
+  padding: 13px 14px;
   border-top: 1px solid var(--color-border);
 }
-.proto-atelier-rag-path:first-of-type { border-top: none; }
-.proto-atelier-rag-path-icon {
+.proto-atelier-rag-inspector-step:first-child { border-top: none; }
+.proto-atelier-rag-inspector-step-index {
+  width: 20px;
+  height: 20px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 5px;
-  background: var(--color-bg-elevated);
+  border-radius: 3px;
+  border: 1px solid var(--color-border);
   color: var(--color-text-muted);
-  flex-shrink: 0;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
-.proto-atelier-rag-path-body {
-  flex: 1;
+.proto-atelier-rag-inspector-step-done .proto-atelier-rag-inspector-step-index {
+  color: var(--color-success);
+}
+.proto-atelier-rag-inspector-step-running .proto-atelier-rag-inspector-step-index {
+  color: var(--color-accent);
+  border-color: color-mix(in oklab, var(--color-accent) 38%, var(--color-border));
+}
+.proto-atelier-rag-inspector-step-failed .proto-atelier-rag-inspector-step-index {
+  color: var(--color-danger);
+}
+.proto-atelier-rag-inspector-step-body {
+  display: grid;
+  gap: 3px;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
 }
-.proto-atelier-rag-path-name {
+.proto-atelier-rag-inspector-step-body strong {
   font-size: 12.5px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--color-text-primary);
 }
-.proto-atelier-rag-path-desc {
+.proto-atelier-rag-inspector-step-body em,
+.proto-atelier-rag-inspector-step-body small {
+  font-style: normal;
   font-size: 11px;
   color: var(--color-text-muted);
-  line-height: 1.5;
-  max-width: 60ch;
 }
-.proto-atelier-rag-path-status {
-  font-size: 10px;
-  padding: 1px 7px;
-  border-radius: 999px;
-  background: var(--color-bg-elevated);
-  color: var(--color-text-secondary);
+.proto-atelier-rag-inspector-side {
+  display: grid;
+  gap: 12px;
+}
+.proto-atelier-rag-state-grid,
+.proto-atelier-rag-recovery-box {
   border: 1px solid var(--color-border);
-  text-transform: lowercase;
-  letter-spacing: 0.02em;
-  font-weight: 500;
-  flex-shrink: 0;
-  font-variant: small-caps;
-}
-.proto-atelier-rag-path-status-embed {
-  background: color-mix(in oklab, var(--color-accent) 14%, transparent);
-  color: var(--color-accent);
-  border-color: transparent;
-}
-.proto-atelier-rag-path-status-auto {
-  background: color-mix(in oklab, var(--color-success) 14%, transparent);
-  color: var(--color-success);
-  border-color: transparent;
-}
-.proto-atelier-rag-path-status-query {
+  border-radius: 6px;
   background: var(--color-bg-elevated);
-  color: var(--color-text-muted);
+  padding: 12px;
 }
-.proto-atelier-rag-path-status-enrich {
-  background: color-mix(in oklab, var(--color-warning) 16%, transparent);
-  color: var(--color-warning);
-  border-color: transparent;
+.proto-atelier-rag-state-grid {
+  display: grid;
+  grid-template-columns: 76px 1fr;
+  gap: 8px 10px;
+  font-size: 11.5px;
 }
-
-/* For non-rebuildable paths — quiet placeholder where the button
- * would go, so the row alignment stays consistent. */
-.proto-atelier-rag-path-noop {
+.proto-atelier-rag-state-grid span { color: var(--color-text-muted); }
+.proto-atelier-rag-state-grid strong { font-weight: 500; color: var(--color-text-primary); min-width: 0; }
+.proto-atelier-rag-recovery-box {
+  display: grid;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+}
+.proto-atelier-rag-recovery-box strong { color: var(--color-text-primary); font-weight: 600; }
+.proto-atelier-rag-recovery-box div { display: flex; gap: 6px; flex-wrap: wrap; }
+.proto-atelier-rag-recovery-box button {
+  font: inherit;
   font-size: 10.5px;
-  color: var(--color-text-muted);
-  font-style: italic;
-  padding: 0 4px;
-  flex-shrink: 0;
-  width: 92px;
-  text-align: right;
-}
-.proto-atelier-rag-path-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 24px;
-  padding: 0 10px;
   border: 1px solid var(--color-border);
   border-radius: 5px;
   background: var(--color-bg-primary);
-  font-size: 11px;
   color: var(--color-text-secondary);
-  cursor: pointer;
-  font-family: inherit;
-  flex-shrink: 0;
+  padding: 4px 7px;
 }
-.proto-atelier-rag-path-btn:hover {
-  color: var(--color-text-primary);
-  border-color: var(--color-text-muted);
-}
+.proto-atelier-rag-recovery-box button:disabled { opacity: 0.45; }
 
 /* Tag CRUD */
 .proto-atelier-rag-tag-add {

@@ -4,13 +4,11 @@ Owns reads/writes to: processing_runs (kind='ai_enrich' slice),
 workspace_tags, and the `(kind=preference, content=enrich_provider)`
 slice of memories.
 
-Today this module delegates to existing helpers in
-`app.services.enrich.*` and `app.routers.enrich` so we can lift the
-boundary without churning every call site at once. As the rest of the
-enrichment context migrates, the SQL moves *here* and the
-service-shaped helpers in `app.services.enrich/*` shrink to thin
-domain logic (or vanish). Routers will then call only
-`enrichment.service.*`.
+Today this module still delegates provider lookup to the existing
+`app.services.enrich.executors.cloud_pool` helper so the executor and
+config route share one credential decoder. As the rest of the
+enrichment context migrates, that SQL moves here and the executor calls
+this repository instead.
 
 Public functions in this module are the only sanctioned way for
 *other* contexts to read enrichment-owned tables — see
@@ -35,6 +33,7 @@ class WorkspaceProviderConfig:
     of the workspace's stored credential + tuning. `auto_enrich_on_ingest`
     is the policy bit that lets passive sync pushes trigger enrich
     without an explicit caller flag."""
+
     api_key: str
     base_url: str
     model: str
@@ -49,6 +48,7 @@ class RecentJob:
     """One row in the console's recent-activity feed. Joined with the
     document so the UI can render `note.txt — done via cloud_pool`
     without a second round-trip."""
+
     id: str
     status: str
     executor: str | None
@@ -71,7 +71,8 @@ async def recent_activity(workspace_id: str, limit: int = 5) -> list[RecentJob]:
             ORDER BY COALESCE(r.finished_at, r.created_at) DESC
             LIMIT $2
             """,
-            UUID(workspace_id), max(1, min(limit, 50)),
+            UUID(workspace_id),
+            max(1, min(limit, 50)),
         )
     return [
         RecentJob(
@@ -90,6 +91,7 @@ async def recent_activity(workspace_id: str, limit: int = 5) -> list[RecentJob]:
 class EnrichJobCounts:
     """Status histogram for ai_enrich runs in one workspace. Powers the
     console aggregator and the desktop's enrich-queue card."""
+
     queued: int
     running: int
     done: int

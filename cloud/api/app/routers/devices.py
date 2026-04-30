@@ -29,6 +29,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from app.common import ws_registry
+from app.contexts.identity.repository import DEVICE_ONLINE_WINDOW_SEC
 from app.common.db import pool
 from app.deps import Identity, require_scope
 from app.services.account.security import mint_api_key
@@ -36,13 +37,6 @@ from app.services.account.security import mint_api_key
 router = APIRouter(prefix="/v1/devices", tags=["devices"])
 
 PAIRING_TTL_MIN = 10
-
-# Heartbeat window for the "online" indicator. A device is shown as
-# online when its `last_seen_at` is within this many seconds; that
-# timestamp is bumped by /v1/auth/token on every JWT exchange (the
-# desktop SDK exchanges roughly every JWT TTL so a 60s window catches
-# active sessions while still going dark within a minute of shutdown).
-DEVICE_ONLINE_WINDOW_SEC = 60
 
 
 class DeviceOut(BaseModel):
@@ -83,8 +77,11 @@ class ClaimResponse(BaseModel):
 # If you want to harden this later, drop `admin` and add a separate
 # "guest device" claim variant.
 _DEVICE_SCOPES: list[str] = [
-    "memories:read", "memories:write",
-    "documents:read", "documents:write", "documents:ingest",
+    "memories:read",
+    "memories:write",
+    "documents:read",
+    "documents:write",
+    "documents:ingest",
     "retrieve",
     "admin",
 ]
@@ -100,15 +97,19 @@ def _is_online(last_seen_at) -> bool:
 
 def _row_to_out(r, online: bool) -> DeviceOut:
     return DeviceOut(
-        id=str(r["id"]), name=r["name"], platform=r["platform"],
-        is_primary=bool(r["is_primary"]), online=online,
+        id=str(r["id"]),
+        name=r["name"],
+        platform=r["platform"],
+        is_primary=bool(r["is_primary"]),
+        online=online,
         last_seen_at=r["last_seen_at"].isoformat() if r["last_seen_at"] else None,
         created_at=r["created_at"].isoformat(),
     )
 
 
-@router.post("/pair", response_model=PairResponse,
-             dependencies=[Depends(require_scope("admin"))])
+@router.post(
+    "/pair", response_model=PairResponse, dependencies=[Depends(require_scope("admin"))]
+)
 async def issue_pairing(
     identity: Identity = Depends(require_scope("admin")),
 ) -> PairResponse:
@@ -124,10 +125,13 @@ async def issue_pairing(
             VALUES ($1, '(unclaimed)', 'unknown', $2, $3)
             RETURNING id
             """,
-            ws, code, expires,
+            ws,
+            code,
+            expires,
         )
-    return PairResponse(pairing_code=code, expires_at=expires.isoformat(),
-                        device_id=str(row["id"]))
+    return PairResponse(
+        pairing_code=code, expires_at=expires.isoformat(), device_id=str(row["id"])
+    )
 
 
 @router.post("/claim", response_model=ClaimResponse)
@@ -157,11 +161,14 @@ async def claim_device(req: ClaimRequest) -> ClaimResponse:
                   AND pairing_expires > now()
                 RETURNING *
                 """,
-                req.pairing_code, req.name, req.platform,
+                req.pairing_code,
+                req.name,
+                req.platform,
             )
             if not device_row:
                 raise HTTPException(
-                    status.HTTP_404_NOT_FOUND, "invalid or expired code",
+                    status.HTTP_404_NOT_FOUND,
+                    "invalid or expired code",
                 )
             # Auto-promote: if this workspace has no primary yet, make
             # the freshly-claimed device the primary. Otherwise the
@@ -171,7 +178,8 @@ async def claim_device(req: ClaimRequest) -> ClaimResponse:
             has_primary = await conn.fetchval(
                 "SELECT EXISTS(SELECT 1 FROM devices "
                 "WHERE workspace_id = $1 AND is_primary = true AND id <> $2)",
-                device_row["workspace_id"], device_row["id"],
+                device_row["workspace_id"],
+                device_row["id"],
             )
             if not has_primary:
                 await conn.execute(
@@ -179,7 +187,8 @@ async def claim_device(req: ClaimRequest) -> ClaimResponse:
                     device_row["id"],
                 )
                 device_row = await conn.fetchrow(
-                    "SELECT * FROM devices WHERE id = $1", device_row["id"],
+                    "SELECT * FROM devices WHERE id = $1",
+                    device_row["id"],
                 )
             # Mint the api_key under the same workspace.
             await conn.execute(
@@ -205,8 +214,9 @@ async def claim_device(req: ClaimRequest) -> ClaimResponse:
     )
 
 
-@router.get("", response_model=list[DeviceOut],
-            dependencies=[Depends(require_scope("admin"))])
+@router.get(
+    "", response_model=list[DeviceOut], dependencies=[Depends(require_scope("admin"))]
+)
 async def list_devices(
     identity: Identity = Depends(require_scope("admin")),
 ) -> list[DeviceOut]:
@@ -223,8 +233,11 @@ async def list_devices(
     return [_row_to_out(r, _is_online(r["last_seen_at"])) for r in rows]
 
 
-@router.post("/{device_id}/promote", response_model=DeviceOut,
-             dependencies=[Depends(require_scope("admin"))])
+@router.post(
+    "/{device_id}/promote",
+    response_model=DeviceOut,
+    dependencies=[Depends(require_scope("admin"))],
+)
 async def promote(
     device_id: str,
     identity: Identity = Depends(require_scope("admin")),
@@ -239,15 +252,15 @@ async def promote(
             )
             row = await conn.fetchrow(
                 "UPDATE devices SET is_primary = true WHERE id = $1 AND workspace_id = $2 RETURNING *",
-                dev, ws,
+                dev,
+                ws,
             )
     if not row:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "device not found")
     return _row_to_out(row, online=ws_registry.has_primary(identity.workspace_id))
 
 
-@router.delete("/{device_id}",
-               dependencies=[Depends(require_scope("admin"))])
+@router.delete("/{device_id}", dependencies=[Depends(require_scope("admin"))])
 async def unpair(
     device_id: str,
     identity: Identity = Depends(require_scope("admin")),
@@ -267,7 +280,8 @@ async def unpair(
             )
             result = await conn.execute(
                 "DELETE FROM devices WHERE id = $1 AND workspace_id = $2",
-                dev, ws,
+                dev,
+                ws,
             )
     return {"deleted": int(result.rsplit(" ", 1)[-1])}
 

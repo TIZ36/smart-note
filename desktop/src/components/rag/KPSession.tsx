@@ -23,6 +23,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as cloudApi from "@/lib/cloud-api";
 import { cn } from "@/lib/cn";
+import { buildWikiAbstractClient, splitWikiChapters } from "@/lib/wiki-client-artifacts";
 
 export type KPActionKind = "embed" | "enrich" | "wiki_abstract" | "graph";
 
@@ -191,31 +192,19 @@ export function useKPSession(opts: {
   // marks the turn `blocked` with inline fix actions.
   const runWikiAbstract = useCallback(
     async (turnId: string, docs: KPDocRef[], force: boolean) => {
-      // Preflight 1: provider
+      // Preflight 1: local desktop AI provider. Cloud only stores the artifact.
       const provStepId = "preflight:provider";
       updateStep(turnId, provStepId, { status: "running" });
-      if (cloudProviderReady === false) {
-        updateStep(turnId, provStepId, {
-          status: "failed",
-          detail: "Cloud AI provider not configured.",
-          fix: { label: "Open Cloud panel", onClick: () => {
-            window.dispatchEvent(new CustomEvent("smartnote:open-cloud-panel"));
-          } },
-        });
-        updateTurn(turnId, { status: "blocked", finishedAt: Date.now(),
-          summary: "Cloud AI provider missing" });
-        return;
-      }
-      updateStep(turnId, provStepId, { status: "done" });
+      updateStep(turnId, provStepId, { status: "done", detail: "LOCAL AI · Desktop provider checked on run" });
 
-      // Preflight 2: chapters per doc — fetch /kn for each, count.
+      // Preflight 2: parse chapters locally from the cloud document.
       const chaptersStepId = "preflight:chapters";
       updateStep(turnId, chaptersStepId, { status: "running" });
       const knByDoc = await Promise.all(
         docs.map(async (d) => {
           try {
-            const kn = await cloudApi.getDocumentKn(d.id);
-            return { doc: d, chapters: kn.wiki_chapters?.length ?? 0 };
+            const full = await cloudApi.getDocument(d.id);
+            return { doc: d, chapters: splitWikiChapters(full.content || "").length };
           } catch {
             return { doc: d, chapters: 0 };
           }
@@ -225,20 +214,18 @@ export function useKPSession(opts: {
       if (noChapters.length > 0) {
         updateStep(turnId, chaptersStepId, {
           status: "failed",
-          detail: `${noChapters.length} doc${noChapters.length === 1 ? "" : "s"} ${noChapters.length === 1 ? "has" : "have"} no chapters yet.`,
+          detail: `${noChapters.length} doc${noChapters.length === 1 ? "" : "s"} ${noChapters.length === 1 ? "has" : "have"} no text sections to summarize.`,
           fix: {
-            label: `Run Embedding for ${noChapters.length} doc${noChapters.length === 1 ? "" : "s"}`,
+            label: `Open Cloud document and check content`,
             onClick: async () => {
-              // Kick a fresh Embedding turn for the missing docs;
-              // user can re-click Build after it lands.
-              await runEmbedding(noChapters.map((d) => d.id));
+              window.dispatchEvent(new CustomEvent("smartnote:open-cloud-panel"));
             },
           },
         });
         updateTurn(turnId, {
           status: "blocked",
           finishedAt: Date.now(),
-          summary: `Blocked: ${noChapters.length}/${docs.length} doc${docs.length === 1 ? "" : "s"} need Embedding`,
+          summary: `Blocked: ${noChapters.length}/${docs.length} doc${docs.length === 1 ? "" : "s"} have no sections`,
         });
         return;
       }
@@ -249,23 +236,41 @@ export function useKPSession(opts: {
 
       // Phase B per doc — push step, then fire request. ws events
       // drive the progress; completion advances each step.
-      updateTurn(turnId, {
+      updateTurn(turnId, (t) => ({
         status: "running",
         steps: [
-          ...turnsRef.current.find((t) => t.id === turnId)!.steps,
+          ...t.steps,
           ...knByDoc.map((r) => ({
             id: `phaseB:${r.doc.id}`,
-            label: `Phase B · ${r.doc.name}`,
+            label: `[LOCAL AI] Wiki abstract · ${r.doc.name}`,
             status: "pending" as StepStatus,
             progress: { current: 0, total: r.chapters },
           })),
         ],
-      });
+      }));
 
       const results = await Promise.all(
         knByDoc.map(async (r) => {
           try {
-            await cloudApi.buildWikiAbstract(r.doc.id, force);
+            const result = await buildWikiAbstractClient(r.doc.id, {
+              force,
+              onProgress: (p) => {
+                updateStep(turnId, `phaseB:${r.doc.id}`, {
+                  status: "running",
+                  progress: { current: p.done, total: p.total },
+                  detail: p.phase === "reused"
+                    ? `LOCAL AI · Reused · ${p.title}`
+                    : p.phase === "summarizing"
+                    ? `LOCAL AI · Summarizing · ${p.title}`
+                    : `LOCAL AI · Done · ${p.title}`,
+                });
+              },
+            });
+            updateStep(turnId, `phaseB:${r.doc.id}`, {
+              status: "done",
+              progress: { current: result.chapters, total: result.chapters },
+              detail: `LOCAL AI · ${result.summarized} summarized · ${result.reused} reused`,
+            });
             return { ok: true, doc: r.doc };
           } catch (e) {
             updateStep(turnId, `phaseB:${r.doc.id}`, {
@@ -285,7 +290,7 @@ export function useKPSession(opts: {
           : `${docs.length} doc${docs.length === 1 ? "" : "s"} processed`,
       });
     },
-    [cloudProviderReady, runEmbedding, updateStep, updateTurn],
+    [updateStep, updateTurn],
   );
 
   const runEmbed = useCallback(
@@ -332,7 +337,9 @@ export function useKPSession(opts: {
       // Preflight: provider
       const provStepId = "preflight:provider";
       updateStep(turnId, provStepId, { status: "running" });
-      if (cloudProviderReady === false) {
+      const wikis = docs.filter((d) => d.kind === "wiki");
+      const notes = docs.filter((d) => d.kind !== "wiki");
+      if (notes.length > 0 && wikis.length === 0 && cloudProviderReady === false) {
         updateStep(turnId, provStepId, {
           status: "failed",
           detail: "Cloud AI provider not configured.",
@@ -344,16 +351,21 @@ export function useKPSession(opts: {
           summary: "Cloud AI provider missing" });
         return;
       }
-      updateStep(turnId, provStepId, { status: "done" });
+      updateStep(turnId, provStepId, {
+        status: "done",
+        detail: wikis.length > 0 && notes.length === 0
+          ? "LOCAL AI · Desktop provider checked on run"
+          : wikis.length > 0
+          ? "Mixed · wiki uses LOCAL AI, notes use Cloud AI"
+          : "Cloud AI provider configured",
+      });
 
       // Split: wiki docs route to wiki_abstract, others to ai_enrich.
-      const wikis = docs.filter((d) => d.kind === "wiki");
-      const notes = docs.filter((d) => d.kind !== "wiki");
 
-      updateTurn(turnId, {
+      updateTurn(turnId, (t) => ({
         status: "running",
         steps: [
-          ...turnsRef.current.find((t) => t.id === turnId)!.steps,
+          ...t.steps,
           ...notes.map((d) => ({
             id: `enrich:${d.id}`,
             label: `Enrich · ${d.name}`,
@@ -361,11 +373,11 @@ export function useKPSession(opts: {
           })),
           ...wikis.map((d) => ({
             id: `phaseB:${d.id}`,
-            label: `Wiki abstract · ${d.name}`,
+              label: `[LOCAL AI] Wiki abstract · ${d.name}`,
             status: "pending" as StepStatus,
           })),
         ],
-      });
+      }));
 
       const results = await Promise.all([
         ...notes.map(async (d) => {
@@ -384,7 +396,16 @@ export function useKPSession(opts: {
         ...wikis.map(async (d) => {
           updateStep(turnId, `phaseB:${d.id}`, { status: "running" });
           try {
-            await cloudApi.buildWikiAbstract(d.id, true);
+            await buildWikiAbstractClient(d.id, {
+              force: true,
+              onProgress: (p) => {
+                updateStep(turnId, `phaseB:${d.id}`, {
+                  status: "running",
+                  progress: { current: p.done, total: p.total },
+                  detail: p.phase === "summarizing" ? `LOCAL AI · Summarizing · ${p.title}` : `LOCAL AI · ${p.done}/${p.total}`,
+                });
+              },
+            });
             return { ok: true };
           } catch (e) {
             updateStep(turnId, `phaseB:${d.id}`, {
@@ -413,7 +434,11 @@ export function useKPSession(opts: {
       const baseSteps: Step[] =
         action === "graph"
           ? [{ id: "graph", label: "Rebuild entity graph", status: "running" }]
-          : [{ id: "preflight:provider", label: "Cloud AI provider configured", status: "pending" }];
+          : [{
+              id: "preflight:provider",
+              label: action === "wiki_abstract" ? "[LOCAL AI] Desktop provider ready" : "Cloud AI provider configured",
+              status: "pending",
+            }];
       if (action === "wiki_abstract") {
         baseSteps.push({
           id: "preflight:chapters",

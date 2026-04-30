@@ -155,6 +155,7 @@ export type DocumentKnChapter = {
   line_start: number;
   line_end: number;
   summary: string;
+  summary_sha?: string | null;
   keywords: string[];
   summarized: boolean;
   /** Latest wiki_phase_b failure reason for this chapter, e.g.
@@ -210,16 +211,34 @@ export const patchDocument = (
   patch: { name?: string; kind?: string; metadata?: Record<string, unknown> },
 ) => call<CloudDocument>("PATCH", `/v1/documents/${id}`, patch);
 
-// Wiki abstract — chapter summarization. Hits the canonical
-// /v1/processing/{id}/run endpoint with kind=wiki_abstract; the
-// result lands in wiki_chapters.summary and is read back through
-// the /kn endpoint along with everything else.
+// Wiki abstract artifacts. The desktop produces chapter summaries with
+// the local AI provider and overwrites the cloud artifact store.
 export type ProcessingRunResult = {
   run_id: string;
   status: string;
   dedup_skipped?: boolean;
   revision?: number;
 };
+export type WikiChapterArtifact = {
+  ord: number;
+  level: number;
+  anchor: string;
+  title: string;
+  line_start: number;
+  line_end: number;
+  summary: string;
+  keywords: string[];
+  entities: { name: string; type?: string }[];
+  summary_sha?: string;
+};
+export const replaceWikiChapters = (
+  id: string,
+  body: { base_content_sha?: string; chapters: WikiChapterArtifact[]; executor?: string },
+) => call<{ document_id: string; chapters: number; summarized: number; run_id: string | null }>(
+  "PUT",
+  `/v1/wiki/documents/${id}/chapters`,
+  body,
+);
 export const buildWikiAbstract = (id: string, force = true) =>
   call<ProcessingRunResult>("POST", `/v1/processing/${id}/run`, {
     kind: "wiki_abstract", force,
@@ -365,9 +384,9 @@ export const bulkIngest = (opts: {
   document_ids?: string[];
   smartnote_type?: string;
   topic_prefix?: string;
-  /** When true, also fires LLM tag classification via cloud_pool
-   *  (workspace's stored provider). Default true — most clicks of
-   *  "Ingest" expect both chunking and AI tagging. */
+    /** When true, also fires note LLM tag classification via cloud_pool
+     *  (workspace's stored provider). Wiki topics use wiki_abstract,
+     *  not line-range ai_enrich. Default true. */
   enrich_with_ai?: boolean;
 }) =>
   call<BulkIngestResult>("POST", "/v1/ingest/bulk", {

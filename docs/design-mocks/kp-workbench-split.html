@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SmartNote KP Workbench Split Prototype</title>
+  <style>
+    :root {
+      --bg: oklch(0.972 0.006 82);
+      --surface: oklch(0.988 0.004 82);
+      --surface-2: oklch(0.948 0.007 82);
+      --ink: oklch(0.235 0.018 250);
+      --muted: oklch(0.47 0.018 250);
+      --faint: oklch(0.68 0.012 250);
+      --line: oklch(0.885 0.008 82);
+      --accent: oklch(0.58 0.12 250);
+      --success: oklch(0.52 0.10 145);
+      --warn: oklch(0.62 0.12 72);
+      --danger: oklch(0.55 0.14 28);
+      --space-1: 4px;
+      --space-2: 8px;
+      --space-3: 12px;
+      --space-4: 16px;
+      --space-6: 24px;
+      --space-8: 32px;
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; }
+
+    .page {
+      min-height: 100vh;
+      padding: 28px;
+      display: grid;
+      place-items: center;
+    }
+
+    .shell {
+      width: min(1260px, 100%);
+      height: min(820px, calc(100vh - 56px));
+      border: 1px solid var(--line);
+      background: var(--surface);
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+
+    .topbar {
+      min-height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-4);
+      padding: 0 var(--space-6);
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in oklch, var(--surface), var(--bg) 35%);
+    }
+
+    .titleblock { display: grid; gap: 2px; }
+    .eyebrow {
+      font-size: 11px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    h1 {
+      margin: 0;
+      font-size: 17px;
+      line-height: 1.2;
+      font-weight: 650;
+    }
+
+    .actions { display: flex; gap: var(--space-2); }
+    .action {
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--ink);
+      font: inherit;
+      font-size: 12px;
+      padding: 8px 12px;
+      min-width: 92px;
+    }
+    .action.primary {
+      border-color: color-mix(in oklch, var(--accent), var(--line) 45%);
+      color: var(--accent);
+      background: color-mix(in oklch, var(--accent), var(--surface) 93%);
+    }
+
+    .workspace {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 360px 1fr;
+    }
+
+    .files {
+      min-width: 0;
+      border-right: 1px solid var(--line);
+      background: var(--bg);
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+
+    .files-head {
+      padding: var(--space-4) var(--space-4) var(--space-3);
+      display: grid;
+      gap: var(--space-3);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .search {
+      height: 34px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      padding: 0 var(--space-3);
+      font-size: 12px;
+    }
+
+    .file-list {
+      overflow: auto;
+      padding: var(--space-2);
+      display: grid;
+      align-content: start;
+      gap: var(--space-1);
+    }
+
+    .file-row {
+      border: 1px solid transparent;
+      padding: 10px;
+      display: grid;
+      gap: var(--space-2);
+      background: transparent;
+    }
+    .file-row.active {
+      border-color: var(--line);
+      background: var(--surface);
+    }
+    .file-name {
+      font-size: 12px;
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .file-meta {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .status-dots { display: flex; gap: 5px; }
+    .dot {
+      width: 18px;
+      height: 18px;
+      border: 1px solid var(--line);
+      display: grid;
+      place-items: center;
+      font-size: 10px;
+      color: var(--muted);
+      background: var(--surface);
+    }
+    .dot.done { color: var(--success); }
+    .dot.run { color: var(--accent); background: color-mix(in oklch, var(--accent), var(--surface) 94%); }
+    .dot.fail { color: var(--danger); }
+
+    .detail {
+      min-width: 0;
+      min-height: 0;
+      overflow: auto;
+      padding: var(--space-6);
+      display: grid;
+      align-content: start;
+      gap: var(--space-6);
+    }
+
+    .file-header {
+      display: grid;
+      gap: var(--space-3);
+      max-width: 860px;
+    }
+    .file-title {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.25;
+      font-weight: 680;
+    }
+    .badges { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .badge {
+      border: 1px solid var(--line);
+      background: var(--surface-2);
+      color: var(--muted);
+      font-size: 11px;
+      padding: 4px 7px;
+    }
+    .badge.local { color: var(--accent); border-color: color-mix(in oklch, var(--accent), var(--line) 55%); }
+    .badge.cloud { color: var(--success); border-color: color-mix(in oklch, var(--success), var(--line) 58%); }
+    .badge.warn { color: var(--warn); border-color: color-mix(in oklch, var(--warn), var(--line) 60%); }
+
+    .panel-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(280px, .65fr);
+      gap: var(--space-6);
+      align-items: start;
+    }
+
+    .section {
+      display: grid;
+      gap: var(--space-3);
+    }
+    .section-title {
+      margin: 0;
+      font-size: 12px;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 650;
+    }
+
+    .process {
+      border: 1px solid var(--line);
+      background: var(--surface);
+    }
+    .step {
+      display: grid;
+      grid-template-columns: 22px 1fr auto;
+      gap: var(--space-3);
+      align-items: start;
+      padding: var(--space-4);
+      border-bottom: 1px solid var(--line);
+    }
+    .step:last-child { border-bottom: 0; }
+    .step-index {
+      width: 22px;
+      height: 22px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .step.done .step-index { color: var(--success); }
+    .step.running .step-index { color: var(--accent); }
+    .step-body { display: grid; gap: 6px; }
+    .step-label {
+      font-size: 13px;
+      font-weight: 620;
+    }
+    .step-detail {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .step-source {
+      font-size: 10px;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      color: var(--faint);
+      white-space: nowrap;
+    }
+    .bar {
+      height: 6px;
+      width: min(320px, 100%);
+      background: var(--surface-2);
+      border: 1px solid var(--line);
+    }
+    .bar > span {
+      display: block;
+      height: 100%;
+      width: 54%;
+      background: var(--accent);
+    }
+
+    .sidebox {
+      border: 1px solid var(--line);
+      background: color-mix(in oklch, var(--surface), var(--bg) 24%);
+      padding: var(--space-4);
+      display: grid;
+      gap: var(--space-4);
+    }
+    .kv {
+      display: grid;
+      grid-template-columns: 92px 1fr;
+      gap: var(--space-2);
+      font-size: 12px;
+    }
+    .kv span:first-child { color: var(--muted); }
+    .recovery {
+      display: grid;
+      gap: var(--space-3);
+    }
+    .failure {
+      border: 1px solid color-mix(in oklch, var(--warn), var(--line) 70%);
+      background: color-mix(in oklch, var(--warn), var(--surface) 94%);
+      padding: var(--space-3);
+      font-size: 12px;
+      display: grid;
+      gap: 4px;
+    }
+    .failure strong { font-size: 12px; }
+    .button-row { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .small-button {
+      border: 1px solid var(--line);
+      background: var(--surface);
+      padding: 7px 9px;
+      font: inherit;
+      font-size: 12px;
+      color: var(--ink);
+    }
+    .small-button.main {
+      color: var(--accent);
+      border-color: color-mix(in oklch, var(--accent), var(--line) 55%);
+    }
+
+    @media (max-width: 900px) {
+      .page { padding: 0; }
+      .shell { height: 100vh; border: 0; }
+      .workspace { grid-template-columns: 1fr; }
+      .files { border-right: 0; border-bottom: 1px solid var(--line); max-height: 290px; }
+      .panel-grid { grid-template-columns: 1fr; }
+      .topbar { align-items: start; padding: var(--space-4); flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="shell" aria-label="KP workbench split prototype">
+      <header class="topbar">
+        <div class="titleblock">
+          <div class="eyebrow">Knowledge Processing</div>
+          <h1>KP Workbench</h1>
+        </div>
+        <div class="actions" aria-label="primary actions">
+          <button class="action">Embedding</button>
+          <button class="action primary">Enrich</button>
+          <button class="action">Graph</button>
+        </div>
+      </header>
+
+      <div class="workspace">
+        <aside class="files">
+          <div class="files-head">
+            <div class="section-title">Files</div>
+            <div class="search">Filter by name, tag, or state</div>
+          </div>
+          <div class="file-list">
+            <div class="file-row active">
+              <div class="file-name">pltvd28生态回传点位排查.md</div>
+              <div class="file-meta">
+                <span class="status-dots"><span class="dot done">E</span><span class="dot run">A</span><span class="dot">G</span></span>
+                <span>Tags 12</span>
+                <span>Wiki</span>
+              </div>
+            </div>
+            <div class="file-row">
+              <div class="file-name">MCP 协议介绍与集成指南_2025-11-25.md</div>
+              <div class="file-meta">
+                <span class="status-dots"><span class="dot done">E</span><span class="dot done">A</span><span class="dot done">G</span></span>
+                <span>Tags 31</span>
+                <span>Wiki</span>
+              </div>
+            </div>
+            <div class="file-row">
+              <div class="file-name">海外充值回传错误码.md</div>
+              <div class="file-meta">
+                <span class="status-dots"><span class="dot done">E</span><span class="dot fail">A</span><span class="dot">G</span></span>
+                <span>Tags 8</span>
+                <span>Note</span>
+              </div>
+            </div>
+            <div class="file-row">
+              <div class="file-name">空白导入草稿.md</div>
+              <div class="file-meta">
+                <span class="status-dots"><span class="dot">E</span><span class="dot">A</span><span class="dot">G</span></span>
+                <span>Tags 0</span>
+                <span>Doc</span>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <section class="detail">
+          <div class="file-header">
+            <div class="eyebrow">Selected file</div>
+            <h2 class="file-title">pltvd28生态回传点位排查.md</h2>
+            <div class="badges">
+              <span class="badge">WIKI</span>
+              <span class="badge local">LOCAL AI · Desktop llmapi</span>
+              <span class="badge cloud">Cloud artifact · syncing</span>
+              <span class="badge warn">2 resumable chapters</span>
+            </div>
+          </div>
+
+          <div class="panel-grid">
+            <div class="section">
+              <h3 class="section-title">Process</h3>
+              <div class="process">
+                <div class="step done">
+                  <div class="step-index">✓</div>
+                  <div class="step-body">
+                    <div class="step-label">Parse sections</div>
+                    <div class="step-detail">18 markdown sections found from current cloud document.</div>
+                  </div>
+                  <div class="step-source">client</div>
+                </div>
+                <div class="step running">
+                  <div class="step-index">▸</div>
+                  <div class="step-body">
+                    <div class="step-label">Summarize chapters</div>
+                    <div class="step-detail">LOCAL AI · Summarizing · 回传点位列表 · 6/18 chapters</div>
+                    <div class="bar"><span></span></div>
+                  </div>
+                  <div class="step-source">local ai</div>
+                </div>
+                <div class="step">
+                  <div class="step-index">3</div>
+                  <div class="step-body">
+                    <div class="step-label">Upload cloud artifact</div>
+                    <div class="step-detail">Replace wiki_chapters for this document after local processing.</div>
+                  </div>
+                  <div class="step-source">cloud storage</div>
+                </div>
+                <div class="step">
+                  <div class="step-index">4</div>
+                  <div class="step-body">
+                    <div class="step-label">Refresh graph status</div>
+                    <div class="step-detail">Mark graph stale, then rebuild when Graph is clicked.</div>
+                  </div>
+                  <div class="step-source">graph</div>
+                </div>
+              </div>
+            </div>
+
+            <aside class="section">
+              <h3 class="section-title">File State</h3>
+              <div class="sidebox">
+                <div class="kv"><span>Embedding</span><strong>Complete · 42 chunks</strong></div>
+                <div class="kv"><span>Artifact</span><strong>Running · 6/18</strong></div>
+                <div class="kv"><span>Graph</span><strong>Pending</strong></div>
+                <div class="kv"><span>Tags</span><strong>12 detected</strong></div>
+                <div class="kv"><span>AI source</span><strong>LOCAL llmapi</strong></div>
+                <div class="kv"><span>Cloud</span><strong>Storage only</strong></div>
+              </div>
+
+              <h3 class="section-title">Recovery</h3>
+              <div class="sidebox recovery">
+                <div class="failure">
+                  <strong>2 chapters can continue</strong>
+                  <span>preamble · provider empty output</span>
+                  <span>错误码归因 · upload interrupted</span>
+                </div>
+                <div class="button-row">
+                  <button class="small-button main">Continue failed only</button>
+                  <button class="small-button">Re-run all</button>
+                </div>
+              </div>
+            </aside>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

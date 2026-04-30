@@ -15,8 +15,8 @@ from pydantic import BaseModel
 
 from app.common import ws_registry
 from app.common.db import pool
+from app.contexts.identity.repository import DEVICE_ONLINE_WINDOW_SEC
 from app.deps import Identity, require_scope
-from app.routers.devices import DEVICE_ONLINE_WINDOW_SEC
 from app.services.enrich.executors import cloud_pool, mcp_pull
 
 router = APIRouter(prefix="/v1/console", tags=["console"])
@@ -98,9 +98,10 @@ async def overview(
 
     activity = [
         ActivityItem(
-            kind="enrich", id=str(r["id"]),
+            kind="enrich",
+            id=str(r["id"]),
             summary=f"{r['name']} — {r['status']}"
-                    + (f" via {r['executor']}" if r["executor"] else ""),
+            + (f" via {r['executor']}" if r["executor"] else ""),
             at=(r["finished_at"] or r["created_at"]).isoformat(),
         )
         for r in recent_jobs
@@ -109,7 +110,7 @@ async def overview(
     primary_online = bool(
         primary_last_seen
         and (datetime.now(timezone.utc) - primary_last_seen).total_seconds()
-            < DEVICE_ONLINE_WINDOW_SEC
+        < DEVICE_ONLINE_WINDOW_SEC
     )
 
     return OverviewResponse(
