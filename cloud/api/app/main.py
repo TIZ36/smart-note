@@ -26,17 +26,40 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 log = logging.getLogger("smartnote-cloud")
 
 
+async def _sweep_loop():
+    """Background sweeper for processing_runs rows that got handed to
+    mcp_pull / ws_relay and never called back. Runs every 5 minutes;
+    cutoff is 30 minutes (longest reasonable end-to-end agent latency
+    on Phase B). Cheap query — bounded by the partial index on
+    (workspace_id, kind, created_at) WHERE status IN ('queued','running')."""
+    import asyncio as _asyncio
+    from app.services import processing_runs as runs_ledger
+    while True:
+        try:
+            await runs_ledger.sweep_stuck_runs(older_than_minutes=30)
+        except Exception:
+            log.exception("processing_runs sweeper iteration failed")
+        await _asyncio.sleep(300)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    import asyncio as _asyncio
     log.info("starting up; connecting to Postgres")
     await init_pool()
     await run_migrations()
+    sweeper = _asyncio.create_task(_sweep_loop(), name="processing_runs_sweeper")
     # FastMCP's session manager owns its own anyio task group — it
     # must be entered as part of the app's lifespan or `/mcp` requests
     # explode with "Task group is not initialized".
     async with mcp_server.session_manager.run():
         log.info("ready")
         yield
+    sweeper.cancel()
+    try:
+        await sweeper
+    except (Exception, _asyncio.CancelledError):
+        pass
     await close_pool()
     log.info("shutdown complete")
 

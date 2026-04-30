@@ -173,6 +173,48 @@ async def start(
         return None
 
 
+async def sweep_stuck_runs(*, older_than_minutes: int = 30) -> int:
+    """Mark `running` rows older than the cutoff as `failed` with a
+    timeout error. Necessary because mcp_pull / ws_relay hands ai_enrich
+    work to an external agent that may never call back (user closed
+    Claude Code, MCP server died, dispatcher dropped the message).
+    Without this, those rows stay running forever and downstream
+    consumers (Library R-done fallback, KP RecentRunsFeed) misreport
+    state.
+
+    Idempotent and safe to call from any pod — uses DB-side `now()`
+    so multiple sweepers won't race past each other.
+
+    Returns the number of rows closed."""
+    try:
+        async with pool().acquire() as conn:
+            rows = await conn.fetch(
+                """
+                UPDATE processing_runs
+                SET status      = 'failed',
+                    error       = COALESCE(error, '')
+                                  || (CASE WHEN error IS NOT NULL AND error <> ''
+                                           THEN ' | ' ELSE '' END)
+                                  || 'timeout: stuck in running > '
+                                  || $1::text || 'min',
+                    finished_at = now()
+                WHERE status = 'running'
+                  AND COALESCE(started_at, created_at)
+                      < now() - ($1::text || ' minutes')::interval
+                RETURNING id
+                """,
+                older_than_minutes,
+            )
+            n = len(rows)
+            if n:
+                log.warning("processing_runs: swept %d stuck rows (>%dmin)",
+                            n, older_than_minutes)
+            return n
+    except Exception:
+        log.exception("processing_runs.sweep_stuck_runs failed")
+        return 0
+
+
 async def finish_latest(
     *,
     workspace_id: str,
