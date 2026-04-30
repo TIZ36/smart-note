@@ -30,15 +30,71 @@ from app.common.db import pool
 log = logging.getLogger(__name__)
 
 
-def _input_sha(document_id: str, kind: str, revision: int) -> str:
-    """Stable SHA over the minimal dedup tuple. Sufficient for the
-    write-through — proper dedup that carries content_sha and tag
-    vocab is the executor's job. Documented as "minimal v1" in the
-    table comment so consumers don't assume more than what's here."""
-    payload = {"document_id": document_id, "kind": kind, "revision": revision}
+# Bumped on any structural change to the prompt template / tag vocab
+# format. A bump invalidates every cached `done` row so the next
+# explicit-run request re-executes against the new prompt. Currently
+# v3 to track the wiki Phase B prompt revision; bump together with
+# any `_build_prompt` edit in classifier.py / wiki_phase_b.py.
+PROMPT_VERSION = "v3"
+
+
+# Per-kind dedup recipe: which fields participate in input_sha.
+#
+# chunk_embed   → content_sha invalidates dedup when the doc body
+#                 changes (so a re-edit triggers a re-embed)
+# ai_enrich     → content_sha + tag_vocab_sha + prompt_version, since
+#                 a tag-vocab edit between runs must re-classify
+# wiki_abstract → content_sha + prompt_version (chapter splits
+#                 derive from body)
+def _build_input_sha(*, kind: str, revision: int, snapshot: dict) -> str:
+    """SHA over the deterministic snapshot. snapshot keys are sorted +
+    json-encoded so rebuilding from the same inputs always yields the
+    same digest."""
+    payload = {"kind": kind, "revision": revision, **snapshot}
     return hashlib.sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                   ensure_ascii=False).encode("utf-8")
     ).hexdigest()
+
+
+async def _capture_snapshot(
+    conn, *, workspace_id: str, document_id: str, kind: str,
+) -> dict:
+    """Pull just enough state to make input_sha invalidation correct
+    for `kind`. Best-effort: any read failure returns {} so we fall
+    back to the minimal (doc_id, kind, revision) keying — never block
+    a run on snapshot capture.
+
+    Reads are lightweight: documents.content (already in cache for
+    most paths) + workspace_tags listing for ai_enrich. No second
+    roundtrip needed when the caller has already loaded these — we
+    just re-fetch since the writer is the canonical source."""
+    snap: dict = {"prompt_version": PROMPT_VERSION}
+    try:
+        row = await conn.fetchrow(
+            "SELECT content FROM documents WHERE id=$1 AND workspace_id=$2",
+            UUID(document_id), UUID(workspace_id),
+        )
+        body = (row["content"] or "") if row else ""
+        snap["content_sha"] = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    except Exception as e:
+        log.warning("snapshot content_sha skipped (doc=%s): %s", document_id, e)
+    if kind == "ai_enrich":
+        try:
+            tag_rows = await conn.fetch(
+                "SELECT name FROM workspace_tags WHERE workspace_id=$1 "
+                "ORDER BY sort_order, name",
+                UUID(workspace_id),
+            )
+            vocab = [r["name"] for r in tag_rows]
+            snap["tag_vocab"] = vocab
+            snap["tag_vocab_sha"] = hashlib.sha256(
+                json.dumps(vocab, ensure_ascii=False).encode("utf-8")
+            ).hexdigest()
+        except Exception as e:
+            log.warning("snapshot tag_vocab_sha skipped (ws=%s): %s",
+                        workspace_id, e)
+    return snap
 
 
 async def start(
@@ -53,10 +109,32 @@ async def start(
     """Insert a `running` row and return its id. Returns None on any
     failure (DB unavailable, conflict on dedup, etc.) — callers must
     treat the run-id as best-effort. The legacy enrich_jobs / inline
-    return paths remain authoritative until consumers migrate."""
-    sha = _input_sha(document_id, kind, revision)
+    return paths remain authoritative until consumers migrate.
+
+    input_sha is computed over a per-kind snapshot (content_sha for
+    every kind; tag_vocab_sha for ai_enrich) so a doc edit or tag
+    vocabulary change naturally invalidates a cached `done` row and
+    the next request re-runs. Snapshot capture is best-effort — if it
+    fails, we fall back to a minimal (doc, kind, revision) key, which
+    is still better than nothing."""
     try:
         async with pool().acquire() as conn:
+            snapshot = await _capture_snapshot(
+                conn, workspace_id=workspace_id,
+                document_id=document_id, kind=kind,
+            )
+            sha = _build_input_sha(
+                kind=kind, revision=revision, snapshot=snapshot,
+            )
+            stored_snapshot = {
+                "revision": revision,
+                "executor_kind": executor,
+                # Store the participating SHAs but not the raw vocab
+                # list (that one can be large for big workspaces); the
+                # raw body content_sha is enough to reconstruct the
+                # invalidation reason when debugging.
+                **{k: v for k, v in snapshot.items() if k != "tag_vocab"},
+            }
             row = await conn.fetchrow(
                 """
                 INSERT INTO processing_runs (
@@ -72,7 +150,7 @@ async def start(
                 RETURNING id
                 """,
                 UUID(workspace_id), UUID(document_id), kind, executor,
-                sha, json.dumps({"revision": revision, "executor_kind": executor}),
+                sha, json.dumps(stored_snapshot, ensure_ascii=False),
                 revision,
                 "api_key" if api_key_id else "auto",
                 api_key_id or "system",
