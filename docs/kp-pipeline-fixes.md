@@ -304,44 +304,58 @@ except Exception:
 
 ---
 
-## P2-1 — `processing_runs` ledger
+## P2-1 — `processing_runs` ledger ✅ shipped (write-through)
 
-The pipeline doc (`docs/processing-pipeline.md` §5/§10) describes
-`processing_runs` as the canonical surface. It doesn't exist yet.
-Once it lands:
-- replace the `enrich_jobs` piggyback in P1-2
-- replace the inline progress hack in P1-3 with worker + poll
-- `/kn` reads run states from `processing_runs` instead of joining
-  multiple tables
+Migration 021 already created the table; commit `dbfcf42` added the
+write-through producer:
 
-Schedule: after the four P0/P1 fixes ship and stabilize.
+- `services/processing_runs.py` — `start()` / `finish()` helpers,
+  best-effort, never raise into the request path
+- `processing.py` writes a row for every branch (chunk_embed,
+  ai_enrich, wiki_abstract)
+- `/kn` exposes `processing_runs[]` (LIMIT 20) for client preview
+- `enrich_jobs` is still the authoritative UI surface
+
+**Follow-ups still required to fully retire enrich_jobs**:
+- Teach `enrich.py:_write_segments_done` to call
+  `runs_ledger.finish()` so ai_enrich rows close out instead of
+  hanging at `running` forever
+- Migrate the `enrich_jobs` consumer logic in `/kn` and KP page to
+  read from `processing_runs`
+- Backfill `input_sha` so dedup carries `content_sha` + tag-vocab-sha
+  (the executor's full snapshot, per migration 021's input_snapshot
+  comment)
+- Drop or freeze `enrich_jobs` once all consumers migrate
+
+Schedule: separate PR; this commit just stops the data loss.
 
 ---
 
-## P2-2 — `wiki_chapters.last_error` column
+## P2-2 — `wiki_chapters.last_error` column ✅ shipped
 
-Today an empty `summary` could mean "not yet summarized" OR "LLM
-returned junk OR provider 500'd". `summary_sha` is set only on
-success. To diagnose, add nullable `last_error TEXT` and stamp it
-in `wiki_phase_b.one()` when `parsed` is empty or LLM call raises.
-
-Migration: `cloud/migrations/0NN_wiki_chapters_last_error.sql`
-
-UI: surface in Library KN → Wiki → Chapters tab as a red dot per row.
+Commit `83a7f8a`:
+- Migration `024_wiki_chapters_last_error.sql` adds nullable column
+- `wiki_phase_b.one()` now returns `ChapterFailure` for both LLM-call
+  exceptions and empty/invalid JSON responses
+- Post-loop stamps `last_error` on failure, clears it (`= NULL`) on
+  the next successful run alongside summary write
+- `/kn` exposes `chapters[].last_error`
+- `ChaptersTab` renders a red dot in the row header + inline mono
+  error string under the row
 
 ---
 
-## P2-3 — E badge truth is also weak
+## P2-3 — E badge truth ✅ shipped
 
-Client uses `chunks.length > 0` from `/kn` (limited to 200) to mean
-"embedded". But `chunks` rows can exist without successful embeddings.
-Add a server-side check that `dimension > 0` and pgvector column is
-non-null, expose `embedded_chunk_count` in `/kn`, drive E badge off
-that.
-
-Probably correct enough today — embedding pipeline is synchronous and
-deletes-then-inserts atomically. Worth verifying before promoting to
-P1.
+Commit `d6a567b`:
+- `chunks.dimension` is a TEXT topic label, not a vector dim — the
+  original plan note was wrong about the column. Truth signal is
+  `embedding IS NOT NULL`.
+- `/kn` returns `chunk_total` and `embedded_chunk_count` (full COUNT,
+  not the LIMIT-200 preview)
+- Library KN E badge has three states now: green (all embedded),
+  amber `proto-tag-warn` (partial), grey (none) — partial is real
+  when the embed pod was unavailable mid-ingest
 
 ---
 
