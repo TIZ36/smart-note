@@ -465,7 +465,7 @@ export function LibraryDocsPane({ onOpenSource }: Props) {
  * actual processing state, which is why KP and Library disagreed
  * before. Single source of truth = the KN endpoint.
  */
-type KnTab = "pipeline" | "chunks" | "tags" | "chapters" | "enrich" | "runs";
+type KnTab = "pipeline" | "chunks" | "tags" | "chapters" | "runs";
 
 function KnView({
   doc, knData, knLoading, knTab, onKnTab, isWiki,
@@ -486,7 +486,6 @@ function KnView({
     isWiki
       ? { key: "chapters", label: "Chapters", count: knData?.wiki_chapters.length ?? 0 }
       : { key: "tags", label: "Tag segments", count: knData?.tag_segments.length ?? 0 },
-    { key: "enrich", label: "Enrich", count: knData?.enrich_jobs.length ?? 0 },
     { key: "runs", label: "Runs", count: knData?.processing_runs?.length ?? 0 },
   ];
   // Snap back to pipeline if the active tab disappeared (e.g. doc
@@ -527,9 +526,6 @@ function KnView({
         )}
         {knTab === "tags" && !isWiki && (
           <TagSegmentsTab knData={knData} knLoading={knLoading} />
-        )}
-        {knTab === "enrich" && (
-          <EnrichHistoryTab knData={knData} knLoading={knLoading} />
         )}
         {knTab === "runs" && (
           <ProcessingRunsTab knData={knData} knLoading={knLoading} />
@@ -615,10 +611,16 @@ function PipelineStatus({
   const segmentCount = knData?.tag_segments.length ?? 0;
   const chapterCount = knData?.wiki_chapters.length ?? 0;
   const summarizedChapters = (knData?.wiki_chapters || []).filter((c) => c.summarized).length;
-  const hasDoneJob = (knData?.enrich_jobs || []).some((j) => j.status === "done");
+  // R-done fallback uses the canonical processing_runs ledger (not
+  // enrich_jobs). Migration 025 backfilled historical rows so this
+  // doesn't lose docs that were enriched before the cutover.
+  const aiEnrichKind = isWiki ? "wiki_abstract" : "ai_enrich";
+  const hasDoneRun = (knData?.processing_runs || []).some(
+    (r) => r.kind === aiEnrichKind && r.status === "done",
+  );
 
   // R = per-kind AI artifact existence
-  const rDone = isWiki ? summarizedChapters > 0 : (segmentCount > 0 || hasDoneJob);
+  const rDone = isWiki ? summarizedChapters > 0 : (segmentCount > 0 || hasDoneRun);
   const rLabel = isWiki ? "wiki-knowledge-sheet" : "aisegment";
   const rDetail = isWiki
     ? (chapterCount > 0
@@ -626,7 +628,7 @@ function PipelineStatus({
         : "no chapters yet — wiki Phase A produces them on Embedding")
     : (segmentCount > 0
         ? `${segmentCount} segments`
-        : (hasDoneJob ? "enrich job done but no segments" : "no enrich pass yet"));
+        : (hasDoneRun ? "enrich run completed but no segments — provider returned empty" : "no enrich pass yet"));
 
   // G = info-graph. Driven by the real entity_count from /kn — entity
   // upsert is best-effort during enrich, and the LLM may return empty
@@ -864,30 +866,6 @@ function TagSegmentsTab({ knData, knLoading }: { knData: cloudApi.DocumentKn | n
   );
 }
 
-function EnrichHistoryTab({ knData, knLoading }: { knData: cloudApi.DocumentKn | null; knLoading: boolean }) {
-  if (knLoading) return <KnEmpty msg="loading…" />;
-  if (!knData || knData.enrich_jobs.length === 0) {
-    return <KnEmpty msg="No enrich passes yet." />;
-  }
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11 }}>
-      {knData.enrich_jobs.map((j) => (
-        <div key={j.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 4, background: "var(--color-bg-soft)" }}>
-          <span className={cn("proto-tag", j.status === "done" && "proto-tag-accent")}>{j.status}</span>
-          <span style={{ color: "var(--color-text-muted)" }}>{j.executor || "—"}</span>
-          {j.tokens_total > 0 && (
-            <span style={{ color: "var(--color-text-muted)" }}>· {j.tokens_total.toLocaleString()} tok</span>
-          )}
-          <span style={{ marginLeft: "auto", color: "var(--color-text-muted)", fontSize: 10 }}>
-            {fmtDate(j.finished_at || j.dispatched_at || j.created_at || "")}
-          </span>
-          {j.error && <span title={j.error} style={{ color: "var(--color-danger)" }}>!</span>}
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function ProcessingRunsTab({ knData, knLoading }: { knData: cloudApi.DocumentKn | null; knLoading: boolean }) {
   if (knLoading) return <KnEmpty msg="loading…" />;
   const runs = knData?.processing_runs ?? [];
@@ -912,10 +890,6 @@ function ProcessingRunsTab({ knData, knLoading }: { knData: cloudApi.DocumentKn 
   };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11 }}>
-      <div className="proto-form-hint" style={{ marginBottom: 6 }}>
-        Canonical processing-run ledger (write-through preview). Will replace the
-        Enrich tab's per-kind history once consumers migrate.
-      </div>
       {runs.map((r) => (
         <div
           key={r.id}
