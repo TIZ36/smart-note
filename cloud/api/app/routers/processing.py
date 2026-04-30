@@ -108,12 +108,52 @@ async def run_processing(
         # initial Cloud Console UI. Once `processing_runs` is the
         # ledger of record, this becomes "INSERT a queued run, return
         # immediately, dispatcher picks it up".
+        #
+        # Until then, piggyback on enrich_jobs with executor='wiki_phase_b'
+        # so /v1/documents/{id}/kn (which queries enrich_jobs by
+        # document_id) can render the run in the Library KN "Enrich"
+        # tab. Without this, wiki documents had a permanently empty
+        # Enrich tab even after successful runs.
+        import json as _json
+        async with pool().acquire() as conn:
+            job = await conn.fetchrow(
+                "INSERT INTO enrich_jobs (workspace_id, document_id, status, executor, "
+                "                         dispatched_at) "
+                "VALUES ($1, $2, 'running', 'wiki_phase_b', now()) RETURNING id",
+                UUID(ws), UUID(document_id),
+            )
         from app.contexts.knowledge.wiki_phase_b import summarize_document
-        result = await summarize_document(ws, document_id)
+        try:
+            result = await summarize_document(ws, document_id)
+        except Exception as e:
+            log.exception("wiki_phase_b raised for doc %s", document_id)
+            async with pool().acquire() as conn:
+                await conn.execute(
+                    "UPDATE enrich_jobs SET status='failed', error=$2, "
+                    "finished_at=now() WHERE id=$1",
+                    job["id"], str(e),
+                )
+            raise
         if result.get("error"):
+            async with pool().acquire() as conn:
+                await conn.execute(
+                    "UPDATE enrich_jobs SET status='failed', error=$2, "
+                    "finished_at=now() WHERE id=$1",
+                    job["id"], result["error"],
+                )
             raise HTTPException(
                 status.HTTP_412_PRECONDITION_FAILED,
                 result["error"],
+            )
+        # Mark the job done with the per-chapter counts so the KN
+        # Enrich tab can render "12/12 chapters · 0 failed" without a
+        # second query.
+        final_status = "done" if (result.get("failed") or 0) == 0 else "partial"
+        async with pool().acquire() as conn:
+            await conn.execute(
+                "UPDATE enrich_jobs SET status=$2, finished_at=now(), "
+                "result=$3::jsonb WHERE id=$1",
+                job["id"], final_status, _json.dumps(result),
             )
         # Tell every connected desktop that this doc's wiki summaries
         # just changed so Library KN view + KP page can refetch /kn
@@ -126,11 +166,9 @@ async def run_processing(
             "skipped": int(result.get("skipped") or 0),
             "failed": int(result.get("failed") or 0),
         })
-        # Synthesize a run_id from the document — until the ledger
-        # exists, callers don't have one to poll.
         return RunResponse(
-            run_id=f"inline:wiki_abstract:{document_id}",
-            status="done" if result["failed"] == 0 else "partial",
+            run_id=str(job["id"]),
+            status=final_status,
             dedup_skipped=result["summarized"] == 0 and result["skipped"] > 0,
             revision=0,
         )
