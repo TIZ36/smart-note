@@ -775,7 +775,15 @@ function ChaptersTab({ knData, knLoading }: { knData: cloudApi.DocumentKn | null
               <span style={{ color: "var(--color-text-muted)", fontSize: 10 }}>
                 H{ch.level} · L{ch.line_start}–{ch.line_end}
               </span>
-              {!ch.summarized && (
+              {ch.last_error && !ch.summarized && (
+                <span
+                  style={{ marginLeft: "auto", fontSize: 10, color: "var(--color-danger, #c0392b)" }}
+                  title={ch.last_error}
+                >
+                  ● failed — {ch.last_error.length > 40 ? ch.last_error.slice(0, 40) + "…" : ch.last_error}
+                </span>
+              )}
+              {!ch.summarized && !ch.last_error && (
                 <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--color-text-muted)" }}>
                   pending abstract
                 </span>
@@ -789,6 +797,21 @@ function ChaptersTab({ knData, knLoading }: { knData: cloudApi.DocumentKn | null
             {ch.summary && (
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 6, lineHeight: 1.55 }}>
                 {ch.summary}
+              </div>
+            )}
+            {ch.last_error && (
+              <div
+                style={{
+                  fontSize: 11,
+                  color: "var(--color-danger, #c0392b)",
+                  marginTop: 6,
+                  fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                  background: "color-mix(in oklab, var(--color-danger, #c0392b) 6%, transparent)",
+                  padding: "4px 6px",
+                  borderRadius: 3,
+                }}
+              >
+                {ch.last_error}
               </div>
             )}
             {ch.keywords.length > 0 && (

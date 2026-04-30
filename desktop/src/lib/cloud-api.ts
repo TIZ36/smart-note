@@ -168,6 +168,10 @@ export type DocumentKnChapter = {
   summary: string;
   keywords: string[];
   summarized: boolean;
+  /** Latest wiki_phase_b failure reason for this chapter, e.g.
+   * "llm_call: TimeoutError: ..." or "llm_response_empty_or_invalid_json".
+   * Cleared to null on the next successful run. */
+  last_error: string | null;
   updated_at: string | null;
 };
 export type DocumentKn = {

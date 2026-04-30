@@ -377,7 +377,7 @@ async def get_document_kn(
             tag_segs = []
             wiki_chapters = await conn.fetch(
                 "SELECT id, ord, level, anchor, title, line_start, line_end, "
-                "       summary, keywords, summary_sha, updated_at "
+                "       summary, keywords, summary_sha, last_error, updated_at "
                 "FROM wiki_chapters WHERE document_id=$1 "
                 "ORDER BY ord ASC",
                 doc,
@@ -449,6 +449,7 @@ async def get_document_kn(
                     else (_json.loads(ch["keywords"]) if ch["keywords"] else [])
                 ),
                 "summarized": bool(ch["summary_sha"]),
+                "last_error": ch["last_error"] or None,
                 "updated_at": ch["updated_at"].isoformat() if ch["updated_at"] else None,
             } for ch in wiki_chapters
         ],

@@ -49,6 +49,16 @@ class ChapterSummary:
     summary_sha: str          # sha of canonical chapter text we summarized
 
 
+@dataclass(frozen=True)
+class ChapterFailure:
+    """Why a single chapter's summarization didn't land — surfaced via
+    `wiki_chapters.last_error` so users can see the reason without
+    grepping cloud logs."""
+    chapter_id: UUID
+    title: str
+    error: str
+
+
 def _build_prompt(title: str, body: str, tags: list[str]) -> tuple[str, str]:
     """System + user prompt pair for one chapter abstract.
 
@@ -194,15 +204,29 @@ async def summarize_document(workspace_id: str, document_id: str) -> dict:
     # ── Bounded-parallel LLM calls ──
     sem = asyncio.Semaphore(min(MAX_PARALLEL_CHAPTERS, cfg.max_concurrency))
 
-    async def one(ch_row, body: str, sha: str) -> ChapterSummary | None:
+    async def one(ch_row, body: str, sha: str) -> ChapterSummary | ChapterFailure:
         async with sem:
             system, user = _build_prompt(ch_row["title"], body, tags)
             # _call_llm is sync (httpx.Client). Push to thread pool
             # so parallelism is real, not blocked on the event loop.
-            raw, _usage = await asyncio.to_thread(_call_llm, cfg, system, user)
+            try:
+                raw, _usage = await asyncio.to_thread(_call_llm, cfg, system, user)
+            except Exception as e:
+                # Provider HTTP error, timeout, auth — capture as the
+                # chapter's last_error so the user sees something
+                # concrete in the Chapters tab.
+                return ChapterFailure(
+                    chapter_id=ch_row["id"],
+                    title=ch_row["title"],
+                    error=f"llm_call: {type(e).__name__}: {str(e)[:240]}",
+                )
         parsed = _parse_response(raw or "")
         if not parsed:
-            return None
+            return ChapterFailure(
+                chapter_id=ch_row["id"],
+                title=ch_row["title"],
+                error="llm_response_empty_or_invalid_json",
+            )
         return ChapterSummary(
             chapter_id=ch_row["id"],
             title=ch_row["title"],
@@ -225,11 +249,24 @@ async def summarize_document(workspace_id: str, document_id: str) -> dict:
     async with pool().acquire() as conn:
         async with conn.transaction():
             for cs in results:
-                if cs is None:
+                if isinstance(cs, ChapterFailure):
                     failed += 1
+                    # Stamp the error so the Chapters tab can render
+                    # a red dot + tooltip. Doesn't touch summary_sha,
+                    # so the chapter stays "needs work" for the next
+                    # run (which will retry it).
+                    await conn.execute(
+                        "UPDATE wiki_chapters SET last_error=$2, "
+                        "                          updated_at=now() "
+                        "WHERE id=$1",
+                        cs.chapter_id, cs.error,
+                    )
                     _emit_progress(
                         workspace_id, document_id,
                         phase="chapter_failed",
+                        chapter_id=str(cs.chapter_id),
+                        chapter_title=cs.title,
+                        error=cs.error,
                         total=total_work,
                         summarized=summarized,
                         failed=failed,
@@ -241,6 +278,7 @@ async def summarize_document(workspace_id: str, document_id: str) -> dict:
                        SET summary = $2,
                            keywords = $3::jsonb,
                            summary_sha = $4,
+                           last_error = NULL,
                            updated_at = now()
                      WHERE id = $1
                     """,
