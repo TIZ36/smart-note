@@ -350,12 +350,18 @@ write-through producer:
   >30min as failed-with-timeout. Closes the gap where mcp_pull /
   ws_relay handoffs to a missing agent left rows hanging.
 
-**Still ⏳** (executor refactor, separate PR):
-- Migrate `mcp_pull` / `ws_relay` executors to poll `processing_runs`
-  (kind='ai_enrich' AND status='queued') instead of
-  `enrich_jobs WHERE status='queued'`
-- Stop INSERT/UPDATE on `enrich_jobs` from enrich.py + processing.py
-- Drop the `enrich_jobs` table
+- ✅ commit `6cdd064` — full cutover. `/v1/enrich/run`, `/pending`,
+  `/jobs/{id}/submit`, `/jobs` list+delete all redirected to
+  `processing_runs` (kind='ai_enrich' filter). `processing.py`
+  wiki_abstract drops all four enrich_jobs writes. Console + telemetry
+  + enrichment-context repo all read processing_runs.
+  `runs_ledger.claim_queued()` provides atomic FOR UPDATE SKIP LOCKED
+  pickup for /pending replacing the legacy poll.
+  Migration `026_drop_enrich_jobs.sql` drops the table.
+
+**Status: closed.** Every cloud surface reads + writes
+processing_runs. Wire format unchanged so existing clients keep
+working.
 
 ---
 
