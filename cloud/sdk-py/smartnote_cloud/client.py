@@ -250,7 +250,12 @@ class _DocumentsResource:
         ).json()
 
     def ingest(self, document_id: str) -> dict:
-        return self._c.request("POST", f"/v1/documents/{document_id}/ingest").json()
+        """Trigger chunk + embed for one document. Dispatches by
+        smartnote_type server-side (note → paragraph chunker,
+        wiki_topic → H2 chapter splitter)."""
+        return self._c.request(
+            "POST", "/v1/ingest/document", json={"document_id": document_id},
+        ).json()
 
     def list(self) -> list[dict]:
         return self._c.request("GET", "/v1/documents").json().get("documents", [])

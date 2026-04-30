@@ -26,6 +26,9 @@ from uuid import UUID
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
+import json as _json
+from uuid import UUID
+
 from app.common.db import pool
 from app.deps import Identity, require_scope
 from app.services.ingest.pipeline import ingest_document, ingest_run_status
@@ -58,10 +61,55 @@ async def ingest_one(
     req: IngestDocumentRequest,
     identity: Identity = Depends(require_scope("documents:write")),
 ) -> IngestDocumentResponse:
-    out = await ingest_document(identity.workspace_id, req.document_id)
-    if out.get("status") == "error":
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, out.get("error", "ingest failed"))
-    return IngestDocumentResponse(**out)
+    """Single-doc embed pass. Dispatches BY smartnote_type so wiki
+    docs go through the chapter splitter (Phase A) and notes go
+    through the paragraph chunker. Without this branching, wiki
+    docs ended up with chunks but no wiki_chapters rows — and
+    "Build wiki abstract" then saw 0 chapters and silently no-op'd.
+
+    Wraps the canonical knowledge.ingest_document_for_kind helper
+    + writes to processing_runs + broadcasts chunk_embed_done so
+    the desktop's KP page sees this as a normal pipeline run.
+    """
+    async with pool().acquire() as conn:
+        meta_row = await conn.fetchrow(
+            "SELECT metadata FROM documents "
+            "WHERE id=$1 AND workspace_id=$2",
+            UUID(req.document_id), UUID(identity.workspace_id),
+        )
+    if not meta_row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "document not found")
+    meta = meta_row["metadata"] or {}
+    if isinstance(meta, str):
+        try:
+            meta = _json.loads(meta)
+        except Exception:
+            meta = {}
+    snt = meta.get("smartnote_type") if isinstance(meta, dict) else None
+
+    # Same wiring auto-ingest uses — opens processing_runs row +
+    # broadcasts chunk_embed_done on success.
+    from app.contexts.knowledge.wiring import _record_and_run
+    try:
+        await _record_and_run(identity.workspace_id, req.document_id, snt)
+    except Exception as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
+
+    # Read back what landed so the response shape stays compatible
+    # with the original `ingest_document` return.
+    async with pool().acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id, chunk_count, status FROM ingest_runs "
+            "WHERE workspace_id=$1 AND document_id=$2 "
+            "ORDER BY created_at DESC LIMIT 1",
+            UUID(identity.workspace_id), UUID(req.document_id),
+        )
+    return IngestDocumentResponse(
+        ingest_run_id=str(row["id"]) if row else "",
+        chunk_count=int(row["chunk_count"]) if row else 0,
+        dimension=snt or "doc",
+        status=(row["status"] if row else "done"),
+    )
 
 
 class BulkIngestRequest(BaseModel):
@@ -148,15 +196,50 @@ async def ingest_bulk(
     chunks_total = 0
     ingested_count = 0
     successfully_ingested: list[str] = []
+    # Dispatch BY smartnote_type so wiki docs go through Phase A
+    # (chapter splitter) and notes go through paragraph chunking.
+    # Same fix as the single-doc /v1/ingest/document route — without
+    # this branching, wiki docs in a bulk re-ingest end up with
+    # chunks but no wiki_chapters.
+    from app.contexts.knowledge.wiring import _record_and_run
+    async with pool().acquire() as conn:
+        meta_rows = await conn.fetch(
+            "SELECT id, metadata FROM documents "
+            "WHERE id = ANY($1::uuid[]) AND workspace_id = $2",
+            [UUID(d) for d in ordered], UUID(identity.workspace_id),
+        )
+    snt_by_id: dict[str, str | None] = {}
+    for r in meta_rows:
+        m = r["metadata"] or {}
+        if isinstance(m, str):
+            try:
+                m = _json.loads(m)
+            except Exception:
+                m = {}
+        snt_by_id[str(r["id"])] = m.get("smartnote_type") if isinstance(m, dict) else None
+
     for doc_id in ordered:
         try:
-            out = await ingest_document(identity.workspace_id, doc_id)
-            if out.get("status") == "done":
+            await _record_and_run(
+                identity.workspace_id, doc_id, snt_by_id.get(doc_id),
+            )
+            # Read back the ingest_run row for chunk_count.
+            async with pool().acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT chunk_count, status FROM ingest_runs "
+                    "WHERE workspace_id=$1 AND document_id=$2 "
+                    "ORDER BY created_at DESC LIMIT 1",
+                    UUID(identity.workspace_id), UUID(doc_id),
+                )
+            if row and row["status"] == "done":
                 ingested_count += 1
-                chunks_total += int(out.get("chunk_count") or 0)
+                chunks_total += int(row["chunk_count"] or 0)
                 successfully_ingested.append(doc_id)
             else:
-                failures.append({"document_id": doc_id, "error": out.get("error", "unknown")})
+                failures.append({
+                    "document_id": doc_id,
+                    "error": (row and row["status"]) or "no ingest_run row",
+                })
         except Exception as e:
             log.exception("bulk ingest failed for %s", doc_id)
             failures.append({"document_id": doc_id, "error": str(e)})
