@@ -600,8 +600,13 @@ function PipelineStatus({
   // baked into the segment / chapter writer), so G ≈ R today. Kept
   // as a separate badge because the conceptual artifact is different
   // and they will diverge once graph-rebuild becomes incremental.
-  const chunkCount = knData?.chunks.length ?? 0;
-  const embedded = chunkCount > 0;
+  // Truth from server: total chunk rows vs chunks with non-null vector.
+  // Falls back to the bounded LIMIT-200 preview list when the count
+  // fields are absent (older server build).
+  const chunkTotal = knData?.chunk_total ?? knData?.chunks.length ?? 0;
+  const embeddedCount = knData?.embedded_chunk_count ?? chunkTotal;
+  const embedded = embeddedCount > 0 && embeddedCount === chunkTotal;
+  const partiallyEmbedded = embeddedCount > 0 && embeddedCount < chunkTotal;
 
   const segmentCount = knData?.tag_segments.length ?? 0;
   const chapterCount = knData?.wiki_chapters.length ?? 0;
@@ -641,12 +646,25 @@ function PipelineStatus({
         </div>
         <div className="proto-doc-card-tags">
           <span
-            className={cn("proto-tag", embedded && "proto-tag-accent")}
+            className={cn(
+              "proto-tag",
+              embedded && "proto-tag-accent",
+              partiallyEmbedded && "proto-tag-warn",
+            )}
             title={embedded
-              ? `${chunkCount} chunks indexed`
-              : "no chunks yet — run Embedding from KP"}
+              ? `${embeddedCount} chunks indexed`
+              : partiallyEmbedded
+              ? `${embeddedCount}/${chunkTotal} chunks have vectors — re-run Embedding to fill the gap`
+              : (chunkTotal > 0
+                  ? `${chunkTotal} chunks exist but none are embedded yet`
+                  : "no chunks yet — run Embedding from KP")}
           >
-            E: embed{embedded ? ` (${chunkCount})` : " · pending"}
+            E: embed
+            {embedded
+              ? ` (${embeddedCount})`
+              : partiallyEmbedded
+              ? ` (${embeddedCount}/${chunkTotal} · partial)`
+              : " · pending"}
           </span>
           <span
             className={cn(

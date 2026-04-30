@@ -178,6 +178,13 @@ export type DocumentKn = {
    * this is approximate per-doc — see /kn endpoint comment. 0 ⇒ no
    * graph rows landed for this doc; UI should render G as pending. */
   entity_count: number;
+  /** Total chunk rows for this doc (regardless of embedding state). */
+  chunk_total: number;
+  /** Chunks whose vector column is non-null. E-badge truth — a chunk
+   * row can exist without an embedding if the embed pod was down
+   * mid-ingest, so embedded_chunk_count < chunk_total signals a
+   * partial run that the user should re-trigger. */
+  embedded_chunk_count: number;
   chunks: DocumentKnChunk[];
   tag_segments: DocumentKnTagSegment[];
   wiki_chapters: DocumentKnChapter[];

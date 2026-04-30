@@ -355,9 +355,19 @@ async def get_document_kn(
         kind = (meta.get("smartnote_type") or "")
         chunks = await conn.fetch(
             "SELECT id, dimension, line_start, line_end, text, keywords, "
-            "       source_ref "
+            "       source_ref, (embedding IS NOT NULL) AS embedded "
             "FROM chunks WHERE document_id=$1 AND workspace_id=$2 "
             "ORDER BY line_start ASC LIMIT 200",
+            doc, ws,
+        )
+        # Total + embedded counts (separate from the LIMIT 200 fetch
+        # above). The E badge needs total truth, not the bounded
+        # preview. A chunk row can exist with NULL embedding if the
+        # embed pod was unavailable mid-ingest — surface that gap.
+        chunk_counts = await conn.fetchrow(
+            "SELECT count(*) AS total, "
+            "       count(*) FILTER (WHERE embedding IS NOT NULL) AS embedded "
+            "FROM chunks WHERE document_id=$1 AND workspace_id=$2",
             doc, ws,
         )
         # Wiki docs don't write tag_segments (chapter summary replaces
@@ -422,6 +432,8 @@ async def get_document_kn(
         "document_id": str(doc),
         "kind": kind or "doc",
         "entity_count": int(entity_count),
+        "chunk_total": int((chunk_counts and chunk_counts["total"]) or 0),
+        "embedded_chunk_count": int((chunk_counts and chunk_counts["embedded"]) or 0),
         "wiki_chapters": [
             {
                 "id": str(ch["id"]),

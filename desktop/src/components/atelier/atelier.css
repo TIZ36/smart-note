@@ -700,6 +700,14 @@
   color: var(--color-accent);
   border-color: transparent;
 }
+.proto-tag-warn {
+  /* Partial / degraded state — chunk has rows but missing embeddings,
+     run aborted mid-flight, etc. Amber-leaning so the green vs amber
+     vs grey trio reads at a glance. */
+  background: color-mix(in oklab, oklch(0.78 0.18 75) 14%, transparent);
+  color: oklch(0.55 0.18 75);
+  border-color: color-mix(in oklab, oklch(0.78 0.18 75) 28%, transparent);
+}
 .proto-tag-running {
   /* Subtle pulse while a pipeline is mid-flight on this doc. Keeps
      the badge readable; no jitter, just opacity. */
