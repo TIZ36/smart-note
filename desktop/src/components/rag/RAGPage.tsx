@@ -319,7 +319,16 @@ export function RAGPage() {
       flashSet("Cloud AI provider not configured — open Cloud panel → Cloud AI provider.", "err");
       return;
     }
-    await runBulk("enrich", [...selected], "Enrich-dispatched", (id) => cloudApi.runEnrich(id), 3);
+    // Split by kind: wiki_topic docs reject /v1/enrich/run with 409
+    // (chapter summarization replaces tag_segments) and must go
+    // through /v1/processing/{id}/run kind=wiki_abstract instead.
+    const kindOf = new Map((sources ?? []).map((s) => [s.id, s.kind]));
+    await runBulk("enrich", [...selected], "Enriched", (id) => {
+      if (kindOf.get(id) === "wiki") {
+        return cloudApi.buildWikiAbstract(id) as unknown as Promise<unknown>;
+      }
+      return cloudApi.runEnrich(id);
+    }, 3);
   }
 
   async function runWikiSmartsheet() {

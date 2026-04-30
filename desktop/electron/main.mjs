@@ -873,26 +873,6 @@ ipcMain.handle("get_mvp_status", async () => ({
  * but they're gone next launch" bug, which used to happen because the
  * old read path never consulted the DB.
  */
-async function fetchLiveSettings() {
-  return new Promise((resolve) => {
-    const req = http.request(
-      { host: "127.0.0.1", port: 8787, path: "/settings", method: "GET", timeout: 1000 },
-      (res) => {
-        let buf = "";
-        res.setEncoding("utf8");
-        res.on("data", (c) => { buf += c; });
-        res.on("end", () => {
-          if (res.statusCode !== 200) return resolve(null);
-          try { resolve(JSON.parse(buf)); } catch { resolve(null); }
-        });
-      },
-    );
-    req.on("error", () => resolve(null));
-    req.on("timeout", () => { req.destroy(); resolve(null); });
-    req.end();
-  });
-}
-
 // Per-user credential file. Contains BOTH the SmartNote Cloud
 // connection (URL + workspace API key) AND any LLM provider keys
 // (deepseek / openai for chat + embedding). All sensitive secrets
@@ -930,34 +910,13 @@ function _readUserCreds() {
 }
 
 ipcMain.handle("read_settings", async () => {
-  // ALL credential fields (cloud_sync_*, provider_*, embed_*) come
-  // exclusively from per-user storage. Non-cred settings (embedding
-  // mode, hotkey, model name preferences) still flow through the
-  // backend live-settings or .env fallback as before.
+  // Credentials (cloud_sync_*, provider_*, embed_*) come from
+  // per-user storage. Non-cred settings (embedding mode, AI feature
+  // flags, ingest defaults) come from .env. The legacy
+  // 127.0.0.1:8787 live-settings probe was retired with the local
+  // Python gateway — it cost a 1s timeout per call and never
+  // returned anything in the new electron+cloud topology.
   const userCreds = _readUserCreds();
-
-  const live = await fetchLiveSettings();
-  if (live && typeof live === "object") {
-    return {
-      embedding_mode: live.embedding_mode ?? "local",
-      ai_features_enabled: live.ai_features_enabled !== false,
-      // Provider creds: per-user only. Default URL is the OpenAI
-      // base — user must add their own key. Models default if user
-      // hasn't picked one.
-      provider_base_url: userCreds.provider_base_url || "https://api.openai.com/v1",
-      provider_api_key: userCreds.provider_api_key,
-      provider_chat_model: userCreds.provider_chat_model || "gpt-4o-mini",
-      embed_base_url: userCreds.embed_base_url,
-      embed_api_key: userCreds.embed_api_key,
-      provider_embed_model: userCreds.provider_embed_model || "text-embedding-3-small",
-      ingest_ai_enabled: !!live.ingest_ai_enabled,
-      ingest_ai_model: live.ingest_ai_model ?? "",
-      cloud_sync_enabled: userCreds.cloud_sync_enabled,
-      cloud_sync_url: userCreds.cloud_sync_url,
-      cloud_sync_api_key: userCreds.cloud_sync_api_key,
-    };
-  }
-  // Backend offline — fall back to .env for non-cred settings.
   const envPath = path.join(serverRoot(), ".env");
   const content = fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf8") : "";
   const map = parseEnvFile(content);
