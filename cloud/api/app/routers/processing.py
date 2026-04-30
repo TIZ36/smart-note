@@ -165,49 +165,23 @@ async def run_processing(
 
     if req.kind == "wiki_abstract":
         # Inline execution path — sufficient for v1.2 Phase B and the
-        # initial Cloud Console UI.
-        #
-        # Two ledgers run in parallel until consumers migrate:
-        #   - enrich_jobs (legacy): /kn already reads it, drives the
-        #     Library KN Enrich tab. Authoritative for the UI today.
-        #   - processing_runs (new): the canonical ledger from migration
-        #     021, write-through only — no consumer reads it yet, but
-        #     a future PR can flip /kn / KP onto it without losing
-        #     historical data.
-        import json as _json
+        # initial Cloud Console UI. processing_runs is the canonical
+        # surface; the legacy enrich_jobs writes were retired with
+        # migration 026.
         revision = 1 if req.force else 0
         run_id = await runs_ledger.start(
             workspace_id=ws, document_id=document_id, kind="wiki_abstract",
             revision=revision, executor="wiki_phase_b",
             api_key_id=identity.api_key_id,
         )
-        async with pool().acquire() as conn:
-            job = await conn.fetchrow(
-                "INSERT INTO enrich_jobs (workspace_id, document_id, status, executor, "
-                "                         dispatched_at) "
-                "VALUES ($1, $2, 'running', 'wiki_phase_b', now()) RETURNING id",
-                UUID(ws), UUID(document_id),
-            )
         from app.contexts.knowledge.wiki_phase_b import summarize_document
         try:
             result = await summarize_document(ws, document_id)
         except Exception as e:
             log.exception("wiki_phase_b raised for doc %s", document_id)
-            async with pool().acquire() as conn:
-                await conn.execute(
-                    "UPDATE enrich_jobs SET status='failed', error=$2, "
-                    "finished_at=now() WHERE id=$1",
-                    job["id"], str(e),
-                )
             await runs_ledger.finish(run_id=run_id, status="failed", error=str(e))
             raise
         if result.get("error"):
-            async with pool().acquire() as conn:
-                await conn.execute(
-                    "UPDATE enrich_jobs SET status='failed', error=$2, "
-                    "finished_at=now() WHERE id=$1",
-                    job["id"], result["error"],
-                )
             await runs_ledger.finish(
                 run_id=run_id, status="failed", error=result["error"],
             )
@@ -215,16 +189,10 @@ async def run_processing(
                 status.HTTP_412_PRECONDITION_FAILED,
                 result["error"],
             )
-        # Mark the job done with the per-chapter counts so the KN
-        # Enrich tab can render "12/12 chapters · 0 failed" without a
-        # second query.
+        # Result JSONB carries the per-chapter counts so the Library
+        # KN Runs tab can render "12/12 chapters · 0 failed" without
+        # a second query.
         final_status = "done" if (result.get("failed") or 0) == 0 else "partial"
-        async with pool().acquire() as conn:
-            await conn.execute(
-                "UPDATE enrich_jobs SET status=$2, finished_at=now(), "
-                "result=$3::jsonb WHERE id=$1",
-                job["id"], final_status, _json.dumps(result),
-            )
         await runs_ledger.finish(
             run_id=run_id, status=final_status, result=result,
         )
@@ -240,7 +208,7 @@ async def run_processing(
             "failed": int(result.get("failed") or 0),
         })
         return RunResponse(
-            run_id=str(job["id"]),
+            run_id=str(run_id) if run_id else f"inline:wiki_abstract:{document_id}",
             status=final_status,
             dedup_skipped=result["summarized"] == 0 and result["skipped"] > 0,
             revision=0,

@@ -69,8 +69,10 @@ async def overview(
               (SELECT count(*) FROM memories WHERE workspace_id=$1) AS memories,
               (SELECT count(*) FROM documents WHERE workspace_id=$1) AS documents,
               (SELECT count(*) FROM devices   WHERE workspace_id=$1) AS devices,
-              (SELECT count(*) FROM enrich_jobs WHERE workspace_id=$1 AND status='queued') AS enrich_queued,
-              (SELECT count(*) FROM enrich_jobs WHERE workspace_id=$1 AND status='done')   AS enrich_done,
+              (SELECT count(*) FROM processing_runs WHERE workspace_id=$1
+                                                  AND kind='ai_enrich' AND status='queued') AS enrich_queued,
+              (SELECT count(*) FROM processing_runs WHERE workspace_id=$1
+                                                  AND kind='ai_enrich' AND status='done')   AS enrich_done,
               (SELECT count(*) FROM memories WHERE workspace_id=$1 AND status='draft')      AS proposals_pending,
               (SELECT count(*) FROM wiki_nodes WHERE workspace_id=$1) AS wiki_nodes
             """,
@@ -78,10 +80,10 @@ async def overview(
         )
         recent_jobs = await conn.fetch(
             """
-            SELECT j.id, j.status, j.executor, j.finished_at, j.created_at, d.name
-            FROM enrich_jobs j JOIN documents d ON d.id = j.document_id
-            WHERE j.workspace_id=$1
-            ORDER BY COALESCE(j.finished_at, j.created_at) DESC
+            SELECT r.id, r.status, r.executor, r.finished_at, r.created_at, d.name
+            FROM processing_runs r JOIN documents d ON d.id = r.document_id
+            WHERE r.workspace_id=$1 AND r.kind='ai_enrich'
+            ORDER BY COALESCE(r.finished_at, r.created_at) DESC
             LIMIT 5
             """,
             ws,

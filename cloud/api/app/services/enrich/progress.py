@@ -1,9 +1,15 @@
-"""Tiny helpers to merge progress patches into the *_runs JSONB column.
+"""Merge progress patches into ingest_runs.progress JSONB.
 
-Both ingest_runs and enrich_jobs carry a `progress` jsonb the desktop
-polls during long operations. Writers pass any subset of keys; the
-update merges (`||`) instead of overwriting so independent phases can
-update concurrently without trampling each other.
+Used by wiki_processor during the chunking phase so the desktop
+polling /v1/ingest/runs/{id} sees phase transitions live. Writers
+pass any subset of keys; the update merges (`||`) instead of
+overwriting so independent phases can update concurrently without
+trampling each other.
+
+(The enrich_jobs progress helper was dropped alongside the table
+in migration 026 — that pipeline now uses processing_runs.result
+for terminal-state results and the WS broadcast stream for
+intermediate progress.)
 """
 
 from __future__ import annotations
@@ -23,10 +29,6 @@ async def _merge(table: str, row_id: str, patch: dict) -> None:
             f"|| $2::jsonb WHERE id = $1",
             UUID(row_id), json.dumps(patch),
         )
-
-
-async def set_enrich_progress(job_id: str, **patch) -> None:
-    await _merge("enrich_jobs", job_id, patch)
 
 
 async def set_ingest_progress(run_id: str, **patch) -> None:

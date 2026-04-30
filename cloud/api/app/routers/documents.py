@@ -391,9 +391,9 @@ async def get_document_kn(
             )
             wiki_chapters = []
         # processing_runs is the canonical run ledger as of commit
-        # 4def060 — UI consumers read from here. enrich_jobs is no
-        # longer surfaced (writers stay for mcp_pull / ws_relay
-        # executor compatibility; full retirement is the next pass).
+        # 4def060 — UI consumers read from here. enrich_jobs was
+        # dropped entirely in migration 026; processing_runs is now
+        # the only run surface.
         runs = await conn.fetch(
             "SELECT id, kind, status, executor, error, revision, "
             "       created_at, started_at, finished_at, result "

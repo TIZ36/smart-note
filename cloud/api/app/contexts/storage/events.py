@@ -38,7 +38,7 @@ class DocumentContentChanged:
 @dataclass(frozen=True)
 class DocumentDeleted:
     """Fired after a document is removed. Knowledge cleanup is mostly
-    automatic via FK CASCADE on chunks / tag_segments / enrich_jobs;
+    automatic via FK CASCADE on chunks / tag_segments / processing_runs;
     this event exists for downstream side effects (cache invalidation,
     activity feed entries) that aren't FK-driven."""
     workspace_id: str

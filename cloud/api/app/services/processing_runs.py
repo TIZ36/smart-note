@@ -3,9 +3,10 @@
 Migration 021 added `processing_runs` as the canonical run ledger,
 but no producer was wired up — the table sat empty. This module
 records every explicit run from `POST /v1/processing/{id}/run`
-alongside the existing per-kind surfaces (enrich_jobs, ingest_runs)
-so a future PR can flip /kn and KP onto the ledger without losing
-historical data.
+as the canonical surface for every kind: chunk_embed, ai_enrich,
+wiki_abstract. The legacy enrich_jobs table was retired alongside
+this; ingest_runs (a separate concept tied to the pre-cloud server)
+remains untouched.
 
 Scope today is intentionally narrow:
   - non-async input_sha computation (no tag_vocab_sha fanout)
@@ -105,11 +106,11 @@ async def start(
     revision: int,
     executor: str,
     api_key_id: str | None,
+    status: str = "running",
 ) -> str | None:
     """Insert a `running` row and return its id. Returns None on any
     failure (DB unavailable, conflict on dedup, etc.) — callers must
-    treat the run-id as best-effort. The legacy enrich_jobs / inline
-    return paths remain authoritative until consumers migrate.
+    treat the run-id as best-effort.
 
     input_sha is computed over a per-kind snapshot (content_sha for
     every kind; tag_vocab_sha for ai_enrich) so a doc edit or tag
@@ -135,21 +136,25 @@ async def start(
                 # invalidation reason when debugging.
                 **{k: v for k, v in snapshot.items() if k != "tag_vocab"},
             }
+            # `started_at` only set when the row goes straight to
+            # 'running'. A 'queued' row hasn't actually started yet —
+            # the executor will stamp started_at when it picks up.
+            started_at_clause = "now()" if status == "running" else "NULL"
             row = await conn.fetchrow(
-                """
+                f"""
                 INSERT INTO processing_runs (
                   workspace_id, document_id, kind, status, executor,
                   input_sha, input_snapshot, revision,
                   trigger_kind, trigger_ref, started_at
                 )
-                VALUES ($1, $2, $3, 'running', $4, $5, $6::jsonb, $7,
-                        $8, $9, now())
+                VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8,
+                        $9, $10, {started_at_clause})
                 ON CONFLICT (workspace_id, document_id, kind, input_sha)
                   WHERE status IN ('queued', 'running', 'done')
                   DO NOTHING
                 RETURNING id
                 """,
-                UUID(workspace_id), UUID(document_id), kind, executor,
+                UUID(workspace_id), UUID(document_id), kind, status, executor,
                 sha, json.dumps(stored_snapshot, ensure_ascii=False),
                 revision,
                 "api_key" if api_key_id else "auto",
@@ -171,6 +176,97 @@ async def start(
         log.warning("processing_runs.start failed (kind=%s doc=%s): %s",
                     kind, document_id, e)
         return None
+
+
+async def claim_queued(
+    *,
+    workspace_id: str,
+    kind: str,
+    limit: int = 5,
+) -> list[dict]:
+    """Atomically lock + return queued rows for a worker to pick up.
+    Replaces the legacy `SELECT FROM enrich_jobs WHERE status='queued'`
+    polling that cc_mcp clients did via /v1/enrich/pending.
+
+    Uses FOR UPDATE SKIP LOCKED so two pollers don't grab the same
+    row. Status flips to 'running' atomically; started_at stamped.
+
+    Returns list of dicts with id + document context the agent needs
+    to actually run the LLM call. Empty list when nothing's queued."""
+    async with pool().acquire() as conn:
+        rows = await conn.fetch(
+            """
+            WITH picked AS (
+                SELECT id FROM processing_runs
+                WHERE workspace_id = $1
+                  AND kind = $2
+                  AND status = 'queued'
+                ORDER BY created_at ASC
+                LIMIT $3
+                FOR UPDATE SKIP LOCKED
+            )
+            UPDATE processing_runs r
+            SET status = 'running', started_at = now()
+            FROM picked p
+            WHERE r.id = p.id
+            RETURNING r.id, r.document_id, r.created_at
+            """,
+            UUID(workspace_id), kind, max(1, min(limit, 50)),
+        )
+        if not rows:
+            return []
+        # Hydrate with document name + content for the agent.
+        ids = [r["document_id"] for r in rows]
+        docs = await conn.fetch(
+            "SELECT id, name, content FROM documents WHERE id = ANY($1::uuid[])",
+            ids,
+        )
+        doc_by_id = {d["id"]: d for d in docs}
+        out = []
+        for r in rows:
+            d = doc_by_id.get(r["document_id"])
+            if d is None:
+                # Document deleted between queue + claim. Mark this
+                # run failed so it doesn't loop.
+                await conn.execute(
+                    "UPDATE processing_runs SET status='failed', "
+                    "       error='document deleted before pickup', "
+                    "       finished_at=now() "
+                    "WHERE id=$1",
+                    r["id"],
+                )
+                continue
+            out.append({
+                "id": str(r["id"]),
+                "document_id": str(r["document_id"]),
+                "document_name": d["name"],
+                "content": d["content"] or "",
+                "created_at": r["created_at"].isoformat(),
+            })
+        return out
+
+
+async def promote_queued_to_running(*, run_id: str | None) -> bool:
+    """Bridge for routes that opened a queued row but ran inline. The
+    enrich BYOK / cloud_pool path opens 'queued' (so /pending could
+    pick it up if those failed), then runs synchronously when an
+    inline executor takes it. Promote to 'running' before the
+    finish() so the audit trail records both transitions."""
+    if run_id is None:
+        return False
+    try:
+        async with pool().acquire() as conn:
+            row = await conn.fetchrow(
+                "UPDATE processing_runs SET status='running', "
+                "       started_at = COALESCE(started_at, now()) "
+                "WHERE id=$1 AND status='queued' RETURNING id",
+                UUID(run_id),
+            )
+            return row is not None
+    except Exception as e:
+        log.warning("processing_runs.promote_queued_to_running(%s) failed: %s",
+                    run_id, e)
+        return False
 
 
 async def sweep_stuck_runs(*, older_than_minutes: int = 30) -> int:

@@ -1,7 +1,8 @@
 """Enrichment context — persistence layer.
 
-Owns reads/writes to: enrich_jobs, workspace_tags, and the
-`(kind=preference, content=enrich_provider)` slice of memories.
+Owns reads/writes to: processing_runs (kind='ai_enrich' slice),
+workspace_tags, and the `(kind=preference, content=enrich_provider)`
+slice of memories.
 
 Today this module delegates to existing helpers in
 `app.services.enrich.*` and `app.routers.enrich` so we can lift the
@@ -57,15 +58,17 @@ class RecentJob:
 
 
 async def recent_activity(workspace_id: str, limit: int = 5) -> list[RecentJob]:
+    """Recent ai_enrich activity — sourced from processing_runs (the
+    canonical ledger; enrich_jobs writes were retired)."""
     async with pool().acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT j.id, j.status, j.executor, j.finished_at, j.created_at,
+            SELECT r.id, r.status, r.executor, r.finished_at, r.created_at,
                    d.name AS document_name
-            FROM enrich_jobs j
-            LEFT JOIN documents d ON d.id = j.document_id
-            WHERE j.workspace_id = $1
-            ORDER BY COALESCE(j.finished_at, j.created_at) DESC
+            FROM processing_runs r
+            LEFT JOIN documents d ON d.id = r.document_id
+            WHERE r.workspace_id = $1 AND r.kind = 'ai_enrich'
+            ORDER BY COALESCE(r.finished_at, r.created_at) DESC
             LIMIT $2
             """,
             UUID(workspace_id), max(1, min(limit, 50)),
@@ -85,7 +88,7 @@ async def recent_activity(workspace_id: str, limit: int = 5) -> list[RecentJob]:
 
 @dataclass(frozen=True)
 class EnrichJobCounts:
-    """Status histogram for enrich_jobs in one workspace. Powers the
+    """Status histogram for ai_enrich runs in one workspace. Powers the
     console aggregator and the desktop's enrich-queue card."""
     queued: int
     running: int
@@ -95,7 +98,8 @@ class EnrichJobCounts:
 
 async def count_for(workspace_id: str) -> EnrichJobCounts:
     """One round-trip status histogram. We aggregate four `FILTER`s
-    instead of four full-table scans."""
+    instead of four full-table scans. Sourced from processing_runs
+    filtered to kind='ai_enrich'."""
     async with pool().acquire() as conn:
         row = await conn.fetchrow(
             """
@@ -104,8 +108,8 @@ async def count_for(workspace_id: str) -> EnrichJobCounts:
               count(*) FILTER (WHERE status = 'running') AS running,
               count(*) FILTER (WHERE status = 'done')    AS done,
               count(*) FILTER (WHERE status = 'failed')  AS failed
-            FROM enrich_jobs
-            WHERE workspace_id = $1
+            FROM processing_runs
+            WHERE workspace_id = $1 AND kind = 'ai_enrich'
             """,
             UUID(workspace_id),
         )

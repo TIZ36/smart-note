@@ -73,7 +73,7 @@ async def cleanup_document_refs(workspace_id: str, document_id: str) -> int:
 
     Storage no longer does this inline — it publishes
     `DocumentDeleted` and we react. FK CASCADE handles chunks /
-    tag_segments / enrich_jobs; document_ref memories live in a
+    tag_segments / processing_runs; document_ref memories live in a
     JSONB-keyed structured column (no FK), so we clean them
     explicitly.
     """
