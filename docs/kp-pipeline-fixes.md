@@ -331,12 +331,23 @@ write-through producer:
 - ✅ commit `ec74e1c` — KP page `RecentRunsFeed` reads from
   `GET /v1/processing/recent`, refreshes on every pipeline WS event.
 
-**Still ⏳** (true cutover work, separate PR):
-- Switch `/kn` consumers (Library KN's Pipeline status, Enrich tab)
-  to read from `processing_runs` instead of `enrich_jobs`
-- Drop or freeze `enrich_jobs` once UI consumers migrate
-- Backfill historical `enrich_jobs` rows into `processing_runs` so
-  the ledger has full audit history at cutover time
+- ✅ commit `e08f51e` — migration 025 backfills terminal
+  `enrich_jobs` rows (done/failed) into `processing_runs`. Idempotent
+  via 'backfill:<job_id>' synthetic input_sha. Wiki Phase B rows
+  map onto `kind='wiki_abstract'`; everything else is `ai_enrich`.
+- ✅ commit `4def060` — Library KN R-done fallback reads
+  `processing_runs` instead of `enrich_jobs`. KnTab union narrowed
+  (Enrich tab dropped; Runs tab covers all kinds). EnrichHistoryTab
+  component deleted.
+- ✅ commit `f1f37f5` — `/kn` response no longer emits `enrich_jobs[]`.
+  Type definitions cleaned client-side.
+
+**Still ⏳** (executor refactor, separate PR):
+- Migrate `mcp_pull` / `ws_relay` executors to poll `processing_runs`
+  (kind='ai_enrich' AND status='queued') instead of
+  `enrich_jobs WHERE status='queued'`
+- Stop INSERT/UPDATE on `enrich_jobs` from enrich.py + processing.py
+- Drop the `enrich_jobs` table
 
 ---
 
