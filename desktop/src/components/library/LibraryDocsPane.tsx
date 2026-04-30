@@ -582,10 +582,13 @@ function PipelineStatus({
         ? `${segmentCount} segments`
         : (hasDoneJob ? "enrich job done but no segments" : "no enrich pass yet"));
 
-  // G = info-graph. Same truth as R for now — entity upsert rides
-  // segment / chapter writes. Future: separate truth when rebuild
-  // becomes per-doc incremental.
-  const gDone = rDone;
+  // G = info-graph. Driven by the real entity_count from /kn — entity
+  // upsert is best-effort during enrich, and the LLM may return empty
+  // entities for sparse content, so R-done does not imply G-done. We
+  // surface the truth so users can tell when graph extraction quietly
+  // produced nothing.
+  const entityCount = knData?.entity_count ?? 0;
+  const gDone = entityCount > 0;
 
   return (
     <div className="proto-library-card-list">
@@ -620,10 +623,12 @@ function PipelineStatus({
           <span
             className={cn("proto-tag", gDone && "proto-tag-accent")}
             title={gDone
-              ? "entities + co-occurrence edges built (rides R pass)"
-              : "no entities yet — completes alongside R"}
+              ? `${entityCount} entities linked from this doc's tags`
+              : (rDone
+                  ? "R completed but no entities landed — LLM returned empty entity arrays or upsert errored"
+                  : "no entities yet — produced during R pass")}
           >
-            G: info-graph{gDone ? "" : " · pending"}
+            G: info-graph{gDone ? ` (${entityCount})` : " · pending"}
           </span>
         </div>
       </div>

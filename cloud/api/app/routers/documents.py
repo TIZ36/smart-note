@@ -387,9 +387,41 @@ async def get_document_kn(
             "ORDER BY created_at DESC LIMIT 10",
             doc,
         )
+        # G-badge truth: count entities attributed to this document via
+        # tag_entities. tag_entities is workspace-scoped (the entity row
+        # may have come from another doc sharing the same tag), so this
+        # is "this doc's tags have N graph entities behind them" rather
+        # than strict per-doc isolation. Good enough for the badge — if
+        # the doc never produced segments/chapters, the resulting tag
+        # set is empty and entity_count is 0.
+        if kind == "wiki_topic":
+            entity_count = await conn.fetchval(
+                """
+                SELECT count(DISTINCT te.entity_id)
+                FROM tag_entities te
+                WHERE te.workspace_id = $1
+                  AND te.tag = ANY($2::text[])
+                """,
+                ws,
+                [f"wiki:{ch['title']}" for ch in wiki_chapters] or [""],
+            ) or 0
+        else:
+            entity_count = await conn.fetchval(
+                """
+                SELECT count(DISTINCT te.entity_id)
+                FROM tag_entities te
+                WHERE te.workspace_id = $1
+                  AND te.tag IN (
+                    SELECT DISTINCT tag FROM tag_segments
+                    WHERE document_id = $2 AND workspace_id = $1
+                  )
+                """,
+                ws, doc,
+            ) or 0
     return {
         "document_id": str(doc),
         "kind": kind or "doc",
+        "entity_count": int(entity_count),
         "wiki_chapters": [
             {
                 "id": str(ch["id"]),

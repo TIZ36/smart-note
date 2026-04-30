@@ -173,6 +173,11 @@ export type DocumentKnChapter = {
 export type DocumentKn = {
   document_id: string;
   kind: string;
+  /** G-badge truth: number of distinct workspace entities attributed to
+   * this doc's tags/chapters via `tag_entities`. Workspace-scoped, so
+   * this is approximate per-doc — see /kn endpoint comment. 0 ⇒ no
+   * graph rows landed for this doc; UI should render G as pending. */
+  entity_count: number;
   chunks: DocumentKnChunk[];
   tag_segments: DocumentKnTagSegment[];
   wiki_chapters: DocumentKnChapter[];
