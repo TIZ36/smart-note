@@ -342,6 +342,14 @@ write-through producer:
 - ✅ commit `f1f37f5` — `/kn` response no longer emits `enrich_jobs[]`.
   Type definitions cleaned client-side.
 
+- ✅ commit `a168759` — auto-ingest path (DocumentCreated /
+  DocumentContentChanged subscribers in knowledge/wiring.py) now
+  opens processing_runs rows + broadcasts chunk_embed_done. Every
+  ingest path on the cloud writes to the ledger.
+- ✅ commit `0a28e02` — background sweeper marks running rows
+  >30min as failed-with-timeout. Closes the gap where mcp_pull /
+  ws_relay handoffs to a missing agent left rows hanging.
+
 **Still ⏳** (executor refactor, separate PR):
 - Migrate `mcp_pull` / `ws_relay` executors to poll `processing_runs`
   (kind='ai_enrich' AND status='queued') instead of
