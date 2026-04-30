@@ -317,17 +317,24 @@ write-through producer:
 - `enrich_jobs` is still the authoritative UI surface
 
 **Follow-ups still required to fully retire enrich_jobs**:
-- Teach `enrich.py:_write_segments_done` to call
-  `runs_ledger.finish()` so ai_enrich rows close out instead of
-  hanging at `running` forever
-- Migrate the `enrich_jobs` consumer logic in `/kn` and KP page to
-  read from `processing_runs`
-- Backfill `input_sha` so dedup carries `content_sha` + tag-vocab-sha
-  (the executor's full snapshot, per migration 021's input_snapshot
-  comment)
-- Drop or freeze `enrich_jobs` once all consumers migrate
+- ✅ commit `c3d6c18` — `enrich.py:_write_segments_done` and inline
+  BYOK failure path now call `finish_latest()`. ai_enrich rows close
+  out instead of hanging.
+- ✅ commit `c7a5edb` — `/kn` Runs tab renders the ledger preview
+  alongside the legacy Enrich tab. Both visible side by side until
+  cutover.
+- ⏳ Migrate `enrich_jobs` consumer logic in KP page to read from
+  `processing_runs` (Library KN already shows both)
+- ⏳ Open `processing_runs` rows from the legacy `/v1/enrich/run`
+  surface and the MCP `submit_job` path (only the explicit-run route
+  opens rows today)
+- ⏳ Backfill `input_sha` so dedup carries `content_sha` +
+  tag-vocab-sha (the executor's full snapshot, per migration 021's
+  input_snapshot comment)
+- ⏳ Drop or freeze `enrich_jobs` once all consumers migrate
 
-Schedule: separate PR; this commit just stops the data loss.
+Schedule: separate PR; this branch just stops the data loss and
+gives the desktop a preview surface.
 
 ---
 
