@@ -1071,14 +1071,12 @@ export type NoteFileState = {
   byte_size: number;
 };
 
-export async function saveNote(rawPath: string, content: string, note = ""): Promise<{ pack: IngestPack; file_state: NoteFileState; lines_stamped: number }> {
-  const res = await fetch(`${BASE}/note/save`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ raw_path: rawPath, content, note }),
-  });
-  if (!res.ok) throw new Error(`save note: ${res.status}`);
-  return res.json();
+export async function saveNote(rawPath: string, content: string, _note = ""): Promise<{ pack: IngestPack | null; file_state: NoteFileState | null; lines_stamped: number }> {
+  // Gateway at :8787 is gone — write the file directly via Electron.
+  // Ingest is now driven from the RAG surface, not as a side-effect of save.
+  const { writeFile } = await import("./electron");
+  await writeFile(rawPath, content);
+  return { pack: null, file_state: null, lines_stamped: 0 };
 }
 
 // Legacy gateway-only endpoints — the local Python service at port
