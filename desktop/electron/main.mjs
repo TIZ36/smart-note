@@ -12,10 +12,52 @@ import os from "os";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-/** Server root: `server/` directory containing the Python backend. */
-function serverRoot() {
+/** Legacy server root — historically `<repo>/server/` held the Python
+ * backend and its data dir. The backend itself is gone (commit
+ * `feat: rm server`), but a few writers (hotkey config, raw-path
+ * prefs, feature-flag .env) were still writing there, which caused
+ * the directory to silently reappear every time the user saved
+ * anything. Kept as a read-only source for one-shot migration into
+ * `userData/`; do not write to this path in new code. */
+function legacyServerRoot() {
   if (process.env.SERVER_ROOT) return path.resolve(process.env.SERVER_ROOT);
   return path.join(__dirname, "..", "..", "server");
+}
+
+/** Canonical user-data root. Standard Electron convention — survives
+ * uninstall/reinstall of the app, isn't tied to the source tree.
+ * Hotkey config, raw-path prefs, .env all live here now. */
+function userDataRoot() {
+  // Wrapped in a function (not a top-level const) so this file can
+  // still be required from a context where `app` isn't ready yet
+  // (eg. test harnesses) — call sites only fire inside IPC / lifecycle.
+  return app.getPath("userData");
+}
+function userDataPrefsDir() {
+  const dir = path.join(userDataRoot(), "prefs");
+  try { fs.mkdirSync(dir, { recursive: true }); } catch { /* ignore */ }
+  return dir;
+}
+
+// One-shot migration: if a legacy `<repo>/server/` config is found
+// and the userData equivalent is empty, copy each file over once.
+// We avoid deleting the source so the user can sanity-check the
+// migration succeeded before they `rm -rf server` themselves.
+function migrateLegacyServerConfig() {
+  const legacy = legacyServerRoot();
+  if (!fs.existsSync(legacy)) return;
+  const pairs = [
+    [path.join(legacy, ".env"),               path.join(userDataPrefsDir(), ".env")],
+    [path.join(legacy, "data", "hotkey.json"), path.join(userDataPrefsDir(), "hotkey.json")],
+    [path.join(legacy, "data", "prefs.json"),  path.join(userDataPrefsDir(), "prefs.json")],
+  ];
+  for (const [src, dst] of pairs) {
+    try {
+      if (fs.existsSync(src) && !fs.existsSync(dst)) {
+        fs.copyFileSync(src, dst);
+      }
+    } catch { /* best-effort */ }
+  }
 }
 
 /** Cloud infra root — where docker-compose.yml lives. */
@@ -25,13 +67,20 @@ function cloudInfraRoot() {
 }
 
 function pythonBin() {
-  const venv = path.join(serverRoot(), ".venv", "bin", "python");
-  if (fs.existsSync(venv)) return venv;
+  // Legacy Python CLI binary lookup — server tree is gone, so this
+  // always falls through to the system python. Spawn paths that
+  // depend on this fail noisily at call time; that's intentional —
+  // those code paths are dead but still reachable from a few UI
+  // affordances, which we'll clean up separately.
   return process.platform === "win32" ? "python" : "python3";
 }
 
+function envFile() {
+  return path.join(userDataPrefsDir(), ".env");
+}
+
 function readEmbeddingMode() {
-  const envPath = path.join(serverRoot(), ".env");
+  const envPath = envFile();
   if (!fs.existsSync(envPath)) return "unknown";
   try {
     const content = fs.readFileSync(envPath, "utf8");
@@ -77,7 +126,7 @@ function runIngestCmd(rawPath, notePath, doReset) {
   // UI-triggered: use LLM API directly (no delegate).
   const args = ["-m", "app.cli", "ingest", "--raw", rawPath, "--note", notePath];
   if (doReset) args.push("--reset");
-  const proc = spawn(pythonBin(), args, { cwd: serverRoot() });
+  const proc = spawn(pythonBin(), args, { cwd: legacyServerRoot() });
   let stdout = "";
   let stderr = "";
   proc.stdout?.on("data", (c) => {
@@ -247,7 +296,7 @@ function ingestRawAsync(win, rawPath, notePath, doReset) {
   const args = ["-m", "app.cli", "ingest", "--raw", rawPath, "--note", notePath];
   if (doReset) args.push("--reset");
   const proc = spawn(pythonBin(), args, {
-    cwd: serverRoot(),
+    cwd: legacyServerRoot(),
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -397,6 +446,12 @@ function applyDockIcon() {
 }
 
 app.whenReady().then(() => {
+  // One-shot: copy any leftover `<repo>/server/{,.env,data/*.json}`
+  // into `userData/prefs/` so users coming from an older build don't
+  // lose their hotkey customisation or saved rawPath. After this
+  // runs once the legacy directory is dead weight and can be deleted.
+  migrateLegacyServerConfig();
+
   applyDockIcon();
   createWindow();
   // Pre-create spotlight (hidden) so the first ⌘K is just as fast
@@ -467,7 +522,7 @@ ipcMain.handle("special_ingest_async", async (event, { folderPath, filePath, top
     args.push("--folder", folderPath);
   }
   if (topicName) args.push("--topic", topicName);
-  const proc = spawn(pythonBin(), args, { cwd: serverRoot(), stdio: ["ignore", "pipe", "pipe"] });
+  const proc = spawn(pythonBin(), args, { cwd: legacyServerRoot(), stdio: ["ignore", "pipe", "pipe"] });
 
   proc.on("error", (e) => {
     emitWikiIngest(win, { status: "error", step: "", current: 0, total: 0, elapsed_ms: 0, message: `Failed: ${e.message}` });
@@ -511,7 +566,7 @@ ipcMain.handle("mcp_import_async", async (event, { serverName, docUrl, documentI
   if (docUrl) args.push("--url", docUrl);
   if (documentId) args.push("--doc-id", documentId);
   if (topicName) args.push("--topic", topicName);
-  const proc = spawn(pythonBin(), args, { cwd: serverRoot(), stdio: ["ignore", "pipe", "pipe"] });
+  const proc = spawn(pythonBin(), args, { cwd: legacyServerRoot(), stdio: ["ignore", "pipe", "pipe"] });
 
   proc.on("error", (e) => {
     wikiIngestRunning = false;
@@ -946,7 +1001,7 @@ ipcMain.handle("read_settings", async () => {
     };
   }
   // Backend offline — fall back to .env for non-cred settings.
-  const envPath = path.join(serverRoot(), ".env");
+  const envPath = envFile();
   const content = fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf8") : "";
   const map = parseEnvFile(content);
   const ingestAi = map.get("INGEST_AI_ENABLED")?.toLowerCase() ?? "";
@@ -969,7 +1024,7 @@ ipcMain.handle("read_settings", async () => {
 });
 
 ipcMain.handle("write_settings", async (_, { newSettings }) => {
-  const envPath = path.join(serverRoot(), ".env");
+  const envPath = envFile();
   const existing = fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf8") : "";
   const aiEnabledStr = newSettings.ingest_ai_enabled ? "true" : "false";
   const aiFeaturesStr = newSettings.ai_features_enabled === false ? "false" : "true";
@@ -1127,7 +1182,10 @@ ipcMain.handle("shell_open_path", async (_, { path: target }) => {
 
 // ── Global Hotkey: Clipboard → Paste to raw → Save → Incremental ingest ──
 
-const HOTKEY_CONFIG_FILE = path.join(serverRoot(), "data", "hotkey.json");
+// Hotkey config — lives in userData so saving a hotkey doesn't
+// silently recreate the legacy `<repo>/server/` directory every
+// time the app boots. See migrateLegacyServerConfig().
+const HOTKEY_CONFIG_FILE = path.join(userDataPrefsDir(), "hotkey.json");
 // Spotlight-style global hotkey. ⌘K matches the convention of every
 // modern command palette (Linear, Raycast, GitHub, Slack), and is
 // the most muscle-memory'd shortcut for "search anything from
@@ -1165,7 +1223,7 @@ function saveHotkeyConfig(hotkey) {
 function getRawPathFromPrefs() {
   // Read from the renderer's localStorage isn't possible here,
   // so we read from a shared prefs file
-  const prefsFile = path.join(serverRoot(), "data", "prefs.json");
+  const prefsFile = path.join(userDataPrefsDir(), "prefs.json");
   try {
     if (fs.existsSync(prefsFile)) {
       const data = JSON.parse(fs.readFileSync(prefsFile, "utf8"));
@@ -1403,7 +1461,7 @@ ipcMain.handle("set_hotkey", async (_, { hotkey }) => {
 });
 
 ipcMain.handle("save_raw_path_for_hotkey", async (_, { rawPath }) => {
-  const prefsFile = path.join(serverRoot(), "data", "prefs.json");
+  const prefsFile = path.join(userDataPrefsDir(), "prefs.json");
   const dir = path.dirname(prefsFile);
   fs.mkdirSync(dir, { recursive: true });
   let prefs = {};
@@ -1685,7 +1743,7 @@ ipcMain.handle("first_run_state", async () => {
   // "Has this user ever had a raw_path set?" is the cheapest signal
   // for first-run. If prefs.json has rawPath, they've used the app
   // before, so we don't foist a sample on them again.
-  const prefsFile = path.join(serverRoot(), "data", "prefs.json");
+  const prefsFile = path.join(userDataPrefsDir(), "prefs.json");
   let isFirstRun = true;
   try {
     if (fs.existsSync(prefsFile)) {

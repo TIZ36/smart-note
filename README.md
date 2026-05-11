@@ -1,70 +1,121 @@
 <p align="center">
-  <img src="desktop/public/icon.svg" width="92" height="92" alt="SmartNote" />
+  <img src="desktop/public/icon.svg" width="112" height="112" alt="SmartNote" />
 </p>
 
 <h1 align="center">SmartNote</h1>
 
 <p align="center">
-  Local-first personal knowledge workspace with cloud-side RAG and MCP integration.<br/>
-  Notes live as Markdown on your disk; the cloud indexes them, runs LLM enrichment,
-  and exposes them to AI agents (Claude Code · Cursor · Opencode) through MCP.
+  <strong>Local-first notes that your AI agents can actually read.</strong><br/>
+  Markdown on your disk · pgvector + LLM enrichment in the cloud ·
+  exposed to Claude Code / Cursor / Opencode through MCP.
 </p>
 
 <p align="center">
-  <a href="#1-quick-start">Quick Start</a> ·
-  <a href="#2-ai-provider-setup">AI Provider</a> ·
-  <a href="#3-architecture">Architecture</a> ·
-  <a href="#4-daily-workflow">Daily Workflow</a> ·
-  <a href="#5-troubleshooting">Troubleshooting</a>
+  <a href="#-quick-start">Quick Start</a> ·
+  <a href="#-features">Features</a> ·
+  <a href="#-architecture">Architecture</a> ·
+  <a href="#-mcp-for-ai-agents">MCP</a> ·
+  <a href="#-troubleshooting">Troubleshooting</a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/electron-29-9FEAF9?logo=electron&logoColor=000" alt="Electron 29" />
+  <img src="https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=fff" alt="Python 3.12" />
+  <img src="https://img.shields.io/badge/postgres-pgvector-336791?logo=postgresql&logoColor=fff" alt="Postgres + pgvector" />
+  <img src="https://img.shields.io/badge/MCP-streamable--http-7C3AED" alt="MCP streamable-http" />
+  <img src="https://img.shields.io/badge/license-MIT-22c55e" alt="MIT" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/hero.png" alt="SmartNote — note editor with multi-tab, file tree, bookmarks" width="100%" />
 </p>
 
 ---
 
-## 1. Quick Start
+## Why SmartNote
 
-You need both halves running:
+Most note tools either trap your data behind a SaaS wall or leave the AI side to you. SmartNote splits the difference:
 
-| Half | What it is | Where it runs |
-|---|---|---|
-| **Cloud** | FastAPI + Postgres+pgvector + embeddings + MCP HTTP | Docker (single host) |
-| **Desktop** | Electron client (note editor, library, KP, Spotlight) | Your laptop |
+- 📂 **Files stay yours.** Notes are plain Markdown on disk. Edit them in Obsidian, VS Code, vim — anything. SmartNote watches the same files.
+- ☁️ **Cloud does the work AI needs.** A small self-hosted FastAPI service chunks, embeds (pgvector), enriches with your LLM, and builds an entity graph across docs.
+- 🤖 **Agents see your notes as first-class memory.** A native MCP server (no stdio shim, no local install) lets Claude Code / Cursor / Opencode call `search`, `add_memory`, `get_document`, `set_preference` — scoped to your workspace.
+- 🔑 **One API key.** No SaaS account, no per-tool wiring. Issue once, paste anywhere.
 
-### 1.1 Cloud (5 min)
+---
 
-Bring up the full stack with one script. It builds Docker images, starts Postgres + the embedding service + the API, and runs an end-to-end smoke test.
+## ✨ Features
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### Bookmarks at your fingertips
+`⌘B` on any line to bookmark — name it once, jump from anywhere. Double-tap **Shift** to open Quick Search, type **`:b`** to list every bookmark in the current file. `:42` jumps to line 42. All bookmarks sync to cloud so they follow you across machines.
+
+<img src="docs/screenshots/notes.png" alt="Quick Search :b mode listing bookmarks" width="100%" />
+
+</td>
+<td width="50%" valign="top">
+
+### See the data, not a black box
+Chunks are not a black box: dim, line ranges, character count, embedding model. Enrichment overlay surfaces topic + keywords + status per segment. Right-side inspector shows the vector, L2 norm, and the nearest cross-doc neighbours.
+
+<img src="docs/screenshots/chunks.png" alt="Chunks table — chunk_embed + chunk_enrich overlay" width="100%" />
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### Knowledge graph across docs
+After enrichment, `graph_topology` finds cross-doc links — shared entities, shared tags, same topic, semantic similarity. The Graph tab shows this doc's neighbours up top, the whole workspace's entity rollup below.
+
+<img src="docs/screenshots/graph.png" alt="Graph tab — related list + workspace 2-column rollup" width="100%" />
+
+</td>
+<td width="50%" valign="top">
+
+### Ask, with sources
+Hybrid retrieval (vec · FTS · n-gram · sub · keyword · tag) across all your notes. AI composes a cited answer on top — `[1]` `[2]` markers map to the chunks below so you can verify. Reasoner models stream a "💭 Thinking" block first.
+
+<img src="docs/screenshots/ask.png" alt="Stream RAG — query, retrieval chunks, cited AI answer" width="100%" />
+
+</td>
+</tr>
+</table>
+
+---
+
+## 🚀 Quick Start
+
+You need **two** halves: a cloud (Docker) and a desktop (Electron). Total time: ~5 minutes.
+
+### 1 · Bring up the cloud
 
 ```bash
 git clone https://github.com/TIZ36/smart-note.git
 cd smart-note
-./cloud/scripts/quickstart.sh
+./scripts/restart-cloud.sh
 ```
 
-What you get when this finishes:
+This builds the API image, starts Postgres + pgvector + the embed service, and runs migrations. When it prints `✓ api healthy`, you have:
 
-- `http://localhost:58000` — REST API (`/v1/health` returns `200`)
-- `http://localhost:58000/mcp` — MCP HTTP endpoint for AI agents
-- `localhost:55432` — Postgres
-- `http://localhost:58009` — local embedding service
+| Service | URL |
+|---|---|
+| REST API | `http://localhost:58000` |
+| MCP endpoint | `http://localhost:58000/mcp/` |
+| Postgres | `localhost:55432` |
+| Embedding service | `http://localhost:58009` |
 
-Tear down:
-```bash
-cd cloud/infra && docker compose down       # stop
-cd cloud/infra && docker compose down -v    # stop + wipe DB
-```
-
-> **First-run note**: the embed-model image download is the slow part (~3-5 min). Subsequent starts are seconds. The script waits up to 2 minutes for `/v1/health`; if it fails, run `cd cloud/infra && docker compose logs --tail 100 api`.
-
-### 1.2 Issue a workspace API key
-
-Before connecting the desktop, mint an API key for your workspace:
+### 2 · Mint a workspace API key
 
 ```bash
-./cloud/scripts/issue_key.sh
+./scripts/issue-cloud-apikey.sh
 ```
 
-You'll get a `wsk_…` token. Copy it — you'll paste it into the desktop in the next step.
+You get an `sn_live_…` token printed **once**. Save it.
 
-### 1.3 Desktop (3 min)
+### 3 · Run the desktop
 
 ```bash
 cd desktop
@@ -72,245 +123,285 @@ npm install
 npm run electron:dev
 ```
 
-The Electron window opens. Now connect it to your cloud:
+The Electron window opens. Click the cloud icon on the rail → paste the URL (`http://localhost:58000`) + the `sn_live_…` token → Save.
 
-1. Click the **Cloud** icon on the left rail
-2. **Connection** tab:
-   - **Cloud URL**: `http://localhost:58000`
-   - **Workspace API key**: paste the `wsk_…` token from step 1.2
-   - **Sync enabled**: ✓
-   - Click **Save connection**
+That's it. Open a `.md` file via the `+` button and start writing. The desktop syncs to cloud on save; embedding fires automatically.
 
-Done. The desktop will sync notes to cloud on save.
+> **First run takes longer**: the embed-model image downloads ~600 MB. Subsequent boots are seconds.
 
-### 1.4 Build a release (optional)
+<details>
+<summary><strong>Build a signed .app / .dmg</strong></summary>
 
 ```bash
 cd desktop
-npm run electron:build      # produces a signed .app / .dmg in dist/
+npm run electron:build      # output: desktop/dist/
 ```
+</details>
 
----
-
-## 2. AI Provider Setup
-
-There are **two** independent LLM configs — different jobs, different places to fill them in:
-
-| Config | Location | Powers | Default |
-|---|---|---|---|
-| **Cloud AI provider** | Cloud panel → **AI provider** tab | Cloud-side enrich · wiki abstract · MCP-triggered classifier | OFF (no key) |
-| **Local Chat provider** | Settings → Chat provider | Spotlight ⌘K AI Q&A · in-app rewrites | OFF (no key) |
-
-Both speak the OpenAI-compatible `/chat/completions` API. Recommended:
-
-- **Cost-conscious**: `deepseek-chat` ($0.14/M input, $0.28/M output) at `https://api.deepseek.com/v1`
-- **Quality**: `gpt-4o-mini` at `https://api.openai.com/v1`
-- **Reasoner**: `deepseek-reasoner` (you'll see a "💭 Thinking" stream in Spotlight)
-
-### 2.1 Cloud AI provider — for enrich + wiki abstract
-
-1. Open Cloud panel (left rail → cloud icon)
-2. **AI provider** tab
-3. Fill **Base URL**, **API key**, **Model** — e.g. `https://api.deepseek.com/v1`, `sk-…`, `deepseek-chat`
-4. **Save provider**
-5. Status dot turns green; the **AI provider** tab shows ✓ key set
-
-Without this, the **Enrich** and **Build wiki-smartsheet** buttons on the KP page are disabled and `/v1/enrich/run` returns 412.
-
-### 2.2 Local Chat provider — for AI Q&A
-
-1. Open Settings (left rail → gear icon)
-2. **Chat provider** card
-3. Fill **Base URL** / **API key** / **Chat model**
-4. Click **Save**
-
-Used by:
-- **⌘K Spotlight** → "✨ Compose answer from these N chunks" button
-- Note editor AI rewrites (when AI features are on)
-
----
-
-## 3. Architecture
-
-```
-┌─────────────── Desktop (Electron) ───────────────┐
-│                                                  │
-│  Note editor   Library  RAG/KP  Stream  Spotlight│
-│       │           │       │       │        │     │
-│       ▼           ▼       ▼       ▼        ▼     │
-│  ┌──────────────────────────────────────────┐    │
-│  │  cloud-api.ts  (HTTPS / WS to cloud)     │    │
-│  └──────────────┬───────────────────────────┘    │
-└─────────────────┼────────────────────────────────┘
-                  │  ⌘K → separate frameless window
-                  │
-┌─────────────────▼────────── Cloud (FastAPI) ─────┐
-│                                                  │
-│  /v1/documents     /v1/chunks/search             │
-│  /v1/enrich/run    /v1/processing/{id}/run       │
-│  /v1/devices       /v1/device/relay (WS)         │
-│  /mcp              ← Claude Code · Cursor · …    │
-│                                                  │
-│  ├── Postgres + pgvector (chunks, tag_segments,  │
-│  │   wiki_chapters, entities, enrich_jobs, …)    │
-│  ├── Embedding service (sentence-transformers)   │
-│  └── LLM dispatcher (cloud_pool / mcp_pull /     │
-│      ws_relay) → cloud-side OpenAI-compatible    │
-└──────────────────────────────────────────────────┘
-```
-
-### Three document kinds (`metadata.smartnote_type`)
-
-| Kind | Source | Indexing | LLM artifact |
-|---|---|---|---|
-| `note` | desktop edits | chunks (paragraph-split) | tag_segments |
-| `wiki_topic` | imported `.md` files | chapters (H2-split) + chunks | wiki_chapters.summary |
-| `doc` (default) | uncategorized | chunks | tag_segments |
-
-### Three pipeline stages
-
-`E → R → G` (visible as badges in KP and Library KN view):
-
-| Letter | Note kind | Wiki kind |
-|---|---|---|
-| **E** | embed (chunks) | embed (chunks) |
-| **R** | aisegment (line-range tags) | wiki-knowledge-sheet (per-chapter summary) |
-| **G** | info-graph (entities + co-occurrence) | info-graph (entities from chapter abstracts) |
-
----
-
-## 4. Daily Workflow
-
-### 4.1 Save a note → searchable everywhere
-
-1. Open a note in the editor (`Note` icon on rail)
-2. Edit, ⌘S
-3. Sync to Cloud is automatic if connected
-4. Press ⌘K from anywhere → Spotlight panel pops up; type a query
-
-### 4.2 Run knowledge processing
-
-1. Click **RAG** icon on rail (KP page)
-2. Pick sources (notes / wiki) on the left tree
-3. Click **Embedding** (no LLM, free)
-4. After E lights up, click **Enrich** (notes) or **Build wiki-smartsheet** (wiki) — these burn LLM tokens
-5. Watch the live progress panel; click into Library KN view for per-doc detail (Pipeline · Chunks · Chapters/Tags · Enrich tabs)
-
-### 4.3 Compose an AI answer
-
-1. ⌘K → search query → Enter
-2. See retrieval chunks grouped by note/wiki/doc
-3. Click **✨ Compose answer** → streaming response with [N] citations
-4. (DeepSeek-Reasoner / o1) → "💭 Thinking" block shows chain-of-thought first, then final answer
-
-### 4.4 Connect AI agents via MCP
-
-Cloud panel → **MCP** tab → pick **Claude Code / Cursor / Opencode** → copy the JSON snippet → paste into the agent's MCP config file (path shown in UI). Restart the agent.
-
-The agent now has tools:
-- `search_memory` — query your KB
-- `add_document`, `add_memory` — write back
-- `propose_memory` — submit a draft for your review
-- `get_document`, `search_documents` — fetch full content
-- `queue_enrich_jobs` — trigger cloud-side enrichment
-
----
-
-## 5. Troubleshooting
-
-### Cloud won't start / `/v1/health` 502
+<details>
+<summary><strong>Tear down / reset</strong></summary>
 
 ```bash
-cd cloud/infra
-docker compose logs --tail 200 api
+# Stop cloud, keep data
+cd cloud/infra && docker compose down
+
+# Stop + wipe DB (clean slate)
+cd cloud/infra && docker compose down -v
 ```
-
-Common causes:
-- `cloud/infra/.env` missing → run quickstart again
-- Embed image still downloading on first run → wait
-- Port conflict on 58000 / 55432 / 58009 → edit `cloud/infra/.env`
-
-### Desktop shows "Cloud not configured"
-
-Cloud panel → Connection tab → check URL + API key are saved (key field shows "•••••••• (leave empty to keep)" after first save). Test via:
-```bash
-curl -H "Authorization: Bearer wsk_…" http://localhost:58000/v1/health
-```
-
-### Enrich / Build wiki-smartsheet button greyed out
-
-Cloud AI provider not set. Cloud panel → AI provider tab → fill base_url + api_key + model → Save.
-
-### Spotlight (⌘K) doesn't open
-
-- Another macOS app may already grab ⌘K. Settings → Global hotkey → set a different binding (e.g. `CommandOrControl+Alt+Space`)
-- Restart Electron fully (⌘Q, not ⌘W) to re-register the global accelerator
-
-### "Provider returned no text"
-
-Your chat provider is a reasoning model (DeepSeek-Reasoner / o1) and burned the entire token budget on hidden chain-of-thought. Either:
-- Switch to a non-reasoner model (`deepseek-chat`, `gpt-4o-mini`)
-- Or accept the longer wait — the IPC handler auto-bumps `max_tokens` to 4096 for reasoners
-
-### DevTools (Electron)
-
-The proto chrome hides the menu bar. Use:
-- **⌘⌥I** or **F12** — toggle DevTools
-- **⌘R** — reload renderer (handy when you see a white screen)
+</details>
 
 ---
 
-## 6. Advanced
+## 🤖 MCP for AI agents
+
+SmartNote exposes a native MCP streamable-HTTP endpoint. **No stdio bridge, no spawn, no absolute paths**. Any modern MCP client connects with just URL + bearer token.
+
+### Claude Code · Cursor · Opencode
+
+Project-scoped config (e.g. `.mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "smartnote": {
+      "url": "http://localhost:58000/mcp/",
+      "headers": {
+        "Authorization": "Bearer sn_live_..."
+      }
+    }
+  }
+}
+```
+
+### Tools the agent gets
+
+| Tool | What it does |
+|---|---|
+| `search` | **Default lookup** — fans out to memories ∪ document chunks in parallel, merges by score. |
+| `search_memory` / `search_documents` | Source-scoped variants. |
+| `add_memory` · `set_preference` | Persist a fact or preference (supersede history kept). |
+| `propose_memory` | Submit a draft for user review (lands in Library → Pending). |
+| `add_document` | Upload + chunk + embed a long-form note. |
+| `get_document` · `get_memory` | Fetch full content by id. |
+| `queue_enrich_jobs` · `submit_enrichments` | Drive cloud-side LLM enrichment. |
+| `set_enrich_provider` | Configure the workspace's cloud-side LLM. |
+
+Every tool is workspace-scoped via the bearer key — one workspace per key, one machine config covers every agent on that machine.
+
+---
+
+## 🏗 Architecture
+
+<p align="center">
+  <img src="docs/screenshots/library.png" alt="Library — pipeline + graph at a glance" width="100%" />
+  <br/>
+  <sub><i>The Library surface — every doc's pipeline, segments, and cross-doc graph in one window.</i></sub>
+</p>
+
+```
+┌──────────────────────────┐                ┌─────────────────────────────┐
+│  Desktop (Electron)      │  HTTPS / WSS   │  Cloud (single Docker host) │
+│                          │ ◄────────────► │                              │
+│  • React renderer        │                │  ┌──────────────────────┐    │
+│  • main.mjs IPC          │                │  │ FastAPI (cloud/api/) │    │
+│  • Markdown editor       │                │  │   /v1/* REST         │    │
+│  • Multi-tab workspace   │                │  │   /v1/device/relay   │ ◄──┼─ desktop WS
+│  • ⌘K Spotlight          │                │  │   /mcp (streamable)  │ ◄──┼─ AI agents (MCP)
+│  • Bookmarks (cloud)     │                │  └──────────┬───────────┘    │
+└──────────────────────────┘                │             │                │
+                                            │  ┌──────────▼───────────┐    │
+                                            │  │ Postgres + pgvector  │    │
+                                            │  │   documents          │    │
+                                            │  │   chunks, blobs      │    │
+                                            │  │   memories           │    │
+                                            │  │   entities + links   │    │
+                                            │  └──────────────────────┘    │
+                                            │                              │
+                                            │  ┌──────────────────────┐    │
+                                            │  │ Embedding service    │    │
+                                            │  │ (self-hosted)        │    │
+                                            │  └──────────────────────┘    │
+                                            └─────────────────────────────┘
+
+Processing pipeline (per document):
+  chunk_embed   ──►  chunk_enrich       ──►  graph_topology
+   (chunks +         (LLM tags · topics       (cross-doc links:
+    pgvector)         · entities · summary)    shared entities,
+                                               shared tags)
+                  └─►  wiki_abstract ────►    same                ← for wiki_topic docs
+                       (chapter summary +
+                        entities)
+```
 
 ### Project layout
 
 ```
 smart-note/
 ├── cloud/
-│   ├── api/          # FastAPI app (cloud/api/app/)
-│   ├── infra/        # docker-compose + .env
-│   ├── migrations/   # SQL migrations (run automatically on startup)
-│   ├── scripts/      # quickstart.sh, demo.py, issue_key.sh
+│   ├── api/                  # FastAPI app
+│   │   ├── app/
+│   │   │   ├── routers/      # documents, memories, notes, preferences, …
+│   │   │   ├── services/     # processing_runs, enrich, kb, embedding, …
+│   │   │   ├── contexts/     # knowledge, storage event subscriptions
+│   │   │   └── mcp_http.py   # MCP streamable-HTTP server
+│   │   └── scripts/          # backfills + one-shot maintenance
+│   ├── migrations/           # 0NN_*.sql, idempotent, run on startup
+│   ├── infra/                # docker-compose.yml + .env
 │   └── sdk-py, sdk-ts
 ├── desktop/
-│   ├── electron/     # main.mjs, preload.cjs, services/
-│   ├── public/       # icons
-│   └── src/          # React renderer (App, components, lib, hooks)
-└── docs/             # design + processing-pipeline references
+│   ├── electron/
+│   │   ├── main.mjs          # IPC, hotkeys, WS presence, settings
+│   │   └── services/         # settings, sync, ws-presence, notes, local-db
+│   ├── public/               # icons (SVG + generated PNG + ICNS)
+│   └── src/                  # React renderer (App, atelier, library, note)
+└── prototypes/               # design HTML mocks (b is canonical)
 ```
 
-### Where credentials live
+---
+
+## 📅 Daily Workflow
+
+1. **Write** — open a `.md` file in any tab, type. ⌘S saves to disk and syncs to cloud.
+2. **Embed** — happens automatically on sync. Watch the Library left-tree chip flip from `embed` → `done`.
+3. **Enrich** — Library → select doc → Pipeline → **Run chunk_enrich** (notes) or **Build smartsheet** (wikis). Burns LLM tokens once.
+4. **Topo** — same doc → **Run graph_topology**. Free, fast; finds cross-doc links.
+5. **Search** — `⌘K` from anywhere, type your question. Retrieval shows the cited chunks; click ✨ **Compose answer** for the synthesized response (or it auto-runs on Enter).
+6. **Recall via agents** — your Claude Code / Cursor session sees the workspace as a memory pool through MCP.
+
+---
+
+## ⚙️ Configuration
+
+<details>
+<summary><strong>Two LLM configs (cloud vs local) — what goes where</strong></summary>
+
+| Config | Where | Powers |
+|---|---|---|
+| **Cloud AI provider** | Cloud panel → AI provider tab | Cloud-side enrich · wiki abstract · MCP classifier |
+| **Local Chat provider** | Settings → Chat provider | Spotlight ⌘K answer compose · in-app rewrites |
+
+Both speak OpenAI-compatible `/chat/completions`. Recommended:
+
+- **Budget**: `deepseek-chat` at `https://api.deepseek.com/v1`
+- **Quality**: `gpt-4o-mini` at `https://api.openai.com/v1`
+- **Reasoner**: `deepseek-reasoner` (shows a "💭 Thinking" stream)
+
+Set the cloud one via MCP (`set_enrich_provider` tool) or via the Cloud panel UI. Without it, enrich / wiki-abstract buttons stay disabled.
+</details>
+
+<details>
+<summary><strong>Where credentials live on disk</strong></summary>
 
 | Credential | File | Notes |
 |---|---|---|
 | Cloud URL + workspace key | `~/Library/Application Support/desktop/cloud-creds.json` | per-user, chmod 600 |
-| Local provider api_key | same file | never ships to renderer |
-| Cloud-side enrich provider | Postgres `provider_config` table | per-workspace |
+| Local provider api_key | same file | never ships to the renderer |
+| Cloud-side enrich provider | Postgres `memories` (kind=preference) | per-workspace |
+| Feature-flag prefs (.env) | `~/Library/Application Support/desktop/prefs/.env` | hotkey, embedding mode |
 
-The desktop never reads any local Python gateway — that legacy service was retired. All persistence is electron IPC + cloud HTTP.
+No file under `<repo>/server/` is ever created — that directory belonged to a retired Python gateway.
+</details>
 
-### Useful commands
+<details>
+<summary><strong>Useful commands</strong></summary>
 
 ```bash
 # Cloud
-cd cloud/infra && docker compose logs -f api      # live api logs
-cd cloud/infra && docker compose restart api      # restart after backend changes
-./cloud/scripts/quickstart.sh                     # full reset + smoke test
+./scripts/restart-cloud.sh                            # rebuild + restart api (the right way)
+cd cloud/infra && docker compose logs -f api          # tail live logs
+cd cloud/infra && docker compose exec postgres psql -U smartnote -d smartnote   # SQL shell
 
 # Desktop
-cd desktop && npm run dev                         # vite only (renderer hot-reload)
-cd desktop && npm run electron:dev                # full electron + vite (typical)
-cd desktop && npx tsc --noEmit                    # type-check
-cd desktop && npm run electron:build              # produce .dmg / .app
+cd desktop && npm run electron:dev                    # vite + electron (typical)
+cd desktop && npm run dev                             # vite only (renderer hot-reload)
+cd desktop && npx tsc --noEmit                        # type-check
+cd desktop && npm run electron:build                  # produce .dmg / .app
+
+# Maintenance
+./scripts/clean-all-data.sh                           # wipe Postgres + restart cloud
+./scripts/issue-cloud-apikey.sh                       # mint a new workspace key
+```
+</details>
+
+<details>
+<summary><strong>Migrations</strong></summary>
+
+Cloud auto-runs SQL files from `cloud/migrations/` at startup in lexical order. Conventions:
+
+- Filename: `0NN_short_name.sql`
+- Every statement must be idempotent (`CREATE … IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`)
+- No migration ledger by design — keep them re-runnable
+
+After adding a migration, `./scripts/restart-cloud.sh` picks it up on the next build.
+</details>
+
+---
+
+## 🛟 Troubleshooting
+
+<details>
+<summary><strong>"Cloud not configured" in the desktop</strong></summary>
+
+Open Cloud panel → Connection tab. URL must be reachable, API key must be valid. Test it:
+
+```bash
+curl -X POST http://localhost:58000/v1/auth/token \
+  -H "Content-Type: application/json" \
+  -d '{"api_key": "sn_live_…"}'
+# expect: {"jwt": "...", "expires_at": …}
 ```
 
-### Schema migrations
+A 401 means the key was wiped (you ran `clean-all-data.sh`) — mint a new one.
+</details>
 
-Cloud auto-runs SQL migrations from `cloud/migrations/` at startup. To add one:
-```
-cloud/migrations/0NN_short_name.sql
-```
-Naming = ordering. The runner is idempotent.
+<details>
+<summary><strong>Restart didn't pick up my cloud code change</strong></summary>
+
+`docker compose restart api` does **not** rebuild the image. The cloud has no live-mount; code is baked at build time.
+
+Use `./scripts/restart-cloud.sh` (which runs `docker compose up -d --build api`).
+</details>
+
+<details>
+<summary><strong>Library left-tree chip stuck on "running"</strong></summary>
+
+Usually a missed WS event. The desktop has a 5s safety-net poll that reconciles in-flight runs, but if your cloud-creds went stale the WS won't connect at all. Check Electron stdout for `[ws-presence] auth: 401` — if you see it, re-mint a key and paste it back.
+</details>
+
+<details>
+<summary><strong>Enrich button greyed out</strong></summary>
+
+The cloud AI provider isn't set. Either:
+- Cloud panel → AI provider tab → fill base URL + key + model → Save, or
+- From an MCP-connected agent: call `set_enrich_provider(api_key=…, base_url=…, model=…)`
+</details>
+
+<details>
+<summary><strong>Spotlight (⌘K) doesn't open</strong></summary>
+
+- Some macOS app stole ⌘K — open Settings → Global hotkey → bind something else (e.g. `CommandOrControl+Alt+Space`).
+- Fully quit Electron (⌘Q) and reopen — the global accelerator only registers on app start.
+</details>
+
+<details>
+<summary><strong>"Provider returned no text"</strong></summary>
+
+You're using a reasoner model (DeepSeek-Reasoner / o1) and it spent the entire token budget on hidden chain-of-thought. Either:
+- Switch to `deepseek-chat` / `gpt-4o-mini`
+- Wait — the IPC handler auto-bumps `max_tokens` to 4096 for reasoners, but a long doc + small max_tokens is still possible
+
+The "💭 Thinking" block will show what the model was thinking even when `content` is empty.
+</details>
+
+---
+
+## 🗺 Roadmap
+
+- [ ] Auto-enrich after sync (currently manual to control LLM spend)
+- [ ] Per-tab editor state preserved across tab switches
+- [ ] iOS companion: capture → cloud → surfaces in desktop tree
+- [ ] Multi-workspace switching in one desktop
+- [ ] OAuth for shared workspaces
 
 ---
 
@@ -320,4 +411,4 @@ MIT — see [LICENSE](LICENSE).
 
 ## Contributing
 
-Issues and PRs welcome at <https://github.com/TIZ36/smart-note>.
+Issues and PRs at <https://github.com/TIZ36/smart-note>. For substantial changes, open an issue first to align on scope.
