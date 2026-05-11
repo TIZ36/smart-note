@@ -1,0 +1,2362 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Library · Redesign B — Final Processing Model</title>
+<style>
+  /* ──────────────────────────────────────────────────────────
+   * Variant B — Console Operator (final processing model)
+   *
+   * Stages:
+   *   chunk_embed     fast · no LLM
+   *   chunk_enrich    LLM · token cost
+   *   graph_topology  fast · no LLM (cross-doc relations)
+   *   wiki_abstract   LLM · token cost (wiki only)
+   *   note_classify   LLM · uses user custom tags (note only)
+   *
+   * Pipeline tab is grouped by category (CHUNK / GRAPH / NOTE|WIKI).
+   * Each stage shows LLM-required mark inline.
+   * ────────────────────────────────────────────────────────── */
+  :root {
+    /* GMGN-inspired dark palette:
+     *   - True-black canvas, cool-tinted surface layers
+     *   - Mint-green primary (#00e5a3) — GMGN's signature accent
+     *   - Deeper sage-green for "done" so running vs done still
+     *     read as distinct states while staying in green family
+     *   - Gold (#ffce4b) for warn / LLM-cost mark
+     *   - Misty pink (#f0a8be) for failed (kept from prior tweak)
+     *   - Purple held for graph/wiki secondary
+     */
+    --bg: #000000;
+    --bg-1: #060709;       /* cards — barely lifted from black */
+    --bg-2: #0c0f13;       /* hover */
+    --bg-3: #141821;       /* chips / pills */
+    --bg-4: #1c2129;       /* active button bg */
+    --ink: #e8eaee;
+    --ink-muted: #91969d;
+    --ink-faint: #555a61;
+    --rule: #11151b;       /* nearly-invisible hairlines */
+    --rule-strong: #1d232b;
+
+    --running: #00e5a3;          /* GMGN mint — primary action */
+    --done:    #19be7d;           /* settled sage green */
+    --failed:  #f0a8be;           /* misty pink */
+    --queued:  #6b7280;
+    --warn:    #ffce4b;           /* GMGN gold */
+    --accent2: #b78bff;
+
+    --running-bg: rgba(0,229,163,0.10);
+    --done-bg:    rgba(25,190,125,0.10);
+    --failed-bg:  rgba(240,168,190,0.12);
+    --warn-bg:    rgba(255,206,75,0.12);
+    --accent2-bg: rgba(183,139,255,0.10);
+
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+    --sans: -apple-system, "SF Pro Text", system-ui, sans-serif;
+
+    /* Soft shadow only used in light theme to lift cards a bit; in
+     * dark theme it stays unset so the design relies on borders. */
+    --shadow-card: none;
+  }
+
+  /* ───────── LIGHT THEME ─────────
+   * Same structural variables, lighter tones. Status colors are
+   * darkened so contrast on white stays AA. Card surfaces use white;
+   * the page bg is a warm off-white so eyes don't bleach.
+   * Toggle: data-theme="light" on <html>. */
+  html[data-theme="light"] {
+    --bg:   #faf9f5;
+    --bg-1: #ffffff;
+    --bg-2: #f4f3ec;
+    --bg-3: #ebeae2;
+    --bg-4: #ddddd2;
+    --ink:        #1c1f22;
+    --ink-muted:  #5b6066;
+    --ink-faint:  #8e9298;
+    --rule:        #e7e5db;
+    --rule-strong: #d4d3c8;
+
+    --running: #1f63d1;
+    --done:    #2e8a4d;
+    --failed:  #b9412f;
+    --queued:  #8a8e93;
+    --warn:    #a16720;
+    --accent2: #7059b6;
+
+    --running-bg: rgba(31,99,209,0.10);
+    --done-bg:    rgba(46,138,77,0.10);
+    --failed-bg:  rgba(185,65,47,0.10);
+    --warn-bg:    rgba(161,103,32,0.12);
+    --accent2-bg: rgba(112,89,182,0.10);
+
+    --shadow-card: 0 1px 2px rgba(20,20,20,0.04), 0 1px 1px rgba(20,20,20,0.02);
+  }
+  /* Subtle lift in light: cards get a tiny shadow + overlay loses
+   * the heavy black backdrop in favor of a soft warm wash. */
+  html[data-theme="light"] .stage-table,
+  html[data-theme="light"] .runs-mini,
+  html[data-theme="light"] .ctable,
+  html[data-theme="light"] .seg,
+  html[data-theme="light"] .rel-row,
+  html[data-theme="light"] .ejob,
+  html[data-theme="light"] .graph-section,
+  html[data-theme="light"] .graph-head,
+  html[data-theme="light"] .modal {
+    box-shadow: var(--shadow-card);
+  }
+  html[data-theme="light"] .modal-overlay {
+    background: rgba(40,38,30,0.32);
+  }
+  /* Logbox in dark uses --bg as backdrop (deeper than the card);
+   * in light we want the opposite — a paler, recessed feel. */
+  html[data-theme="light"] .logbox {
+    background: var(--bg);
+    color: var(--ink-muted);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 13px; line-height: 1.5; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+
+  .shell {
+    display: grid;
+    grid-template-columns: 44px 280px 1fr 320px;
+    height: 100vh;
+  }
+
+  /* Left rail */
+  .rail {
+    border-right: 1px solid var(--rule);
+    padding: 10px 0; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  }
+  .rail .logo { width: 24px; height: 24px; border-radius: 5px; background: var(--running); color: var(--bg); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 11px; margin-bottom: 8px; }
+  .rail-btn { width: 30px; height: 30px; border-radius: 5px; border: none; background: transparent; color: var(--ink-faint); display: flex; align-items: center; justify-content: center; }
+  .rail-btn:hover { background: var(--bg-2); color: var(--ink); }
+  .rail-btn.active { background: var(--bg-3); color: var(--ink); }
+
+  /* Tree */
+  .tree { border-right: 1px solid var(--rule); overflow: auto; background: var(--bg-1); display: flex; flex-direction: column; }
+  .tree-bar { padding: 10px 12px; border-bottom: 1px solid var(--rule); display: flex; gap: 6px; align-items: center; }
+  .tree-bar input {
+    flex: 1; background: var(--bg-2); border: 1px solid var(--rule); color: var(--ink);
+    padding: 6px 9px; border-radius: 4px; font-size: 12px; outline: none;
+  }
+  .tree-bar input:focus { border-color: var(--running); }
+  .tree-bar .pill { font-family: var(--mono); font-size: 10px; color: var(--ink-faint); padding: 2px 6px; background: var(--bg-2); border-radius: 3px; }
+  .tree-helpers { padding: 6px 12px; border-bottom: 1px solid var(--rule); display: flex; gap: 6px; flex-wrap: wrap; font-size: 11px; }
+  .tree-helper { padding: 2px 7px; background: var(--bg-2); border: 1px solid var(--rule); border-radius: 3px; color: var(--ink-faint); cursor: pointer; }
+  .tree-helper:hover { color: var(--ink); border-color: var(--ink-faint); }
+  .tree-group { padding: 6px 0; }
+  .tree-group-name {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--ink-faint);
+    padding: 12px 14px 0; display: flex; align-items: center; justify-content: space-between;
+  }
+  .tree-group-name .key { color: var(--ink-faint); }
+
+  /* Per-group quick actions — Select all / Invert, scoped to this
+   * kind. Selecting outside the active kind clears the other groups'
+   * checks (kind-lock). Hidden until the user hovers the group head
+   * so the tree stays calm in idle. */
+  .group-helpers {
+    padding: 3px 14px 4px;
+    display: flex; gap: 6px; flex-wrap: wrap;
+    opacity: 0.6; transition: opacity 160ms ease;
+  }
+  .tree-group:hover .group-helpers,
+  .tree-group:focus-within .group-helpers { opacity: 1; }
+  .group-helper {
+    background: transparent; border: 1px solid var(--rule);
+    color: var(--ink-faint); font-family: var(--mono);
+    font-size: 10px; letter-spacing: 0.02em;
+    padding: 2px 7px; border-radius: 3px; cursor: pointer;
+  }
+  .group-helper:hover { color: var(--ink); border-color: var(--ink-faint); }
+  .group-helper.locked { color: var(--running); border-color: color-mix(in oklab, var(--running) 35%, var(--rule)); }
+  /* Tree row · two-line layout
+   *   ┌─[check] [name ……………………] [size·age]
+   *   │         [bits]   ← second line, indented under name
+   * Bits are stage-status pixels (chunk_embed / chunk_enrich /
+   * graph_topology / note_classify or wiki_abstract). Wrapping
+   * keeps the name readable when stage count grows. */
+  .tree-row {
+    display: grid;
+    grid-template-columns: 16px 1fr auto;
+    grid-template-rows: auto auto;
+    column-gap: 8px; row-gap: 2px;
+    padding: 6px 12px 7px; cursor: pointer; color: var(--ink-muted);
+    border-left: 2px solid transparent; font-size: 12.5px;
+  }
+  .tree-row:hover { background: var(--bg-2); color: var(--ink); }
+  .tree-row.active { background: var(--bg-2); color: var(--ink); border-left-color: var(--running); }
+  .tree-row .check { grid-row: 1; display: flex; align-items: center; justify-content: center; }
+  .tree-row .check input { accent-color: var(--running); }
+  .tree-row .name {
+    grid-column: 2; grid-row: 1;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .tree-row .meta-right {
+    grid-column: 3; grid-row: 1;
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint);
+  }
+  .tree-row .bits {
+    grid-column: 2 / 4; grid-row: 2;
+    display: inline-flex; align-items: center; gap: 4px;
+    color: var(--ink-faint); font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.04em;
+  }
+  .tree-row .bits .dots { display: inline-flex; gap: 2px; }
+  .tree-row .bits .dots span { width: 5px; height: 9px; border-radius: 1px; background: var(--bg-3); }
+  .tree-row .bits .dots span.on   { background: var(--done); }
+  .tree-row .bits .dots span.run  { background: var(--running); animation: blink 1.4s ease-in-out infinite; }
+  .tree-row .bits .dots span.fail { background: var(--failed); }
+  .tree-row .bits .dots span.gtop { background: var(--accent2); }
+  .tree-row .bits .label { opacity: 0.85; }
+  @keyframes blink { 50% { opacity: 0.4; } }
+  .tree-footer { margin-top: auto; border-top: 1px solid var(--rule); padding: 10px 12px; font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); display: flex; justify-content: space-between; }
+
+  /* Content */
+  .content { display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
+
+  .topbar { display: flex; align-items: center; gap: 12px; padding: 9px 16px; border-bottom: 1px solid var(--rule); background: var(--bg-1); }
+  .doc-name { font-size: 13.5px; color: var(--ink); font-weight: 500; }
+  .topbar .meta { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); }
+  .topbar .actions { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+
+  .btn { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--rule-strong); background: var(--bg-2); color: var(--ink); padding: 4px 10px; border-radius: 4px; font-size: 12px; }
+  .btn:hover { border-color: var(--ink-faint); }
+  .btn.primary { background: var(--running); border-color: var(--running); color: var(--bg); }
+  .btn.primary:hover { filter: brightness(1.1); }
+  .btn.danger { color: var(--failed); border-color: rgba(236,91,91,0.3); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .view-toggle { display: inline-flex; padding: 2px; background: var(--bg-2); border: 1px solid var(--rule); border-radius: 4px; }
+  .view-toggle button { border: none; background: transparent; padding: 4px 10px; font-size: 11.5px; color: var(--ink-faint); border-radius: 3px; }
+  .view-toggle button.active { background: var(--bg-3); color: var(--ink); }
+
+  /* Bulk action bar — same-kind only.
+   *
+   * Selection is kind-locked: if the user checks a row of a different
+   * kind than the currently checked set, prior checks clear. This
+   * makes "Run for all selected" predictable — the action set is
+   * always one of:
+   *   notes → Embed · Enrich · Tag-classify · (Topology auto-tail)
+   *   wiki  → Embed · Abstract · (Topology auto-tail)
+   *   doc   → Embed · Enrich · (Topology auto-tail)
+   * graph_topology is a PER-DOC stage that runs after the upstream
+   * stages complete; it's not a workspace-only action and does not
+   * need its own bulk button — Topology is included automatically
+   * as the last step of every bulk run. */
+  .bulk-bar {
+    border-bottom: 1px solid var(--rule); background: var(--bg-1);
+    display: none; align-items: center; gap: 12px; padding: 9px 16px;
+  }
+  .bulk-bar.show { display: flex; }
+  .bulk-bar .label {
+    font-family: var(--mono); font-size: 10px; color: var(--running);
+    letter-spacing: 0.08em; text-transform: uppercase;
+    padding: 2px 7px; border-radius: 3px; background: var(--running-bg);
+  }
+  .bulk-bar .kind-pill {
+    font-family: var(--mono); font-size: 10.5px; color: var(--ink);
+    padding: 2px 8px; border-radius: 3px; background: var(--bg-3);
+    border-left: 2px solid var(--running);
+  }
+  .bulk-bar .kind-pill.wiki  { border-left-color: var(--accent2); }
+  .bulk-bar .kind-pill.doc   { border-left-color: var(--ink-muted); }
+  .bulk-bar .count { font-family: var(--mono); font-size: 11px; color: var(--ink-muted); }
+  .bulk-bar .lock-hint {
+    font-size: 11px; color: var(--ink-faint); display: inline-flex; align-items: center; gap: 4px;
+  }
+  .bulk-bar .lock-hint::before { content: "🔒"; font-size: 10px; opacity: 0.6; }
+  .bulk-bar .spacer { flex: 1; }
+  .bulk-bar .clear-btn {
+    background: transparent; border: 1px solid transparent; color: var(--ink-faint);
+    padding: 3px 8px; font-size: 11px; border-radius: 3px;
+  }
+  .bulk-bar .clear-btn:hover { color: var(--ink); border-color: var(--rule-strong); }
+  .bulk-bar .actions { display: inline-flex; gap: 6px; }
+  .bulk-bar .actions[data-kind="notes"] .for-wiki,
+  .bulk-bar .actions[data-kind="notes"] .for-doc,
+  .bulk-bar .actions[data-kind="wiki"] .for-notes,
+  .bulk-bar .actions[data-kind="wiki"] .for-doc,
+  .bulk-bar .actions[data-kind="doc"] .for-notes,
+  .bulk-bar .actions[data-kind="doc"] .for-wiki { display: none; }
+
+  /* KN tabs */
+  .kn-tabs { display: flex; padding: 0 16px; border-bottom: 1px solid var(--rule); background: var(--bg-1); overflow-x: auto; }
+  .kn-tabs button { border: none; background: transparent; padding: 9px 14px; font-size: 12.5px; color: var(--ink-faint); border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+  .kn-tabs button.active { color: var(--ink); border-bottom-color: var(--running); }
+  .kn-tabs button:hover { color: var(--ink); }
+  .kn-tabs button .count { font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); padding: 1px 5px; border-radius: 3px; background: var(--bg-2); margin-left: 6px; }
+
+  .pipeline, .chunks-page, .segs-page, .tags-page, .chapters-page, .related-page, .graph-page, .runs-page, .raw-page {
+    padding: 14px 16px; overflow: auto;
+  }
+  .tabbody { display: none; }
+  .tabbody.active { display: block; }
+
+  /* ── Bulk mode ──
+   * When ≥1 doc is checked in the tree, the main content area
+   * stops showing the single-doc detail (the doc kind, tabs, and
+   * inspector content all become ambiguous — there's no one doc to
+   * focus on). Instead .bulk-view takes over with the file list and
+   * per-stage execution plan. The bulk-bar at top stays visible for
+   * its action buttons; topbar/tabs/inspector body fade out. */
+  .content.bulk-mode > .topbar,
+  .content.bulk-mode > .kn-tabs,
+  .content.bulk-mode > .tabbody { display: none !important; }
+  .bulk-view { display: none; padding: 14px 16px; overflow: auto; }
+  .content.bulk-mode > .bulk-view { display: block; }
+  /* Inspector goes neutral when bulk mode active. */
+  .inspector.bulk-mode .insp-body { display: none; }
+  .inspector.bulk-mode .insp-body[data-tab="bulk"] { display: block; }
+
+  .bulk-view-head {
+    display: flex; gap: 18px; padding: 14px 16px;
+    border: 1px solid var(--rule); border-radius: 6px;
+    background: var(--bg-1); margin-bottom: 14px;
+    box-shadow: var(--shadow-card);
+  }
+  .bulk-view-head h2 { margin: 0; font-size: 14px; font-weight: 500; }
+  .bulk-view-head .sub { color: var(--ink-muted); font-size: 12px; margin-top: 4px; }
+  .bulk-view-head .left { flex: 1; }
+  .bulk-view-head .summary { flex: 1; min-width: 0; }
+  .bulk-view-head h5 {
+    margin: 0 0 6px; font-family: var(--mono); font-size: 10px;
+    letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-faint); font-weight: 500;
+  }
+  .bulk-summary-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .bulk-stage-chip {
+    font-family: var(--mono); font-size: 10.5px; padding: 2px 7px;
+    border-radius: 3px; background: var(--bg-3); color: var(--ink); border: 1px solid var(--rule);
+  }
+  /* Execution order — numbered list inside the summary so users can
+   * see the dependency order, not just a soup of chips. */
+  .bulk-order { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+  .bulk-order-step {
+    display: grid; grid-template-columns: 18px 90px 1fr;
+    align-items: center; gap: 8px; font-size: 11.5px;
+  }
+  .bulk-order-step .num {
+    font-family: var(--mono); font-size: 10px; color: var(--ink-faint);
+    width: 16px; height: 16px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--bg-3);
+  }
+  .bulk-order-step .kind {
+    font-family: var(--mono); font-size: 10.5px; color: var(--ink);
+  }
+  .bulk-order-step .verdict {
+    font-family: var(--mono); font-size: 10.5px; color: var(--ink-muted);
+  }
+  .bulk-order-arrow { color: var(--ink-faint); margin-left: 6px; opacity: 0.6; }
+
+  .bulk-view-files { display: flex; flex-direction: column; gap: 6px; }
+  .bulk-file {
+    border: 1px solid var(--rule); border-left: 3px solid var(--running); border-radius: 4px;
+    background: var(--bg-1); padding: 10px 14px; box-shadow: var(--shadow-card);
+  }
+  .bulk-file.wiki { border-left-color: var(--accent2); }
+  .bulk-file.doc  { border-left-color: var(--ink-muted); }
+  .bulk-file-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+  .bulk-file-name { font-size: 13px; color: var(--ink); font-weight: 500; }
+  .bulk-file-meta { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); margin-left: auto; }
+  .bulk-file-stages { display: flex; flex-wrap: wrap; gap: 4px; }
+  .bulk-stage {
+    font-family: var(--mono); font-size: 10.5px; padding: 2px 8px;
+    border-radius: 3px; background: var(--bg-3); color: var(--ink-muted); border: 1px solid var(--rule);
+    display: inline-flex; align-items: center; gap: 4px;
+  }
+  .bulk-stage::before { font-size: 9.5px; opacity: 0.8; }
+  .bulk-stage.will-run    { background: var(--running-bg); color: var(--running); border-color: transparent; }
+  .bulk-stage.will-run::before    { content: "▶"; }
+  .bulk-stage.will-rerun  { background: var(--warn-bg);    color: var(--warn);    border-color: transparent; }
+  .bulk-stage.will-rerun::before  { content: "↻"; }
+  .bulk-stage.will-retry  { background: var(--failed-bg);  color: var(--failed);  border-color: transparent; }
+  .bulk-stage.will-retry::before  { content: "↻"; }
+  .bulk-stage.will-auto   { background: var(--accent2-bg); color: var(--accent2); border-color: transparent; }
+  .bulk-stage.will-auto::before   { content: "↪"; }
+  .bulk-stage.will-skip   { color: var(--ink-faint); border-style: dashed; }
+  .bulk-stage.will-skip::before   { content: "✓"; }
+
+  /* Kind-aware visibility: the content area carries data-active-kind
+   * (notes / wiki / doc); elements tagged .for-<kind> show only when
+   * the active doc matches. Used to swap pipeline stage groups,
+   * tabs, and tab bodies — wiki gets Chapters; notes get Segments +
+   * Tag-suggestions; doc kind gets the lean fallback. */
+  .content[data-active-kind="notes"] .for-wiki,
+  .content[data-active-kind="notes"] .for-doc,
+  .content[data-active-kind="wiki"]  .for-notes,
+  .content[data-active-kind="wiki"]  .for-doc,
+  .content[data-active-kind="doc"]   .for-notes,
+  .content[data-active-kind="doc"]   .for-wiki { display: none !important; }
+
+  /* ── Pipeline · grouped stage table ──
+   *
+   * One outer card per category (CHUNK / GRAPH / NOTE|WIKI). Group
+   * head is soft (no bg fill) so the rows it contains read as one
+   * unit. Each row carries: status strip · letter chip · meta block
+   * (name · LLM mark inline · sub-line) · count · action.
+   * The "stage-message" slot tucks under the running row (grid
+   * column-spanning) so the live message looks attached, not orphan.
+   */
+  .stage-table {
+    border: 1px solid var(--rule); border-radius: 6px; overflow: hidden;
+    background: var(--bg-1); margin-bottom: 14px;
+  }
+  .stage-group {
+    border-bottom: 1px solid var(--rule);
+  }
+  .stage-group:last-child { border-bottom: none; }
+  .stage-group-head {
+    padding: 10px 14px 4px;
+    display: flex; align-items: baseline; gap: 10px;
+  }
+  .stage-group-head .gname {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--ink); font-weight: 500;
+  }
+  .stage-group-head .applies-to { color: var(--ink-faint); font-size: 11px; }
+
+  .stage-row {
+    display: grid;
+    grid-template-columns: 28px 1fr 70px auto;
+    grid-template-rows: auto auto;
+    align-items: center; column-gap: 12px; row-gap: 0;
+    padding: 8px 14px 10px 0;
+    border-left: 3px solid var(--rule);
+  }
+  .stage-row + .stage-row { border-top: 1px solid var(--rule); }
+  .stage-row.done    { border-left-color: var(--done); }
+  .stage-row.running { border-left-color: var(--running); }
+  .stage-row.failed  { border-left-color: var(--failed); }
+  .stage-row .letter {
+    grid-row: 1 / 3;
+    width: 24px; height: 24px; border-radius: 4px; background: var(--bg-3);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: 11px; color: var(--ink-faint); margin-left: 9px;
+  }
+  .stage-row.done    .letter { background: var(--done-bg);    color: var(--done); }
+  .stage-row.running .letter { background: var(--running-bg); color: var(--running); }
+  .stage-row.failed  .letter { background: var(--failed-bg);  color: var(--failed); }
+
+  .stage-meta { grid-column: 2; grid-row: 1; min-width: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .stage-name { font-size: 13px; color: var(--ink); font-weight: 500; }
+  .stage-status {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--ink-faint);
+  }
+  .stage-row.done    .stage-status { color: var(--done); }
+  .stage-row.running .stage-status { color: var(--running); }
+  .stage-row.failed  .stage-status { color: var(--failed); }
+  .stage-meta .summary { color: var(--ink-muted); font-size: 12px; }
+
+  .stage-sub {
+    grid-column: 2; grid-row: 2;
+    font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint);
+    margin-top: 3px;
+  }
+
+  .llm-mark {
+    font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase;
+    padding: 1px 6px; border-radius: 2px;
+  }
+  .llm-mark.fast   { background: var(--done-bg);    color: var(--done); }
+  .llm-mark.llm    { background: var(--warn-bg);    color: var(--warn); }
+  .llm-mark.custom { background: var(--accent2-bg); color: var(--accent2); }
+
+  .stage-count {
+    grid-column: 3; grid-row: 1;
+    font-family: var(--mono); font-size: 11px; color: var(--ink-faint); text-align: right;
+  }
+  .stage-action { grid-column: 4; grid-row: 1; padding-right: 14px; }
+
+  .stage-row.disabled-by-dep { opacity: 0.6; }
+  /* Stale = artefact exists but inputs changed since last run. Same
+   * gold as warn so the user reads "needs attention", not "broken". */
+  .stage-row.stale { border-left-color: var(--warn); }
+  .stage-row.stale .letter { background: var(--warn-bg); color: var(--warn); }
+  .stage-row.stale .stage-status { color: var(--warn); }
+
+  /* Live message — attaches visually under the running row by sharing
+   * the same border-left strip + bg-2 tint. */
+  .stage-live {
+    border-left: 3px solid var(--running);
+    background: var(--running-bg);
+    padding: 6px 14px 6px 56px;
+    font-family: var(--mono); font-size: 10.5px; color: var(--running);
+    border-top: 1px solid var(--rule);
+  }
+  .stage-live .arrow { opacity: 0.7; margin-right: 6px; }
+
+  /* Concurrency strip — sits inline under the running stage's live
+   * message so the eye sees: row → message → bars as a coherent block.
+   * Slimmer + no border now (lives inside the stage-table instead). */
+  .conc-strip {
+    border-left: 3px solid var(--running);
+    border-top: 1px solid var(--rule);
+    background: var(--running-bg);
+    padding: 8px 14px 10px 56px;
+    display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 12px;
+  }
+  .conc-strip .bars { display: flex; gap: 2px; }
+  .conc-strip .bars span { width: 6px; height: 12px; border-radius: 1px; background: var(--bg-3); }
+  .conc-strip .bars span.in-flight { background: var(--running); animation: dim 1.4s ease-in-out infinite; }
+  .conc-strip .bars span.done { background: var(--done); opacity: 0.7; }
+  @keyframes dim { 50% { opacity: 0.45; } }
+  .conc-strip .stat { font-family: var(--mono); font-size: 10.5px; color: var(--running); }
+  .conc-strip .stat .secondary { color: var(--ink-muted); margin-left: 8px; }
+
+  /* Recent runs — small embedded table on Pipeline tab */
+  .runs-mini { border: 1px solid var(--rule); border-radius: 4px; background: var(--bg-1); overflow: hidden; }
+  .runs-mini .head {
+    padding: 6px 14px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--ink-faint); background: var(--bg-2);
+    border-bottom: 1px solid var(--rule); display: flex; justify-content: space-between;
+  }
+  .runs-mini .row {
+    display: grid; grid-template-columns: 80px 90px 70px 1fr 80px 60px;
+    gap: 10px; align-items: center; padding: 7px 14px;
+    border-bottom: 1px solid var(--rule); border-left: 3px solid var(--rule);
+    cursor: pointer; font-size: 12px;
+  }
+  .runs-mini .row:last-child { border-bottom: none; }
+  .runs-mini .row.done    { border-left-color: var(--done); }
+  .runs-mini .row.running { border-left-color: var(--running); }
+  .runs-mini .row.failed  { border-left-color: var(--failed); }
+  .runs-mini .row:hover { background: var(--bg-2); }
+  .runs-mini .row .runid { font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); }
+  .runs-mini .row .kind { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.04em; }
+  .runs-mini .row.done    .kind { color: var(--done); }
+  .runs-mini .row.running .kind { color: var(--running); }
+  .runs-mini .row.failed  .kind { color: var(--failed); }
+  .runs-mini .row .status { font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); }
+  .runs-mini .row .desc { color: var(--ink-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .runs-mini .row .when, .runs-mini .row .dur { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); text-align: right; }
+  .runs-mini-recovery {
+    grid-column: 1 / -1;
+    padding: 4px 14px 8px 24px;
+    display: flex; gap: 6px; align-items: center;
+    font-size: 11px; color: var(--ink-muted);
+  }
+  .runs-mini-recovery .hint { color: var(--ink-faint); margin-right: 8px; }
+
+  /* Section headers */
+  .section-head { display: flex; align-items: center; gap: 10px; margin: 18px 0 8px; }
+  .section-head h3 { margin: 0; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); font-family: var(--mono); font-weight: 500; }
+  .section-head .meta { font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); margin-left: auto; }
+
+  /* Chunks table */
+  .ctable { border: 1px solid var(--rule); border-radius: 4px; background: var(--bg-1); overflow: hidden; }
+  .ctable-head, .ctable-row { display: grid; gap: 10px; padding: 7px 14px; align-items: center; }
+  .ctable-head { grid-template-columns: 32px 60px 80px 1.2fr 1fr 60px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-faint); background: var(--bg-2); border-bottom: 1px solid var(--rule); }
+  .ctable-row { grid-template-columns: 32px 60px 80px 1.2fr 1fr 60px; border-bottom: 1px solid var(--rule); border-left: 3px solid transparent; font-size: 12px; cursor: pointer; }
+  .ctable-row:hover { background: var(--bg-2); border-left-color: var(--running); }
+  .ctable-row:last-child { border-bottom: none; }
+  .ctable-row .idx { font-family: var(--mono); color: var(--ink-faint); font-size: 11px; }
+  .ctable-row .dim { font-family: var(--mono); font-size: 10.5px; color: var(--accent2); }
+  .ctable-row .lines { font-family: var(--mono); font-size: 11px; color: var(--ink); }
+  .ctable-row .preview { color: var(--ink-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ctable-row .kw { display: flex; gap: 3px; flex-wrap: wrap; }
+  .ctable-row .kw span { font-family: var(--mono); font-size: 10px; padding: 1px 5px; border-radius: 2px; background: var(--bg-3); color: var(--ink-muted); }
+  .ctable-row .src { font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); text-align: right; }
+
+  /* Tag-suggestion review bar — sits above the suggestion list and
+   * carries the bulk Accept-all-high-confidence affordance plus
+   * counts. Inline Accept/Dismiss live on each row so the user
+   * doesn't have to dive into the inspector for every decision. */
+  .review-bar {
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 12px; margin-bottom: 8px;
+    border: 1px solid var(--rule); border-radius: 4px;
+    background: var(--bg-1); font-size: 12px;
+  }
+  .review-bar .stat { color: var(--ink-muted); font-family: var(--mono); font-size: 11.5px; }
+  .review-bar .stat b { color: var(--ink); }
+  .review-bar .spacer { flex: 1; }
+
+  .seg-actions {
+    display: inline-flex; gap: 4px; margin-left: auto;
+  }
+  .seg-action {
+    border: 1px solid var(--rule); background: transparent; color: var(--ink-faint);
+    padding: 2px 8px; border-radius: 3px; font-size: 11px; font-family: inherit; cursor: pointer;
+  }
+  .seg-action:hover { color: var(--ink); border-color: var(--ink-faint); }
+  .seg-action.accept:hover { color: var(--running); border-color: var(--running); }
+  .seg-action.dismiss:hover { color: var(--failed); border-color: var(--failed); }
+
+  /* No-tags empty state for note_classify */
+  .empty-state {
+    border: 1px dashed var(--rule-strong); border-radius: 6px;
+    padding: 22px 18px; background: var(--bg-1);
+    text-align: center; color: var(--ink-muted);
+  }
+  .empty-state h3 { margin: 0 0 6px; font-size: 13px; color: var(--ink); font-weight: 500; }
+  .empty-state p { margin: 0 0 12px; font-size: 12px; line-height: 1.55; }
+
+  /* Segments rows (chunk_enrich output) */
+  .seg-list { display: flex; flex-direction: column; gap: 6px; }
+  .seg { border: 1px solid var(--rule); border-left: 3px solid var(--done); border-radius: 4px; background: var(--bg-1); padding: 10px 14px; cursor: pointer; }
+  .seg:hover { background: var(--bg-2); }
+  .seg-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+  .chip { display: inline-flex; padding: 1px 7px; border-radius: 3px; font-size: 10.5px; }
+  .chip-tag    { background: var(--done-bg);    color: var(--done); font-family: var(--mono); }
+  .chip-second { background: var(--bg-3);       color: var(--ink-muted); font-family: var(--mono); }
+  .chip-user   { background: var(--accent2-bg); color: var(--accent2); font-family: var(--mono); }
+  .seg-lines { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--ink-faint); }
+  .seg-conf  { font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); }
+  .seg-summary { color: var(--ink-muted); font-size: 12.5px; line-height: 1.55; }
+  .seg-kw { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
+  .seg-kw span { font-family: var(--mono); font-size: 10px; padding: 1px 5px; background: var(--bg-3); color: var(--ink-muted); border-radius: 2px; }
+  .seg.tag-suggestion { border-left-color: var(--accent2); }
+
+  /* Related (graph_topology output) */
+  .related-list { display: flex; flex-direction: column; gap: 4px; }
+  .rel-row {
+    display: grid; grid-template-columns: 1fr auto auto;
+    align-items: center; gap: 12px; padding: 9px 14px;
+    border: 1px solid var(--rule); border-left: 3px solid var(--accent2);
+    border-radius: 4px; background: var(--bg-1); cursor: pointer;
+  }
+  .rel-row:hover { background: var(--bg-2); }
+  .rel-row .rel-name { color: var(--ink); font-size: 13px; }
+  .rel-row .rel-evidence { color: var(--ink-muted); font-size: 11.5px; margin-top: 2px; }
+  .rel-row .rel-evidence .pill { font-family: var(--mono); font-size: 10px; padding: 1px 5px; background: var(--bg-3); color: var(--ink-faint); border-radius: 2px; margin-right: 4px; }
+  .rel-row .rel-type {
+    font-family: var(--mono); font-size: 10px; padding: 2px 6px; border-radius: 2px;
+    color: var(--accent2); background: var(--accent2-bg); letter-spacing: 0.04em;
+  }
+  .rel-row .rel-score { font-family: var(--mono); font-size: 12px; color: var(--ink); }
+
+  /* Graph (workspace) — small subordinate panel under Related */
+  .graph-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: var(--bg-1); border: 1px solid var(--rule); border-radius: 4px; margin-bottom: 14px; }
+  .graph-head .stats { font-family: var(--mono); font-size: 11.5px; color: var(--ink-muted); }
+  .graph-head .stats b { color: var(--ink); }
+  .graph-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .graph-section { border: 1px solid var(--rule); border-radius: 4px; background: var(--bg-1); overflow: hidden; }
+  .graph-section h4 { margin: 0; padding: 7px 14px; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-faint); font-family: var(--mono); background: var(--bg-2); border-bottom: 1px solid var(--rule); font-weight: 500; }
+  .gnode { display: grid; grid-template-columns: 1.2fr 60px 1fr 36px; align-items: center; gap: 10px; padding: 6px 14px; border-bottom: 1px solid var(--rule); font-size: 12px; }
+  .gnode:last-child { border-bottom: none; }
+  .gnode:hover { background: var(--bg-2); }
+  .gnode .gname { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .gnode .gtype { font-family: var(--mono); font-size: 10px; color: var(--ink-faint); text-transform: lowercase; }
+  .gnode .gbar { display: block; height: 4px; border-radius: 2px; background: var(--bg-3); overflow: hidden; }
+  .gnode .gbar-fill { display: block; height: 100%; background: var(--accent2); }
+  .gnode .gcount { font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); text-align: right; }
+  .gedge { display: grid; grid-template-columns: 1fr auto 1fr 50px; align-items: center; gap: 10px; padding: 6px 14px; border-bottom: 1px solid var(--rule); font-size: 12px; }
+  .gedge:last-child { border-bottom: none; }
+  .gedge:hover { background: var(--bg-2); }
+  .gedge .gfrom, .gedge .gto { color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .gedge .gto { text-align: right; }
+  .gedge .grel { font-family: var(--mono); font-size: 10px; padding: 1px 6px; background: var(--bg-3); border-radius: 999px; color: var(--ink-muted); }
+  .gedge .gw { font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); text-align: right; }
+
+  /* Runs page — full processing run history */
+  .ejob { border: 1px solid var(--rule); border-left: 3px solid var(--done); border-radius: 4px; background: var(--bg-1); margin-bottom: 8px; overflow: hidden; }
+  .ejob.failed  { border-left-color: var(--failed); }
+  .ejob.running { border-left-color: var(--running); }
+  .ejob-head {
+    display: grid; grid-template-columns: auto 100px 80px 1fr 100px 90px 24px;
+    gap: 12px; align-items: center; padding: 9px 14px; cursor: pointer;
+  }
+  .ejob-head:hover { background: var(--bg-2); }
+  .ejob-head .id { font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); }
+  .ejob-head .kind { font-family: var(--mono); font-size: 10.5px; color: var(--ink); }
+  .ejob-head .status { font-family: var(--mono); font-size: 10.5px; }
+  .ejob.done    .ejob-head .status { color: var(--done); }
+  .ejob.running .ejob-head .status { color: var(--running); }
+  .ejob.failed  .ejob-head .status { color: var(--failed); }
+  .ejob-head .desc { color: var(--ink); }
+  .ejob-head .when, .ejob-head .dur { font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); text-align: right; }
+  .ejob-head .caret { color: var(--ink-faint); }
+  .ejob-body { display: none; padding: 10px 14px 14px 28px; background: var(--bg-2); border-top: 1px solid var(--rule); }
+  .ejob.expanded .ejob-body { display: block; }
+  .ejob-body .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; font-family: var(--mono); font-size: 11px; }
+  .ejob-body dt { color: var(--ink-faint); }
+  .ejob-body dd { margin: 0; color: var(--ink); }
+  .ejob-body h5 { margin: 12px 0 4px; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-faint); font-family: var(--mono); font-weight: 500; }
+  .batches { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
+  .batches span { width: 22px; height: 18px; display: inline-flex; align-items: center; justify-content: center; font-family: var(--mono); font-size: 9.5px; color: var(--ink-faint); background: var(--bg-3); border-radius: 2px; }
+  .batches span.ok   { background: var(--done-bg); color: var(--done); }
+  .batches span.fail { background: var(--failed-bg); color: var(--failed); }
+  .batches span.run  { background: var(--running-bg); color: var(--running); animation: dim 1.4s ease-in-out infinite; }
+
+  /* Raw view */
+  .raw { background: var(--bg); padding: 14px 0; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; }
+  .raw-line { display: grid; grid-template-columns: 60px 1fr; padding: 0 16px; color: var(--ink); white-space: pre-wrap; word-break: break-word; }
+  .raw-line .lineno { text-align: right; padding-right: 14px; color: var(--ink-faint); user-select: none; }
+  .raw-line.flash { background: var(--running-bg); animation: rawflash 1.6s ease-out 1 both; }
+  @keyframes rawflash { 0% { background: var(--running-bg); } 100% { background: transparent; } }
+
+  /* Inspector */
+  .inspector { border-left: 1px solid var(--rule); background: var(--bg-1); display: flex; flex-direction: column; min-width: 0; }
+  .inspector-head { padding: 12px 16px; border-bottom: 1px solid var(--rule); display: flex; align-items: center; gap: 10px; }
+  .inspector-head .title { font-size: 13px; font-weight: 500; flex: 1; }
+  .inspector-head .sub { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); margin-top: 2px; }
+  .inspector-body { padding: 14px 16px; overflow: auto; flex: 1; font-size: 12px; }
+  .inspector-body .kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; font-family: var(--mono); font-size: 11px; }
+  .inspector-body dt { color: var(--ink-faint); }
+  .inspector-body dd { margin: 0; color: var(--ink); }
+  .inspector-body h4 { font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); margin: 14px 0 6px; font-weight: 500; }
+  .badge { display: inline-flex; padding: 1px 6px; border-radius: 3px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.04em; }
+  .badge.done    { background: var(--done-bg);    color: var(--done); }
+  .badge.running { background: var(--running-bg); color: var(--running); }
+  .badge.failed  { background: var(--failed-bg);  color: var(--failed); }
+  .badge.warn    { background: var(--warn-bg);    color: var(--warn); }
+  .insp-body { display: none; }
+  .insp-body.active { display: block; }
+  .logbox { background: var(--bg); border: 1px solid var(--rule); border-radius: 4px; padding: 10px 12px; font-family: var(--mono); font-size: 10.5px; color: var(--ink-muted); margin-top: 4px; max-height: 220px; overflow: auto; white-space: pre-wrap; }
+
+  /* Stage detail modal — opens on click of any stage row in Pipeline.
+   * Shows the cloud association (endpoint + run id), execution result
+   * with timing, tokens, batches grid, errors, and raw event log.
+   * Hand-off point: "Open run inspector" routes to the right panel. */
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+    display: none; align-items: center; justify-content: center; z-index: 100;
+    backdrop-filter: blur(2px);
+  }
+  .modal-overlay.show { display: flex; }
+  .modal {
+    width: min(720px, 92vw); max-height: 86vh; overflow: hidden;
+    background: var(--bg-1); border: 1px solid var(--rule-strong); border-radius: 8px;
+    display: flex; flex-direction: column;
+  }
+  .modal-head {
+    display: flex; align-items: center; gap: 12px; padding: 14px 18px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .modal-head .title { font-size: 14px; font-weight: 500; flex: 1; }
+  .modal-head .sub { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); margin-top: 3px; }
+  .modal-close { background: transparent; border: 1px solid var(--rule); color: var(--ink-faint); padding: 3px 8px; border-radius: 4px; font-size: 11px; }
+  .modal-close:hover { color: var(--ink); border-color: var(--ink-faint); }
+  .modal-body { padding: 16px 18px; overflow: auto; }
+  .modal-body section { margin-bottom: 18px; }
+  .modal-body section:last-child { margin-bottom: 0; }
+  .modal-body h5 {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--ink-faint);
+    margin: 0 0 6px; font-weight: 500;
+  }
+  .modal-body .kv { display: grid; grid-template-columns: 130px 1fr; gap: 5px 16px; font-family: var(--mono); font-size: 11px; }
+  .modal-body .kv dt { color: var(--ink-faint); }
+  .modal-body .kv dd { margin: 0; color: var(--ink); }
+  .modal-body .kv dd code {
+    font-family: var(--mono); font-size: 10.5px;
+    padding: 1px 6px; border-radius: 3px;
+    background: var(--bg-3); color: var(--ink); border: 1px solid var(--rule);
+  }
+  .modal-foot {
+    padding: 12px 18px; border-top: 1px solid var(--rule);
+    display: flex; gap: 8px; justify-content: flex-end; background: var(--bg);
+  }
+  .stage-row { cursor: pointer; }
+  .stage-row:hover { background: var(--bg-2); }
+
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <aside class="rail">
+    <div class="logo">SN</div>
+    <button class="rail-btn" title="Note">✎</button>
+    <button class="rail-btn active" title="Library">▦</button>
+    <div style="flex:1"></div>
+    <button class="rail-btn" title="Cloud">☁</button>
+    <button class="rail-btn" title="Settings">⚙</button>
+  </aside>
+
+  <aside class="tree">
+    <div class="tree-bar">
+      <input placeholder="filter…" />
+      <span class="pill">18</span>
+    </div>
+    <div class="tree-group" data-kind="notes">
+      <div class="tree-group-name"><span>Notes</span></div>
+      <div class="group-helpers">
+        <button class="group-helper" data-action="select-all" data-kind="notes">Select all (4)</button>
+        <button class="group-helper" data-action="invert" data-kind="notes">Invert</button>
+      </div>
+
+      <div class="tree-row active" data-kind="notes">
+        <span class="check"><input type="checkbox" /></span>
+        <span class="name">2026-04 reading log</span>
+        <span class="meta-right"><span>12k</span><span>2h</span></span>
+        <span class="bits" title="chunk_embed · chunk_enrich · graph_topology · note_classify">
+          <span class="dots">
+            <span class="on"></span><span class="run"></span><span></span><span></span>
+          </span>
+          <span class="label">enriching</span>
+        </span>
+      </div>
+      <div class="tree-row" data-kind="notes">
+        <span class="check"><input type="checkbox" /></span>
+        <span class="name">stand-up notes</span>
+        <span class="meta-right"><span>4k</span><span>1d</span></span>
+        <span class="bits">
+          <span class="dots"><span class="on"></span><span class="on"></span><span class="gtop"></span><span class="on"></span></span>
+          <span class="label">all done</span>
+        </span>
+      </div>
+      <div class="tree-row" data-kind="notes">
+        <span class="check"><input type="checkbox" /></span>
+        <span class="name">research scratchpad</span>
+        <span class="meta-right"><span>22k</span><span>5d</span></span>
+        <span class="bits">
+          <span class="dots"><span></span><span></span><span></span><span></span></span>
+          <span class="label">not processed</span>
+        </span>
+      </div>
+      <div class="tree-row" data-kind="notes">
+        <span class="check"><input type="checkbox" /></span>
+        <span class="name">credentials draft</span>
+        <span class="meta-right"><span>2k</span><span>7d</span></span>
+        <span class="bits">
+          <span class="dots"><span class="on"></span><span class="fail"></span><span></span><span></span></span>
+          <span class="label" style="color:var(--failed)">enrich failed</span>
+        </span>
+      </div>
+    </div>
+
+    <div class="tree-group" data-kind="wiki">
+      <div class="tree-group-name"><span>Wiki</span></div>
+      <div class="group-helpers">
+        <button class="group-helper" data-action="select-all" data-kind="wiki">Select all (3)</button>
+        <button class="group-helper" data-action="invert" data-kind="wiki">Invert</button>
+      </div>
+
+      <div class="tree-row" data-kind="wiki">
+        <span class="check"><input type="checkbox" /></span>
+        <span class="name">attention is all you need</span>
+        <span class="meta-right"><span>38k</span><span>3d</span></span>
+        <span class="bits">
+          <span class="dots"><span class="on"></span><span class="on"></span><span class="gtop"></span></span>
+          <span class="label">all done</span>
+        </span>
+      </div>
+      <div class="tree-row" data-kind="wiki">
+        <span class="check"><input type="checkbox" /></span>
+        <span class="name">postgres pgvector</span>
+        <span class="meta-right"><span>14k</span><span>12d</span></span>
+        <span class="bits">
+          <span class="dots"><span class="on"></span><span></span><span></span></span>
+          <span class="label">embed only</span>
+        </span>
+      </div>
+      <div class="tree-row" data-kind="wiki">
+        <span class="check"><input type="checkbox" /></span>
+        <span class="name">langgraph internals</span>
+        <span class="meta-right"><span>28k</span><span>28d</span></span>
+        <span class="bits">
+          <span class="dots"><span></span><span></span><span></span></span>
+          <span class="label">not processed</span>
+        </span>
+      </div>
+    </div>
+
+    <div class="tree-footer">
+      <span>cloud · ok</span>
+      <span>v3.6.2</span>
+    </div>
+  </aside>
+
+  <main class="content" data-active-kind="notes">
+
+    <div class="topbar">
+      <div class="doc-name">2026-04 reading log</div>
+      <div class="meta">12k · 2h ago</div>
+      <div class="actions">
+        <span class="view-toggle" id="view-toggle">
+          <button class="active" data-view="kn">KN</button>
+          <button data-view="raw">Raw</button>
+        </span>
+        <button class="btn" id="theme-toggle" title="Toggle light / dark theme">☀ Light</button>
+        <button class="btn">Copy ref</button>
+        <button class="btn danger">Delete</button>
+      </div>
+    </div>
+
+    <!-- Bulk action bar — kind-locked. Multi-select can only span
+         documents of the same kind; the kind drives which actions
+         appear. Topology and graph rebuilds are workspace-level
+         (not per-doc bulk) so they stay out of this row. -->
+    <div class="bulk-bar" id="bulk-bar">
+      <span class="label">BULK</span>
+      <span class="kind-pill" id="bulk-kind-pill">notes</span>
+      <span class="count" id="bulk-count">3 selected</span>
+      <span class="lock-hint">same kind only</span>
+      <span class="spacer"></span>
+      <span class="actions" id="bulk-actions" data-kind="notes">
+        <button class="btn for-notes for-doc">Embed</button>
+        <button class="btn primary for-notes for-doc">Enrich</button>
+        <button class="btn for-notes">Tag-classify</button>
+        <button class="btn primary for-wiki">Build abstract</button>
+        <button class="btn for-wiki">Embed</button>
+      </span>
+      <button class="clear-btn" id="bulk-clear">Clear</button>
+    </div>
+
+    <nav class="kn-tabs" id="kn-tabs">
+      <button class="active" data-tab="pipeline">Pipeline</button>
+      <button data-tab="chunks">Chunks <span class="count">12</span></button>
+      <button class="for-notes for-doc" data-tab="segments">Segments <span class="count">5</span></button>
+      <button class="for-notes" data-tab="tags">Tag suggestions <span class="count">7</span></button>
+      <button class="for-wiki" data-tab="chapters">Chapters <span class="count">8</span></button>
+      <button data-tab="graph">Graph <span class="count">6</span></button>
+    </nav>
+
+    <!-- ════════════ PIPELINE — grouped by category ════════════ -->
+    <section class="tabbody pipeline active" id="tab-pipeline">
+
+      <div class="stage-table">
+
+        <div class="stage-group">
+          <div class="stage-group-head">
+            <span class="gname">Chunk</span>
+            <span class="applies-to">all kinds · embed precedes enrich</span>
+          </div>
+
+          <div class="stage-row done" data-kind="chunk_embed">
+            <div class="letter">E</div>
+            <div class="stage-meta">
+              <span class="stage-name">Embed</span>
+              <span class="llm-mark fast">FAST</span>
+              <span class="stage-status">done</span>
+              <span class="summary">12 chunks · dim 1024</span>
+            </div>
+            <div class="stage-sub">last run 2h ago · 1.2s · cloud_embed</div>
+            <div class="stage-count">12</div>
+            <div class="stage-action"><button class="btn">Re-embed</button></div>
+          </div>
+
+          <div class="stage-row running" data-kind="chunk_enrich">
+            <div class="letter">R</div>
+            <div class="stage-meta">
+              <span class="stage-name">Enrich</span>
+              <span class="llm-mark llm">LLM · TOKENS</span>
+              <span class="stage-status">running</span>
+              <span class="summary">classifying via cloud_pool</span>
+            </div>
+            <div class="stage-sub">started 4.2s ago · deepseek-chat · 1,243 tokens so far</div>
+            <div class="stage-count">6 / 12</div>
+            <div class="stage-action"><button class="btn" disabled>Running…</button></div>
+          </div>
+
+          <div class="stage-live">
+            <span class="arrow">→</span>Classifying chunks · batch 7 in flight · 60s provider timeout
+          </div>
+
+          <div class="conc-strip">
+            <span class="bars" title="6 done · 4 in-flight · 2 queued">
+              <span class="done"></span><span class="done"></span><span class="done"></span>
+              <span class="done"></span><span class="done"></span><span class="done"></span>
+              <span class="in-flight"></span><span class="in-flight"></span>
+              <span class="in-flight"></span><span class="in-flight"></span>
+              <span></span><span></span>
+            </span>
+            <span class="stat">conc 4 / 64 · ~6s remaining<span class="secondary">tokens 892 in · 351 out</span></span>
+          </div>
+        </div>
+
+        <!-- Wiki / Note kind-specific group sits between Chunk and
+             Graph because Graph (topology) consumes whatever upstream
+             enrich/abstract/classify produced. Reading order matches
+             dependency order: chunk → kind-specific → graph. -->
+        <div class="stage-group for-wiki">
+          <div class="stage-group-head">
+            <span class="gname">Wiki</span>
+            <span class="applies-to">wiki kind only · per-chapter summaries</span>
+          </div>
+          <div class="stage-row done" data-kind="wiki_abstract">
+            <div class="letter">A</div>
+            <div class="stage-meta">
+              <span class="stage-name">Abstract</span>
+              <span class="llm-mark llm">LLM · TOKENS</span>
+              <span class="stage-status">done</span>
+              <span class="summary">8 chapters · 6 summarized · 2 pending</span>
+            </div>
+            <div class="stage-sub">writes <code style="font-family:var(--mono);font-size:10.5px;color:var(--ink)">wiki_chapters.summary</code> · view results in the Chapters tab</div>
+            <div class="stage-count">6 / 8</div>
+            <div class="stage-action"><button class="btn">Re-build</button></div>
+          </div>
+        </div>
+
+        <div class="stage-group for-notes">
+          <div class="stage-group-head">
+            <span class="gname">Note</span>
+            <span class="applies-to">note kind only · maps line ranges → your custom tags</span>
+          </div>
+          <div class="stage-row" data-kind="note_classify">
+            <div class="letter">C</div>
+            <div class="stage-meta">
+              <span class="stage-name">Tag-classify</span>
+              <span class="llm-mark custom">LLM · CUSTOM TAGS</span>
+              <span class="stage-status">not run</span>
+              <span class="summary">12 user tags loaded · ~1.5k tokens est.</span>
+            </div>
+            <div class="stage-sub">writes <code style="font-family:var(--mono);font-size:10.5px;color:var(--ink)">note_tag_suggestions</code> for review · disabled if no custom tags exist</div>
+            <div class="stage-count">—</div>
+            <div class="stage-action"><button class="btn">Run tag-classify</button></div>
+          </div>
+        </div>
+
+        <div class="stage-group">
+          <div class="stage-group-head">
+            <span class="gname">Graph</span>
+            <span class="applies-to">per-doc · depends on chunk + kind-specific output above</span>
+          </div>
+          <div class="stage-row stale" data-kind="graph_topology">
+            <div class="letter">T</div>
+            <div class="stage-meta">
+              <span class="stage-name">Topology</span>
+              <span class="llm-mark fast">FAST · NO LLM</span>
+              <span class="stage-status">stale</span>
+              <span class="summary">6 links · last run 2h ago · enrich since changed</span>
+            </div>
+            <div class="stage-sub">writes <code style="font-family:var(--mono);font-size:10.5px;color:var(--ink)">document_links</code> for this doc · semantic + shared-tag + shared-entity. <b>Update</b> when the upstream changes.</div>
+            <div class="stage-count">6</div>
+            <div class="stage-action"><button class="btn primary">Update topology</button></div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Mini run history -->
+      <div class="section-head">
+        <h3>Recent runs</h3>
+        <span class="meta">9 total · click to expand</span>
+      </div>
+
+      <div class="runs-mini">
+        <div class="head"><span>id · kind · status · detail · when · dur</span></div>
+        <div class="row running">
+          <span class="runid">run_8c2f4a</span>
+          <span class="kind">CHUNK_ENRICH</span>
+          <span class="status">running</span>
+          <span class="desc">classify 6/12 batches · cloud_pool · 1,243 tokens</span>
+          <span class="when">just now</span>
+          <span class="dur">4.2s</span>
+        </div>
+        <div class="row done">
+          <span class="runid">run_71ad03</span>
+          <span class="kind">CHUNK_EMBED</span>
+          <span class="status">done</span>
+          <span class="desc">12 chunks · dim 1024 · cloud_embed</span>
+          <span class="when">2h ago</span>
+          <span class="dur">1.2s</span>
+        </div>
+        <div class="row done">
+          <span class="runid">run_5abc12</span>
+          <span class="kind">GRAPH_TOPOLOGY</span>
+          <span class="status">done</span>
+          <span class="desc">6 doc-doc links · semantic + shared_entity</span>
+          <span class="when">2h ago</span>
+          <span class="dur">320ms</span>
+        </div>
+        <div class="row done">
+          <span class="runid">run_2f88e0</span>
+          <span class="kind">CHUNK_ENRICH</span>
+          <span class="status">done</span>
+          <span class="desc">8 segments · 1,108 tokens</span>
+          <span class="when">1d ago</span>
+          <span class="dur">8.3s</span>
+        </div>
+        <div class="row failed">
+          <span class="runid">run_4d09f1</span>
+          <span class="kind">CHUNK_ENRICH</span>
+          <span class="status">failed</span>
+          <span class="desc">httpx.ReadTimeout · deepseek-chat (60s · max_concurrency 64)</span>
+          <span class="when">2d ago</span>
+          <span class="dur">60s</span>
+          <div class="runs-mini-recovery" onclick="event.stopPropagation()">
+            <span class="hint">Provider timed out · try lowering concurrency or raising timeout</span>
+            <button class="btn">Retry</button>
+            <button class="btn">View error</button>
+            <button class="btn">Provider settings</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════════════ CHUNKS · 2 sections ════════════
+         Chunk pipeline produces TWO artefacts: vector embedding
+         (chunk_embed) and per-chunk enrichment overlay (keywords,
+         topic, entity count from chunk_enrich). Splitting the tab
+         into two tables makes it explicit which stage produced what.
+    -->
+    <section class="tabbody chunks-page" id="tab-chunks">
+
+      <div class="section-head">
+        <h3>Embedding · chunk_embed</h3>
+        <span class="meta">12 chunks · dim 1024 · ~3.7 KB total · cloud_embed</span>
+      </div>
+      <div class="ctable">
+        <div class="ctable-head" style="grid-template-columns: 32px 60px 80px 1fr 70px 60px;">
+          <div>#</div><div>Dim</div><div>Lines</div><div>Preview</div><div>Tokens</div><div style="text-align:right">Source</div>
+        </div>
+        <div class="ctable-row" style="grid-template-columns: 32px 60px 80px 1fr 70px 60px;">
+          <div class="idx">01</div><div class="dim">para</div><div class="lines">L1–L12</div>
+          <div class="preview">## Daily stand-up — backlog grooming, then quick syncs on auth migration…</div>
+          <div class="src">214</div>
+          <div class="src">d-1024</div>
+        </div>
+        <div class="ctable-row" style="grid-template-columns: 32px 60px 80px 1fr 70px 60px;">
+          <div class="idx">02</div><div class="dim">para</div><div class="lines">L13–L24</div>
+          <div class="preview">Action items: assigned auth migration to @lin, pgvector PoC to @kim…</div>
+          <div class="src">186</div>
+          <div class="src">d-1024</div>
+        </div>
+        <div class="ctable-row" style="grid-template-columns: 32px 60px 80px 1fr 70px 60px;">
+          <div class="idx">03</div><div class="dim">section</div><div class="lines">L25–L42</div>
+          <div class="preview">## pgvector deep-dive — IVF vs HNSW. Cosine vs L2 for sparse text…</div>
+          <div class="src">312</div>
+          <div class="src">d-1024</div>
+        </div>
+        <div class="ctable-row" style="grid-template-columns: 32px 60px 80px 1fr 70px 60px;">
+          <div class="idx">04</div><div class="dim">section</div><div class="lines">L43–L58</div>
+          <div class="preview">Index build time: 200k vectors → 4 min on m7g. ef_construction=128 sweet spot…</div>
+          <div class="src">258</div>
+          <div class="src">d-1024</div>
+        </div>
+        <div class="ctable-row" style="grid-template-columns: 32px 60px 80px 1fr 70px 60px;">
+          <div class="idx">05</div><div class="dim">para</div><div class="lines">L59–L70</div>
+          <div class="preview">## Reading: "Attention is all you need" — re-read of section 3.2…</div>
+          <div class="src">204</div>
+          <div class="src">d-1024</div>
+        </div>
+      </div>
+
+      <div class="section-head" style="margin-top: 22px;">
+        <h3>Enrichment overlay · chunk_enrich</h3>
+        <span class="meta">12 / 12 chunks enriched · 47 keywords · 18 entities · running…</span>
+      </div>
+      <div class="ctable">
+        <div class="ctable-head" style="grid-template-columns: 32px 80px 1fr 1.2fr 60px;">
+          <div>#</div><div>Lines</div><div>Topic</div><div>Keywords / entities</div><div style="text-align:right">Status</div>
+        </div>
+        <div class="ctable-row" style="grid-template-columns: 32px 80px 1fr 1.2fr 60px;">
+          <div class="idx">01</div><div class="lines">L1–L12</div>
+          <div class="preview">team standup</div>
+          <div class="kw"><span>stand-up</span><span>auth</span><span>blockers</span><span>@lin</span><span>@kim</span></div>
+          <div class="src" style="color:var(--done)">done</div>
+        </div>
+        <div class="ctable-row" style="grid-template-columns: 32px 80px 1fr 1.2fr 60px;">
+          <div class="idx">02</div><div class="lines">L13–L24</div>
+          <div class="preview">action items</div>
+          <div class="kw"><span>action-item</span><span>assignee</span><span>auth-migration</span></div>
+          <div class="src" style="color:var(--done)">done</div>
+        </div>
+        <div class="ctable-row" style="grid-template-columns: 32px 80px 1fr 1.2fr 60px;">
+          <div class="idx">03</div><div class="lines">L25–L42</div>
+          <div class="preview">pgvector internals</div>
+          <div class="kw"><span>pgvector</span><span>HNSW</span><span>cosine</span><span>memory</span></div>
+          <div class="src" style="color:var(--done)">done</div>
+        </div>
+        <div class="ctable-row" style="grid-template-columns: 32px 80px 1fr 1.2fr 60px;">
+          <div class="idx">04</div><div class="lines">L43–L58</div>
+          <div class="preview">index benchmarks</div>
+          <div class="kw"><span>index-build</span><span>benchmarking</span><span>m7g</span></div>
+          <div class="src" style="color:var(--running)">running</div>
+        </div>
+        <div class="ctable-row" style="grid-template-columns: 32px 80px 1fr 1.2fr 60px;">
+          <div class="idx">05</div><div class="lines">L59–L70</div>
+          <div class="preview">—</div>
+          <div class="kw" style="opacity:0.4">queued…</div>
+          <div class="src" style="color:var(--ink-faint)">queued</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════════════ SEGMENTS (chunk_enrich) — notes / doc only ════════════ -->
+    <section class="tabbody segs-page for-notes for-doc" id="tab-segments">
+
+      <div class="section-head">
+        <h3>Semantic segments · chunk_enrich</h3>
+        <span class="meta">5 segments · classified by LLM</span>
+      </div>
+
+      <div class="seg-list">
+        <div class="seg" onclick="jumpTo(1,18)">
+          <div class="seg-head">
+            <span class="chip chip-tag">work</span>
+            <span class="chip chip-second">meeting</span>
+            <span class="chip chip-second">action-item</span>
+            <span class="seg-conf">94%</span>
+            <span class="seg-lines">L1–L18</span>
+          </div>
+          <div class="seg-summary">Daily stand-up from Apr 2 — backlog grooming followed by syncs on the auth migration. Three blockers raised, two assigned with EOW targets.</div>
+          <div class="seg-kw"><span>stand-up</span><span>auth</span><span>blockers</span></div>
+        </div>
+        <div class="seg" onclick="jumpTo(19,42)">
+          <div class="seg-head">
+            <span class="chip chip-tag">learn</span>
+            <span class="chip chip-second">reading-notes</span>
+            <span class="seg-conf">88%</span>
+            <span class="seg-lines">L19–L42</span>
+          </div>
+          <div class="seg-summary">Notes from the pgvector deep-dive — IVF vs HNSW trade-offs, the cosine vs L2 distance choice for sparse text. Memory cost analysis.</div>
+          <div class="seg-kw"><span>pgvector</span><span>HNSW</span><span>cosine</span></div>
+        </div>
+        <div class="seg" onclick="jumpTo(43,70)">
+          <div class="seg-head">
+            <span class="chip chip-tag">learn</span>
+            <span class="chip chip-second">paper</span>
+            <span class="seg-conf">91%</span>
+            <span class="seg-lines">L43–L70</span>
+          </div>
+          <div class="seg-summary">Re-read of "Attention is all you need" section 3.2. Open question on flash-attention's softmax restructuring.</div>
+          <div class="seg-kw"><span>attention</span><span>transformers</span><span>flash-attn</span></div>
+        </div>
+        <div class="seg" onclick="jumpTo(71,82)">
+          <div class="seg-head">
+            <span class="chip chip-tag">life</span>
+            <span class="seg-conf">82%</span>
+            <span class="seg-lines">L71–L82</span>
+          </div>
+          <div class="seg-summary">5km 跑步记录，配速 6:22，周累计 18km。RPE 7。</div>
+          <div class="seg-kw"><span>running</span><span>training</span></div>
+        </div>
+        <div class="seg" onclick="jumpTo(83,98)">
+          <div class="seg-head">
+            <span class="chip chip-tag">todo</span>
+            <span class="seg-conf">96%</span>
+            <span class="seg-lines">L83–L98</span>
+          </div>
+          <div class="seg-summary">周末待办：健身房续签、给 @yan 打电话、备份照片到 NAS。</div>
+          <div class="seg-kw"><span>weekend</span><span>backup</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════════════ TAG SUGGESTIONS (note_classify) — notes only ════════════
+         Review queue: inline Accept/Dismiss on each row, plus a top
+         bar for the bulk "Accept all high-confidence" shortcut. Empty
+         state appears when the workspace has no custom tags yet. -->
+    <section class="tabbody tags-page for-notes" id="tab-tags">
+
+      <div class="section-head">
+        <h3>Tag suggestions · note_classify</h3>
+        <span class="meta">12 user tags loaded · 5 pending review · 0 accepted · 0 dismissed</span>
+      </div>
+
+      <div class="review-bar">
+        <span class="stat"><b>5</b> pending</span>
+        <span class="stat">·</span>
+        <span class="stat"><b>4</b> ≥ 90% confidence</span>
+        <span class="spacer"></span>
+        <button class="btn">Dismiss all</button>
+        <button class="btn primary">Accept all ≥ 90%</button>
+      </div>
+
+      <div class="seg-list">
+        <div class="seg tag-suggestion">
+          <div class="seg-head">
+            <span class="chip chip-user">@meeting</span>
+            <span class="seg-conf">96%</span>
+            <span class="seg-lines">L1–L18</span>
+            <span class="seg-actions">
+              <button class="seg-action accept" onclick="event.stopPropagation()">✓ Accept</button>
+              <button class="seg-action dismiss" onclick="event.stopPropagation()">✗ Dismiss</button>
+            </span>
+          </div>
+          <div class="seg-summary" onclick="jumpTo(1,18)">Stand-up notes — matches your "@meeting" custom tag (description: "scheduled syncs with the team").</div>
+        </div>
+        <div class="seg tag-suggestion">
+          <div class="seg-head">
+            <span class="chip chip-user">#blocker</span>
+            <span class="seg-conf">92%</span>
+            <span class="seg-lines">L9–L12</span>
+            <span class="seg-actions">
+              <button class="seg-action accept" onclick="event.stopPropagation()">✓ Accept</button>
+              <button class="seg-action dismiss" onclick="event.stopPropagation()">✗ Dismiss</button>
+            </span>
+          </div>
+          <div class="seg-summary" onclick="jumpTo(9,12)">Three open blockers — matches your "#blocker" tag (description: "tracked impediments").</div>
+        </div>
+        <div class="seg tag-suggestion">
+          <div class="seg-head">
+            <span class="chip chip-user">#deepdive</span>
+            <span class="seg-conf">85%</span>
+            <span class="seg-lines">L19–L42</span>
+            <span class="seg-actions">
+              <button class="seg-action accept" onclick="event.stopPropagation()">✓ Accept</button>
+              <button class="seg-action dismiss" onclick="event.stopPropagation()">✗ Dismiss</button>
+            </span>
+          </div>
+          <div class="seg-summary" onclick="jumpTo(19,42)">pgvector deep-dive — matches your "#deepdive" tag (description: "long-form research notes").</div>
+        </div>
+        <div class="seg tag-suggestion">
+          <div class="seg-head">
+            <span class="chip chip-user">@paper</span>
+            <span class="seg-conf">90%</span>
+            <span class="seg-lines">L43–L70</span>
+            <span class="seg-actions">
+              <button class="seg-action accept" onclick="event.stopPropagation()">✓ Accept</button>
+              <button class="seg-action dismiss" onclick="event.stopPropagation()">✗ Dismiss</button>
+            </span>
+          </div>
+          <div class="seg-summary" onclick="jumpTo(43,70)">Reading log entry on "Attention is all you need" — matches "@paper".</div>
+        </div>
+        <div class="seg tag-suggestion">
+          <div class="seg-head">
+            <span class="chip chip-user">#todo</span>
+            <span class="seg-conf">98%</span>
+            <span class="seg-lines">L83–L98</span>
+            <span class="seg-actions">
+              <button class="seg-action accept" onclick="event.stopPropagation()">✓ Accept</button>
+              <button class="seg-action dismiss" onclick="event.stopPropagation()">✗ Dismiss</button>
+            </span>
+          </div>
+          <div class="seg-summary" onclick="jumpTo(83,98)">Weekend TODO list — matches your "#todo" tag.</div>
+        </div>
+      </div>
+
+      <!-- Demo: empty state when no custom tags exist. Toggle by
+           the data-empty attribute on this section. -->
+      <div class="empty-state" style="display:none" id="tags-empty-state">
+        <h3>No custom tags yet</h3>
+        <p>Note classify needs at least one custom tag to know what to look for. Create tags in the workspace settings, then run <code style="font-family:var(--mono);font-size:11px;color:var(--ink)">note_classify</code> from the Pipeline tab.</p>
+        <button class="btn primary">Open tag settings</button>
+      </div>
+    </section>
+
+    <!-- ════════════ CHAPTERS (wiki_abstract) — wiki only ════════════
+         Replaces Segments + Tag-suggestions for wiki kind. Each row
+         is a chapter with its summary + extracted keywords; click
+         scrolls Raw view to the chapter's line range. -->
+    <section class="tabbody chapters-page for-wiki" id="tab-chapters">
+      <div class="section-head">
+        <h3>Chapters · wiki_abstract</h3>
+        <span class="meta">8 chapters · 6 summarized · 2 pending · last 3d ago</span>
+      </div>
+      <div class="seg-list">
+        <div class="seg chapter" onclick="jumpTo(1,40)">
+          <div class="seg-head">
+            <span class="chip chip-tag">H1</span>
+            <span class="chip chip-second">introduction</span>
+            <span class="seg-conf">summarized</span>
+            <span class="seg-lines">L1–L40</span>
+          </div>
+          <div class="seg-summary"><b>Introduction.</b> Sequence transduction has historically been dominated by RNNs and CNNs. The paper proposes Transformer — a model relying entirely on attention, dispensing with recurrence and convolution.</div>
+          <div class="seg-kw"><span>self-attention</span><span>transformer</span><span>RNN</span><span>encoder-decoder</span></div>
+        </div>
+
+        <div class="seg chapter" onclick="jumpTo(41,98)">
+          <div class="seg-head">
+            <span class="chip chip-tag">H2</span>
+            <span class="chip chip-second">background</span>
+            <span class="seg-conf">summarized</span>
+            <span class="seg-lines">L41–L98</span>
+          </div>
+          <div class="seg-summary"><b>Background.</b> Reviews ByteNet, ConvS2S, and extended Neural GPU — all of which use convolution to relate distant positions in linear or log time. Self-attention reduces this to a constant.</div>
+          <div class="seg-kw"><span>ByteNet</span><span>ConvS2S</span><span>Extended Neural GPU</span><span>self-attention</span></div>
+        </div>
+
+        <div class="seg chapter" onclick="jumpTo(99,180)">
+          <div class="seg-head">
+            <span class="chip chip-tag">H2</span>
+            <span class="chip chip-second">model architecture</span>
+            <span class="seg-conf">summarized</span>
+            <span class="seg-lines">L99–L180</span>
+          </div>
+          <div class="seg-summary"><b>Model architecture.</b> Stacked encoder/decoder of N=6 layers. Each encoder has multi-head self-attention + position-wise FFN; decoder adds cross-attention. Residual connections + layer norm throughout.</div>
+          <div class="seg-kw"><span>encoder</span><span>decoder</span><span>multi-head</span><span>residual</span><span>layer-norm</span></div>
+        </div>
+
+        <div class="seg chapter" onclick="jumpTo(181,240)">
+          <div class="seg-head">
+            <span class="chip chip-tag">H3</span>
+            <span class="chip chip-second">attention</span>
+            <span class="seg-conf">summarized</span>
+            <span class="seg-lines">L181–L240</span>
+          </div>
+          <div class="seg-summary"><b>Scaled dot-product + multi-head attention.</b> Q·Kᵀ/√dₖ then softmax. Multi-head splits Q,K,V into h projections to attend to different subspaces in parallel. Pivotal to the paper's contribution.</div>
+          <div class="seg-kw"><span>scaled-dot-product</span><span>multi-head</span><span>QKV</span><span>softmax</span></div>
+        </div>
+
+        <div class="seg chapter" onclick="jumpTo(241,300)">
+          <div class="seg-head">
+            <span class="chip chip-tag">H2</span>
+            <span class="chip chip-second">training</span>
+            <span class="seg-conf">summarized</span>
+            <span class="seg-lines">L241–L300</span>
+          </div>
+          <div class="seg-summary"><b>Training.</b> Adam optimizer, custom learning-rate schedule (warmup_steps=4000), label smoothing 0.1, dropout 0.1. WMT'14 En-De and En-Fr datasets.</div>
+          <div class="seg-kw"><span>adam</span><span>warmup</span><span>label-smoothing</span><span>WMT</span></div>
+        </div>
+
+        <div class="seg chapter" onclick="jumpTo(301,360)">
+          <div class="seg-head">
+            <span class="chip chip-tag">H2</span>
+            <span class="chip chip-second">results</span>
+            <span class="seg-conf">summarized</span>
+            <span class="seg-lines">L301–L360</span>
+          </div>
+          <div class="seg-summary"><b>Results.</b> 28.4 BLEU on En-De, 41.0 BLEU on En-Fr — state-of-the-art at less training cost than the prior best. Generalizes to constituency parsing.</div>
+          <div class="seg-kw"><span>BLEU</span><span>WMT-14</span><span>state-of-the-art</span></div>
+        </div>
+
+        <div class="seg chapter" onclick="jumpTo(361,420)">
+          <div class="seg-head">
+            <span class="chip chip-tag">H2</span>
+            <span class="chip chip-second">discussion</span>
+            <span class="seg-conf" style="color:var(--ink-faint)">pending</span>
+            <span class="seg-lines">L361–L420</span>
+          </div>
+          <div class="seg-summary" style="opacity:0.55">Pending abstract — re-run wiki_abstract from the Pipeline tab.</div>
+        </div>
+
+        <div class="seg chapter" onclick="jumpTo(421,460)">
+          <div class="seg-head">
+            <span class="chip chip-tag">H2</span>
+            <span class="chip chip-second">conclusion</span>
+            <span class="seg-conf" style="color:var(--ink-faint)">pending</span>
+            <span class="seg-lines">L421–L460</span>
+          </div>
+          <div class="seg-summary" style="opacity:0.55">Pending abstract — re-run wiki_abstract from the Pipeline tab.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════════════ GRAPH · this doc + workspace ════════════
+         graph_topology produces both (a) this doc's links to other
+         docs and (b) the workspace-wide knowledge graph. Former are
+         the user's "触类旁通" surface — primary; latter is the
+         broader stats — secondary. Both stack here. -->
+    <section class="tabbody graph-page" id="tab-graph">
+
+      <!-- Per-doc related — primary section -->
+      <div class="section-head">
+        <h3>This document · related</h3>
+        <span class="meta">6 links · last computed 2h ago · semantic + shared-entity + shared-tag + same-topic</span>
+      </div>
+
+      <div class="related-list">
+        <div class="rel-row">
+          <div>
+            <div class="rel-name">postgres pgvector</div>
+            <div class="rel-evidence">
+              <span class="pill">shared entities</span> pgvector · HNSW · cosine sim
+            </div>
+          </div>
+          <span class="rel-type">SHARED_ENTITY</span>
+          <span class="rel-score">0.82</span>
+        </div>
+        <div class="rel-row">
+          <div>
+            <div class="rel-name">attention is all you need</div>
+            <div class="rel-evidence">
+              <span class="pill">same topic</span> transformer architectures · attention mechanisms
+            </div>
+          </div>
+          <span class="rel-type">SAME_TOPIC</span>
+          <span class="rel-score">0.76</span>
+        </div>
+        <div class="rel-row">
+          <div>
+            <div class="rel-name">stand-up notes</div>
+            <div class="rel-evidence">
+              <span class="pill">shared tags</span> @meeting · @work · #blocker
+            </div>
+          </div>
+          <span class="rel-type">SHARED_TAG</span>
+          <span class="rel-score">0.74</span>
+        </div>
+        <div class="rel-row">
+          <div>
+            <div class="rel-name">research scratchpad</div>
+            <div class="rel-evidence">
+              <span class="pill">cosine</span> chunks 03–04 ↔ chunks 12–14
+            </div>
+          </div>
+          <span class="rel-type">SEMANTIC_SIMILARITY</span>
+          <span class="rel-score">0.69</span>
+        </div>
+        <div class="rel-row">
+          <div>
+            <div class="rel-name">flash-attention v2 (paper)</div>
+            <div class="rel-evidence">
+              <span class="pill">references</span> mentioned at L65 · "TODO read v2"
+            </div>
+          </div>
+          <span class="rel-type">REFERENCES</span>
+          <span class="rel-score">0.62</span>
+        </div>
+        <div class="rel-row">
+          <div>
+            <div class="rel-name">langgraph internals</div>
+            <div class="rel-evidence">
+              <span class="pill">shared entities</span> attention · embedding
+            </div>
+          </div>
+          <span class="rel-type">SHARED_ENTITY</span>
+          <span class="rel-score">0.51</span>
+        </div>
+      </div>
+
+      <!-- Workspace overview — secondary section -->
+      <div class="section-head" style="margin-top: 22px;">
+        <h3>Workspace knowledge graph</h3>
+        <span class="meta">all docs combined · refresh to recompute</span>
+      </div>
+      <div class="graph-head">
+        <div>
+          <div class="stats"><b>248</b> entities · <b>1,094</b> chunks · <b>150</b> top edges · <b>34</b> document-document links</div>
+        </div>
+        <button class="btn">↻ Refresh</button>
+      </div>
+
+      <div class="graph-cols">
+        <div class="graph-section">
+          <h4>Top entities · by mention</h4>
+          <div class="gnode"><span class="gname">pgvector</span><span class="gtype">tool</span><span class="gbar"><span class="gbar-fill" style="width:92%"></span></span><span class="gcount">42</span></div>
+          <div class="gnode"><span class="gname">HNSW</span><span class="gtype">algo</span><span class="gbar"><span class="gbar-fill" style="width:74%"></span></span><span class="gcount">34</span></div>
+          <div class="gnode"><span class="gname">attention</span><span class="gtype">concept</span><span class="gbar"><span class="gbar-fill" style="width:65%"></span></span><span class="gcount">30</span></div>
+          <div class="gnode"><span class="gname">flash-attention</span><span class="gtype">algo</span><span class="gbar"><span class="gbar-fill" style="width:48%"></span></span><span class="gcount">22</span></div>
+          <div class="gnode"><span class="gname">@lin</span><span class="gtype">person</span><span class="gbar"><span class="gbar-fill" style="width:42%"></span></span><span class="gcount">19</span></div>
+          <div class="gnode"><span class="gname">claude code</span><span class="gtype">tool</span><span class="gbar"><span class="gbar-fill" style="width:38%"></span></span><span class="gcount">17</span></div>
+        </div>
+
+        <div class="graph-section">
+          <h4>Document ↔ Document · graph_topology</h4>
+          <div class="gedge"><span class="gfrom">2026-04 reading log</span><span class="grel">shared-entity</span><span class="gto">postgres pgvector</span><span class="gw">0.82</span></div>
+          <div class="gedge"><span class="gfrom">2026-04 reading log</span><span class="grel">same-topic</span><span class="gto">attention is all…</span><span class="gw">0.76</span></div>
+          <div class="gedge"><span class="gfrom">stand-up notes</span><span class="grel">shared-tag</span><span class="gto">2026-04 reading log</span><span class="gw">0.74</span></div>
+          <div class="gedge"><span class="gfrom">research scratch…</span><span class="grel">semantic</span><span class="gto">2026-04 reading log</span><span class="gw">0.69</span></div>
+          <div class="gedge"><span class="gfrom">attention is all…</span><span class="grel">references</span><span class="gto">flash-attention v2</span><span class="gw">0.62</span></div>
+          <div class="gedge"><span class="gfrom">postgres pgvector</span><span class="grel">references</span><span class="gto">HNSW spec</span><span class="gw">0.58</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════════════ BULK VIEW · ≥1 docs checked ════════════
+         Replaces the single-doc detail when in bulk mode. Lists
+         every selected file with its per-stage execution plan
+         (run / re-run / retry / skip / auto) so the user sees
+         exactly what "Run all" will dispatch. Populated by JS. -->
+    <section class="bulk-view" id="bulk-view">
+      <div class="bulk-view-head">
+        <div class="left">
+          <h2 id="bulk-view-title">— bulk processing</h2>
+          <div class="sub">Click <b>Run</b> in the toolbar to enqueue. Stages run in dependency order — Topology runs last after all upstream finish.</div>
+        </div>
+        <div class="summary">
+          <h5>Execution order</h5>
+          <div class="bulk-order" id="bulk-view-summary">
+            <!-- numbered steps injected by JS -->
+          </div>
+        </div>
+      </div>
+
+      <div class="bulk-view-files" id="bulk-view-files">
+        <!-- file rows injected by JS -->
+      </div>
+    </section>
+
+    <!-- ════════════ RAW VIEW ════════════ -->
+    <section class="tabbody raw-page" id="tab-raw">
+      <div class="raw" id="raw-body"></div>
+    </section>
+
+  </main>
+
+  <!-- ════════════ INSPECTOR (context-aware) ════════════ -->
+  <aside class="inspector">
+
+    <!-- pipeline -->
+    <div class="insp-body active" data-tab="pipeline">
+      <div class="inspector-head">
+        <div>
+          <div class="title">Run inspector <span class="badge running">RUNNING</span></div>
+          <div class="sub">run_8c2f4a · chunk_enrich</div>
+        </div>
+      </div>
+      <div class="inspector-body">
+        <h4>Stage</h4>
+        <dl class="kv">
+          <dt>Kind</dt><dd>chunk_enrich</dd>
+          <dt>Phase</dt><dd>classify</dd>
+          <dt>Executor</dt><dd>cloud_pool</dd>
+          <dt>Started</dt><dd>14:31:07</dd>
+          <dt>Elapsed</dt><dd>4.2s</dd>
+        </dl>
+        <h4>Concurrency</h4>
+        <dl class="kv">
+          <dt>Batches</dt><dd>12 (150 lines / 10 overlap)</dd>
+          <dt>Done</dt><dd>6</dd>
+          <dt>In flight</dt><dd>4</dd>
+          <dt>Queued</dt><dd>2</dd>
+          <dt>Max conc</dt><dd>64</dd>
+        </dl>
+        <h4>Tokens</h4>
+        <dl class="kv">
+          <dt>Prompt</dt><dd>892</dd>
+          <dt>Completion</dt><dd>351</dd>
+          <dt>Total</dt><dd>1,243</dd>
+        </dl>
+        <h4>Live messages</h4>
+        <pre class="logbox">14:31:07 chunk_enrich.start doc=2026-04…
+14:31:07 batches=12 conc=4
+14:31:08 batch[0] done 88t
+14:31:09 batch[2] done 102t
+14:31:10 batch[1] done 95t
+14:31:11 batch[4] done 110t
+14:31:12 batch[3] done 87t
+14:31:14 batch[5] done 96t
+14:31:15 batch[6] start
+14:31:15 batch[7] start
+14:31:16 batch[8] start
+14:31:16 batch[9] start</pre>
+      </div>
+    </div>
+
+    <!-- chunks -->
+    <div class="insp-body" data-tab="chunks">
+      <div class="inspector-head">
+        <div>
+          <div class="title">Chunk #03 <span class="badge done">INDEXED</span></div>
+          <div class="sub">L25–L42 · dim=1024</div>
+        </div>
+      </div>
+      <div class="inspector-body">
+        <h4>Vector</h4>
+        <dl class="kv">
+          <dt>Dim</dt><dd>1024</dd>
+          <dt>Source ref</dt><dd>doc_2026-04#L25</dd>
+          <dt>Tokens</dt><dd>~310</dd>
+          <dt>L2 norm</dt><dd>0.9982</dd>
+        </dl>
+        <h4>Keywords</h4>
+        <p style="color: var(--ink-muted); margin: 4px 0;">pgvector · HNSW · cosine · memory · benchmarking</p>
+        <h4>Neighbors (cosine top 3)</h4>
+        <dl class="kv">
+          <dt>#04</dt><dd>0.91</dd>
+          <dt>#02</dt><dd>0.78</dd>
+          <dt>#06</dt><dd>0.62</dd>
+        </dl>
+        <h4>Cross-doc</h4>
+        <p style="color: var(--ink-muted); margin: 4px 0;">2 nearest chunks in workspace: <b>postgres pgvector</b> #08 (0.88), <b>research scratchpad</b> #14 (0.71). Powered by graph_topology.</p>
+      </div>
+    </div>
+
+    <!-- segments -->
+    <div class="insp-body" data-tab="segments">
+      <div class="inspector-head">
+        <div>
+          <div class="title">Segment <span class="badge done">CLASSIFIED</span></div>
+          <div class="sub">L19–L42 · learn (88%) · chunk_enrich</div>
+        </div>
+      </div>
+      <div class="inspector-body">
+        <h4>Tag</h4>
+        <dl class="kv">
+          <dt>Primary</dt><dd>learn</dd>
+          <dt>Secondary</dt><dd>reading-notes</dd>
+          <dt>Confidence</dt><dd>0.88</dd>
+          <dt>Topic</dt><dd>pgvector internals</dd>
+        </dl>
+        <h4>Entities (extracted)</h4>
+        <p style="color: var(--ink-muted); margin: 4px 0;">pgvector · HNSW · IVF · cosine sim · L2</p>
+        <h4>Keywords</h4>
+        <p style="color: var(--ink-muted); margin: 4px 0;">pgvector · HNSW · embedding · cosine</p>
+        <h4>Action</h4>
+        <button class="btn primary" onclick="jumpTo(19,42)">↗ Jump to L19–L42</button>
+      </div>
+    </div>
+
+    <!-- tags (note_classify) -->
+    <div class="insp-body" data-tab="tags">
+      <div class="inspector-head">
+        <div>
+          <div class="title">Tag suggestion <span class="badge warn">USER TAG</span></div>
+          <div class="sub">@meeting · 96% · note_classify</div>
+        </div>
+      </div>
+      <div class="inspector-body">
+        <h4>User tag</h4>
+        <dl class="kv">
+          <dt>Tag</dt><dd>@meeting</dd>
+          <dt>Description</dt><dd style="color:var(--ink-muted)">scheduled syncs with the team</dd>
+          <dt>Definition</dt><dd>"any line containing time, attendees, agenda or decisions made"</dd>
+          <dt>Match</dt><dd>L1–L18 · 96%</dd>
+        </dl>
+        <h4>Why this match</h4>
+        <p style="color: var(--ink-muted); margin: 4px 0;">Lines mention "stand-up", three @-mentioned engineers, action items with owners — high overlap with the @meeting tag definition.</p>
+        <h4>Action</h4>
+        <button class="btn primary" onclick="jumpTo(1,18)">↗ Jump to L1–L18</button>
+        <div style="margin-top:8px"><button class="btn">Accept</button> <button class="btn">Reject</button></div>
+      </div>
+    </div>
+
+    <!-- graph (per-doc related links by default; click an entity row
+         in the workspace section below to swap to entity context) -->
+    <div class="insp-body" data-tab="graph">
+      <div class="inspector-head">
+        <div>
+          <div class="title">Document link <span class="badge warn">SHARED_ENTITY</span></div>
+          <div class="sub">postgres pgvector · 0.82 · graph_topology</div>
+        </div>
+      </div>
+      <div class="inspector-body">
+        <h4>Evidence</h4>
+        <dl class="kv">
+          <dt>Type</dt><dd>shared_entity</dd>
+          <dt>Score</dt><dd>0.82</dd>
+          <dt>Computed</dt><dd>2h ago · run_5abc12</dd>
+          <dt>LLM</dt><dd style="color:var(--done)">no — deterministic</dd>
+        </dl>
+        <h4>Shared entities</h4>
+        <p style="color: var(--ink-muted); margin: 4px 0;"><b>pgvector</b> (32 + 18 mentions) · <b>HNSW</b> (12 + 9) · <b>cosine sim</b> (4 + 7)</p>
+        <h4>Co-occurring chunks</h4>
+        <ul style="color: var(--ink-muted); padding-left: 18px; margin: 4px 0; font-size: 12px;">
+          <li>This doc · #03 ↔ pgvector · #08 (cosine 0.88)</li>
+          <li>This doc · #04 ↔ pgvector · #11 (cosine 0.71)</li>
+        </ul>
+        <h4>Optional · LLM explanation</h4>
+        <p style="color: var(--ink-faint); margin: 4px 0; font-size: 11.5px;">graph_explain stage not run · click to generate a natural-language description (~200 tokens).</p>
+        <button class="btn">Explain with LLM</button>
+
+        <h4 style="margin-top: 16px;">Workspace context</h4>
+        <p style="color: var(--ink-muted); margin: 4px 0; font-size: 11.5px;">Open the workspace section below in the Graph tab for top entities + edges across all docs.</p>
+      </div>
+    </div>
+
+    <!-- bulk · shown when content is in bulk mode -->
+    <div class="insp-body" data-tab="bulk">
+      <div class="inspector-head">
+        <div>
+          <div class="title">Bulk plan <span class="badge running" id="insp-bulk-count">0</span></div>
+          <div class="sub" id="insp-bulk-sub">no selection</div>
+        </div>
+      </div>
+      <div class="inspector-body">
+        <h4>Cloud dispatch</h4>
+        <p style="color: var(--ink-muted); margin: 4px 0; font-size: 12px;">
+          Each stage fires <code style="font-family:var(--mono);font-size:10.5px;color:var(--ink)">POST /v1/processing/{id}/run</code>
+          with concurrency 4. Fast stages (Embed, Topology) finish synchronously; LLM stages queue to <code style="font-family:var(--mono);font-size:10.5px;color:var(--ink)">cloud_pool</code>.
+        </p>
+        <h4>Cost estimate</h4>
+        <dl class="kv" id="insp-bulk-cost">
+          <dt>Tokens (est)</dt><dd>—</dd>
+          <dt>Calls</dt><dd>—</dd>
+          <dt>Provider</dt><dd>cloud_pool · deepseek-chat</dd>
+        </dl>
+        <h4>Notes</h4>
+        <ul style="padding-left: 18px; color: var(--ink-muted); margin: 6px 0; font-size: 11.5px;">
+          <li>Stages with ✓ are already fresh — skipped unless force is on.</li>
+          <li>Topology auto-runs after Enrich/Abstract completes.</li>
+          <li>Failed stages auto-retry once before giving up.</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- raw -->
+    <div class="insp-body" data-tab="raw">
+      <div class="inspector-head">
+        <div>
+          <div class="title">Raw markdown</div>
+          <div class="sub">read-only · 12k · 60 lines</div>
+        </div>
+      </div>
+      <div class="inspector-body">
+        <h4>Jump targets</h4>
+        <p style="color: var(--ink-muted); margin: 4px 0;">Click a Segment / Tag suggestion / Chapter row to scroll here. Last jump highlights for 1.6s.</p>
+      </div>
+    </div>
+
+  </aside>
+</div>
+
+<!-- ════════════ STAGE DETAIL MODAL ════════════
+     Opens on click of any Pipeline stage row. Shows: cloud
+     association (endpoint + run id + WS topic), execution result
+     (timing, tokens, batches), errors, and live event log. The
+     content swaps based on which stage was clicked. -->
+<div class="modal-overlay" id="modal" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="modal">
+    <div class="modal-head">
+      <div style="flex:1">
+        <div class="title" id="modal-title">Stage details</div>
+        <div class="sub" id="modal-sub">—</div>
+      </div>
+      <button class="modal-close" id="modal-close">Close · Esc</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-foot">
+      <button class="btn" id="modal-inspector">Open in inspector</button>
+      <button class="btn primary" id="modal-rerun">Re-run (force)</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  /* Theme toggle — flips data-theme on <html>. Persists across
+   * reloads via localStorage. The button label tells you what
+   * you'll switch TO if clicked, not the current theme. */
+  (function initTheme() {
+    const saved = localStorage.getItem('lib-theme');
+    if (saved === 'light' || saved === 'dark') {
+      document.documentElement.dataset.theme = saved;
+    } else {
+      // Project default: warm-paper light. Dark is opt-in.
+      document.documentElement.dataset.theme = 'light';
+    }
+    function syncBtn() {
+      const isLight = document.documentElement.dataset.theme === 'light';
+      const btn = document.getElementById('theme-toggle');
+      if (btn) btn.textContent = isLight ? '☾ Dark' : '☀ Light';
+    }
+    document.addEventListener('DOMContentLoaded', syncBtn);
+    syncBtn();
+    document.addEventListener('click', (e) => {
+      if (e.target && e.target.id === 'theme-toggle') {
+        const cur = document.documentElement.dataset.theme;
+        const next = cur === 'light' ? 'dark' : 'light';
+        document.documentElement.dataset.theme = next;
+        localStorage.setItem('lib-theme', next);
+        syncBtn();
+      }
+    });
+  })();
+
+  function activateTab(tab) {
+    document.querySelectorAll('.kn-tabs button').forEach((x) => x.classList.toggle('active', x.dataset.tab === tab));
+    document.querySelectorAll('.tabbody').forEach((x) => x.classList.toggle('active', x.id === 'tab-' + tab));
+    document.querySelectorAll('.insp-body').forEach((x) => {
+      const matches = x.dataset.tab === tab || x.dataset.tab2 === tab;
+      x.classList.toggle('active', matches);
+    });
+  }
+  document.querySelectorAll('.kn-tabs button').forEach((b) => {
+    b.addEventListener('click', () => activateTab(b.dataset.tab));
+  });
+  document.querySelectorAll('#view-toggle button').forEach((b) => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('#view-toggle button').forEach((x) => x.classList.remove('active'));
+      b.classList.add('active');
+      if (b.dataset.view === 'raw') { activateTab('raw'); document.getElementById('kn-tabs').style.display = 'none'; }
+      else { document.getElementById('kn-tabs').style.display = 'flex'; activateTab('pipeline'); }
+    });
+  });
+  function toggleJob(head) {
+    const job = head.closest('.ejob');
+    job.classList.toggle('expanded');
+    const c = head.querySelector('.caret');
+    if (c) c.textContent = job.classList.contains('expanded') ? '▾' : '▸';
+  }
+  /* Doc-info per tree row → drives the topbar swap on selection.
+   * In a real app this comes from the cloud; here we hardcode for
+   * the prototype. */
+  const DOC_INFO = {
+    "2026-04 reading log":      { kind: "notes", size: "12k", updated: "2h ago" },
+    "stand-up notes":           { kind: "notes", size: "4k",  updated: "1d ago" },
+    "research scratchpad":      { kind: "notes", size: "22k", updated: "5d ago" },
+    "credentials draft":        { kind: "notes", size: "2k",  updated: "7d ago" },
+    "attention is all you need":{ kind: "wiki",  size: "38k", updated: "3d ago" },
+    "postgres pgvector":        { kind: "wiki",  size: "14k", updated: "12d ago" },
+    "langgraph internals":      { kind: "wiki",  size: "28k", updated: "28d ago" },
+  };
+  function applyKind(kind, name, info) {
+    const content = document.querySelector('.content');
+    content.dataset.activeKind = kind;
+    document.querySelector('.doc-name').textContent = name;
+    document.querySelector('.topbar .meta').textContent = `${info.size} · ${info.updated}`;
+    // If the currently active tab is hidden for this kind, fall back
+    // to Pipeline so the user doesn't stare at a blank pane.
+    const curBtn = document.querySelector('.kn-tabs button.active');
+    if (curBtn && getComputedStyle(curBtn).display === 'none') {
+      activateTab('pipeline');
+    }
+  }
+  document.querySelectorAll('.tree-row').forEach((r) => {
+    r.addEventListener('click', (e) => {
+      if (e.target.closest('.check')) return;
+      document.querySelectorAll('.tree-row').forEach((x) => x.classList.remove('active'));
+      r.classList.add('active');
+      const name = r.querySelector('.name')?.textContent.trim();
+      const info = DOC_INFO[name];
+      if (info) applyKind(info.kind, name, info);
+    });
+  });
+
+  /* ── Multi-select kind-lock ──
+   * When the user checks a row, all currently checked rows of a
+   * different kind are unchecked. The bulk-bar picks up the one
+   * surviving kind and shows the action set for it. */
+  /* Bulk plan rendering — read each checked row's stage-bits and
+   * translate into per-stage verdicts (run / re-run / retry / skip
+   * / auto). Drives the bulk-view file list AND the inspector
+   * summary, plus toggles .bulk-mode on .content + .inspector so
+   * the single-doc detail steps aside. */
+  /* Stage execution order per kind — topology is always LAST so
+   * the dependency chain reads top-down: chunk → kind-specific →
+   * topology. Bits idx still maps to the tree row's bits markup
+   * (chunk_embed · chunk_enrich · graph_topology · note_classify). */
+  const STAGE_DEFS = {
+    notes: [
+      { letter: "E", name: "embed",        idx: 0 },
+      { letter: "R", name: "enrich",       idx: 1 },
+      { letter: "C", name: "tag-classify", idx: 3 },
+      { letter: "T", name: "topology",     idx: 2, isTopology: true },
+    ],
+    wiki: [
+      { letter: "E", name: "embed",    idx: 0 },
+      { letter: "A", name: "abstract", idx: 1 },
+      { letter: "T", name: "topology", idx: 2, isTopology: true },
+    ],
+    doc: [
+      { letter: "E", name: "embed",    idx: 0 },
+      { letter: "R", name: "enrich",   idx: 1 },
+      { letter: "T", name: "topology", idx: 2, isTopology: true },
+    ],
+  };
+  function bitVerdict(dot, isTopology, deps) {
+    // dots[i] markup: <span class="on|run|fail|gtop"></span>
+    const cls = dot ? dot.className : "";
+    if (cls.includes("fail")) return "will-retry";
+    if (cls.includes("on") || cls.includes("gtop")) return "will-skip";
+    if (cls.includes("run")) return "will-run";
+    if (isTopology && deps === "pending") return "will-auto";
+    return "will-run";
+  }
+  function verdictLabel(v) {
+    return ({
+      "will-run":   "run",
+      "will-rerun": "re-run",
+      "will-retry": "retry",
+      "will-skip":  "skip",
+      "will-auto":  "auto",
+    })[v] || v;
+  }
+  function renderBulkView() {
+    const checked = [...document.querySelectorAll('.tree-row .check input:checked')]
+      .map((cb) => cb.closest('.tree-row'));
+    const content = document.querySelector('.content');
+    const inspector = document.querySelector('.inspector');
+    if (checked.length === 0) {
+      content.classList.remove('bulk-mode');
+      inspector.classList.remove('bulk-mode');
+      return;
+    }
+    content.classList.add('bulk-mode');
+    inspector.classList.add('bulk-mode');
+    const kind = checked[0].dataset.kind;
+    const stages = STAGE_DEFS[kind] || STAGE_DEFS.doc;
+
+    // Title
+    document.getElementById('bulk-view-title').textContent =
+      `${checked.length} ${kind}${checked.length > 1 ? 's' : ''} · bulk processing`;
+
+    // Per-file rows + collect aggregates for the summary
+    const counts = {};
+    stages.forEach((s) => counts[s.name] = { run: 0, rerun: 0, retry: 0, skip: 0, auto: 0 });
+
+    const filesEl = document.getElementById('bulk-view-files');
+    filesEl.innerHTML = checked.map((row) => {
+      const name = row.querySelector('.name').textContent.trim();
+      const info = DOC_INFO[name] || { size: '?', updated: '?' };
+      const dots = row.querySelectorAll('.bits .dots span');
+      // Compute deps: enrich/abstract verdict drives topology-auto.
+      const enrichDot = dots[1];
+      const enrichDone = enrichDot && (enrichDot.className.includes("on"));
+      const stageChips = stages.map((s) => {
+        const dot = dots[s.idx];
+        const v = bitVerdict(dot, s.isTopology, enrichDone ? "ready" : "pending");
+        const key = v.replace("will-", "");
+        counts[s.name][key] = (counts[s.name][key] || 0) + 1;
+        return `<span class="bulk-stage ${v}">${s.letter} · ${s.name} · ${verdictLabel(v)}</span>`;
+      }).join("");
+      return `
+        <div class="bulk-file ${kind}">
+          <div class="bulk-file-head">
+            <span class="bulk-file-name">${name}</span>
+            <span class="bulk-file-meta">${info.size} · ${info.updated}</span>
+          </div>
+          <div class="bulk-file-stages">${stageChips}</div>
+        </div>`;
+    }).join("");
+
+    // Numbered execution order — dependency-correct steps
+    const summaryEl = document.getElementById('bulk-view-summary');
+    summaryEl.innerHTML = stages.map((s, i) => {
+      const c = counts[s.name];
+      const parts = [];
+      if (c.run)   parts.push(`${c.run} run`);
+      if (c.rerun) parts.push(`${c.rerun} re-run`);
+      if (c.retry) parts.push(`${c.retry} retry`);
+      if (c.skip)  parts.push(`${c.skip} skip`);
+      if (c.auto)  parts.push(`${c.auto} auto`);
+      return `
+        <div class="bulk-order-step">
+          <span class="num">${i + 1}</span>
+          <span class="kind">${s.name}</span>
+          <span class="verdict">${parts.join(' · ') || '—'}</span>
+        </div>`;
+    }).join("");
+
+    // Inspector
+    document.getElementById('insp-bulk-count').textContent = `${checked.length} ${kind.toUpperCase()}`;
+    document.getElementById('insp-bulk-sub').textContent =
+      `${checked.length} files · ${stages.length} stages · cloud_pool`;
+    // Crude token estimate
+    const llmStages = stages.filter((s) => s.name === 'enrich' || s.name === 'abstract' || s.name === 'tag-classify').length;
+    const estTokens = llmStages * checked.length * 1500;
+    document.getElementById('insp-bulk-cost').innerHTML = `
+      <dt>Tokens (est)</dt><dd>${estTokens.toLocaleString()}</dd>
+      <dt>Calls</dt><dd>${stages.length * checked.length}</dd>
+      <dt>Provider</dt><dd>cloud_pool · deepseek-chat</dd>`;
+  }
+
+  function refreshBulkBar() {
+    const checked = [...document.querySelectorAll('.tree-row .check input:checked')];
+    const bar = document.getElementById('bulk-bar');
+    if (checked.length === 0) { bar.classList.remove('show'); renderBulkView(); return; }
+    const kind = checked[0].closest('.tree-row').dataset.kind || 'doc';
+    const pill = document.getElementById('bulk-kind-pill');
+    pill.textContent = kind;
+    pill.className = 'kind-pill ' + kind;
+    document.getElementById('bulk-count').textContent = `${checked.length} selected`;
+    document.getElementById('bulk-actions').dataset.kind = kind;
+    bar.classList.add('show');
+    renderBulkView();
+  }
+  document.querySelectorAll('.tree-row .check input').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      if (cb.checked) {
+        const myKind = cb.closest('.tree-row').dataset.kind;
+        document.querySelectorAll('.tree-row .check input:checked').forEach((other) => {
+          if (other === cb) return;
+          if (other.closest('.tree-row').dataset.kind !== myKind) other.checked = false;
+        });
+      }
+      refreshBulkBar();
+    });
+  });
+  document.getElementById('bulk-clear').addEventListener('click', () => {
+    document.querySelectorAll('.tree-row .check input:checked').forEach((cb) => cb.checked = false);
+    refreshBulkBar();
+  });
+
+  /* Per-group Select all / Invert — scoped to one kind. Picking
+   * either action automatically clears any prior selection in other
+   * kinds (kind-lock). Bulk bar refreshes at the end. */
+  document.querySelectorAll('.group-helper').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const kind = btn.dataset.kind;
+      const action = btn.dataset.action;
+      const groupRows = [...document.querySelectorAll(`.tree-group[data-kind="${kind}"] .tree-row`)];
+      // Clear all OTHER kinds first (kind-lock).
+      document.querySelectorAll('.tree-row .check input:checked').forEach((cb) => {
+        if (cb.closest('.tree-row').dataset.kind !== kind) cb.checked = false;
+      });
+      if (action === 'select-all') {
+        groupRows.forEach((r) => { const cb = r.querySelector('.check input'); if (cb) cb.checked = true; });
+      } else if (action === 'invert') {
+        groupRows.forEach((r) => { const cb = r.querySelector('.check input'); if (cb) cb.checked = !cb.checked; });
+      }
+      refreshBulkBar();
+    });
+  });
+
+  /* ── Stage detail modal ──
+   * Click a Pipeline stage row → modal with cloud association +
+   * execution result. Each kind has its own template. */
+  const STAGE_DETAILS = {
+    chunk_embed: {
+      title: "Chunk · Embed",
+      sub: "chunk_embed · run_71ad03 · cloud_embed (self-hosted)",
+      llmTone: "fast",
+      body: `
+        <section>
+          <h5>Cloud association</h5>
+          <dl class="kv">
+            <dt>Endpoint</dt><dd><code>POST /v1/processing/{document_id}/run</code></dd>
+            <dt>Body</dt><dd><code>{"kind":"chunk_embed","force":false}</code></dd>
+            <dt>Run id</dt><dd><code>run_71ad03</code></dd>
+            <dt>WS topic</dt><dd><code>processing_progress · processing_done</code></dd>
+            <dt>Tables touched</dt><dd><code>chunks · chunk_embeddings</code></dd>
+          </dl>
+        </section>
+        <section>
+          <h5>Result</h5>
+          <dl class="kv">
+            <dt>Status</dt><dd><span class="badge done">DONE</span></dd>
+            <dt>Started</dt><dd>2026-05-08 12:15:09.114</dd>
+            <dt>Finished</dt><dd>2026-05-08 12:15:10.342</dd>
+            <dt>Duration</dt><dd>1.228s</dd>
+            <dt>Throughput</dt><dd>9.8 chunks/s</dd>
+            <dt>Executor</dt><dd>cloud_embed (us-west-2 · pod-3)</dd>
+            <dt>Model</dt><dd>bge-m3 (dim 1024)</dd>
+          </dl>
+        </section>
+        <section>
+          <h5>Outputs</h5>
+          <dl class="kv">
+            <dt>Chunks created</dt><dd>12 (5 sections · 7 paras)</dd>
+            <dt>Vector size</dt><dd>12 × 1024 × float32 ≈ 47.6 KB</dd>
+            <dt>Avg tokens</dt><dd>234 (min 86 · max 312)</dd>
+          </dl>
+        </section>`,
+    },
+    chunk_enrich: {
+      title: "Chunk · Enrich",
+      sub: "chunk_enrich · run_8c2f4a · cloud_pool · running",
+      llmTone: "llm",
+      body: `
+        <section>
+          <h5>Cloud association</h5>
+          <dl class="kv">
+            <dt>Endpoint</dt><dd><code>POST /v1/processing/{document_id}/run</code></dd>
+            <dt>Body</dt><dd><code>{"kind":"chunk_enrich","force":true}</code></dd>
+            <dt>Run id</dt><dd><code>run_8c2f4a</code></dd>
+            <dt>WS topic</dt><dd><code>processing_progress · processing_done</code></dd>
+            <dt>Tables touched</dt><dd><code>tag_segments · entities · entity_links</code></dd>
+          </dl>
+        </section>
+        <section>
+          <h5>Execution · in progress</h5>
+          <dl class="kv">
+            <dt>Status</dt><dd><span class="badge running">RUNNING</span></dd>
+            <dt>Started</dt><dd>2026-05-08 14:31:07.221</dd>
+            <dt>Elapsed</dt><dd>4.2s</dd>
+            <dt>Executor</dt><dd>cloud_pool (deepseek-chat)</dd>
+            <dt>Concurrency</dt><dd>4 in flight / 64 max · 6 done · 2 queued</dd>
+            <dt>Tokens (so far)</dt><dd>892 in · 351 out · 1,243 total · ~$0.0007</dd>
+            <dt>Eta</dt><dd>~6s remaining</dd>
+          </dl>
+        </section>
+        <section>
+          <h5>Batch progress</h5>
+          <div class="batches">
+            <span class="ok">1</span><span class="ok">2</span><span class="ok">3</span>
+            <span class="ok">4</span><span class="ok">5</span><span class="ok">6</span>
+            <span class="run">7</span><span class="run">8</span>
+            <span class="run">9</span><span class="run">10</span>
+            <span>11</span><span>12</span>
+          </div>
+        </section>
+        <section>
+          <h5>Live event log</h5>
+          <pre class="logbox">14:31:07 chunk_enrich.start doc=2026-04-reading-log
+14:31:07 batches=12 conc=4 model=deepseek-chat
+14:31:08 batch[0] done 88t (system 64 · user 24)
+14:31:09 batch[2] done 102t
+14:31:10 batch[1] done 95t
+14:31:11 batch[4] done 110t
+14:31:12 batch[3] done 87t
+14:31:14 batch[5] done 96t
+14:31:15 batch[6] start
+14:31:15 batch[7] start</pre>
+        </section>`,
+    },
+    graph_topology: {
+      title: "Graph · Topology",
+      sub: "graph_topology · STALE · last successful run_5abc12 (2h ago)",
+      llmTone: "fast",
+      body: `
+        <section>
+          <h5>Cloud association</h5>
+          <dl class="kv">
+            <dt>Scope</dt><dd>per-document — produces this doc's <code>document_links</code> only</dd>
+            <dt>Endpoint</dt><dd><code>POST /v1/processing/{document_id}/run</code></dd>
+            <dt>Body</dt><dd><code>{"kind":"graph_topology","force":false}</code></dd>
+            <dt>Inputs</dt><dd>chunks (semantic) · tag_segments (tags+entities) for this doc</dd>
+            <dt>Tables touched</dt><dd><code>document_links</code> WHERE source_document_id = this</dd>
+            <dt>LLM</dt><dd>none — deterministic similarity + set overlap</dd>
+          </dl>
+        </section>
+        <section>
+          <h5>Last result</h5>
+          <dl class="kv">
+            <dt>Run id</dt><dd><code>run_5abc12</code></dd>
+            <dt>Status</dt><dd><span class="badge warn">STALE</span></dd>
+            <dt>Started</dt><dd>2026-05-08 12:15:11.450</dd>
+            <dt>Finished</dt><dd>2026-05-08 12:15:11.770</dd>
+            <dt>Duration</dt><dd>320ms</dd>
+            <dt>Links produced</dt><dd>6 (3 shared_entity · 1 shared_tag · 1 same_topic · 1 semantic)</dd>
+          </dl>
+        </section>
+        <section>
+          <h5>Why stale?</h5>
+          <p style="color:var(--ink-muted); font-size: 12px; margin: 4px 0;">
+            <b>chunk_enrich</b> is currently running. When it completes, the new tag_segments + entities
+            could change which docs this one is related to. Click <b>Update topology</b> to recompute,
+            or wait and trigger manually after enrich finishes — no implicit re-run.
+          </p>
+        </section>`,
+    },
+    wiki_abstract: {
+      title: "Wiki · Abstract",
+      sub: "wiki_abstract · run_b9d121 · cloud_pool",
+      llmTone: "llm",
+      body: `
+        <section>
+          <h5>Cloud association</h5>
+          <dl class="kv">
+            <dt>Endpoint</dt><dd><code>POST /v1/processing/{document_id}/run</code></dd>
+            <dt>Body</dt><dd><code>{"kind":"wiki_abstract","force":false}</code></dd>
+            <dt>Run id</dt><dd><code>run_b9d121</code></dd>
+            <dt>Inputs</dt><dd>document content split by H1/H2/H3 headings</dd>
+            <dt>Tables touched</dt><dd><code>wiki_chapters · wiki_chapters.summary</code></dd>
+          </dl>
+        </section>
+        <section>
+          <h5>Result</h5>
+          <dl class="kv">
+            <dt>Status</dt><dd><span class="badge done">DONE</span> (partial)</dd>
+            <dt>Started</dt><dd>2026-05-05 09:14:01</dd>
+            <dt>Finished</dt><dd>2026-05-05 09:14:31</dd>
+            <dt>Duration</dt><dd>30.4s</dd>
+            <dt>Executor</dt><dd>cloud_pool · deepseek-chat</dd>
+            <dt>Chapters</dt><dd>8 split · 6 summarized · 2 pending</dd>
+            <dt>Tokens</dt><dd>3,128 in · 1,402 out · 4,530 total · ~$0.0026</dd>
+          </dl>
+        </section>
+        <section>
+          <h5>Note</h5>
+          <p style="color:var(--ink-muted); margin: 4px 0; font-size: 12px;">2 chapters skipped on first pass (deepseek rate-limit). Click <b>Re-run (force)</b> to fill the gaps — already-summarized chapters are reused unless force is on.</p>
+        </section>`,
+    },
+    note_classify: {
+      title: "Note · Tag-classify",
+      sub: "note_classify · not run · uses 12 user tags",
+      llmTone: "custom",
+      body: `
+        <section>
+          <h5>Cloud association</h5>
+          <dl class="kv">
+            <dt>Endpoint</dt><dd><code>POST /v1/processing/{document_id}/run</code></dd>
+            <dt>Body</dt><dd><code>{"kind":"note_classify","force":false}</code></dd>
+            <dt>Inputs</dt><dd>document content · workspace user tags (12)</dd>
+            <dt>Tables touched</dt><dd><code>note_tag_suggestions</code></dd>
+            <dt>WS topic</dt><dd><code>processing_progress · processing_done</code></dd>
+          </dl>
+        </section>
+        <section>
+          <h5>Estimate</h5>
+          <dl class="kv">
+            <dt>Status</dt><dd><span class="badge warn">NOT RUN</span></dd>
+            <dt>Custom tags</dt><dd>@meeting · @paper · #blocker · #deepdive · #todo · +7 more</dd>
+            <dt>Token estimate</dt><dd>~1,500 (deepseek-chat ~$0.0009)</dd>
+            <dt>Expected output</dt><dd>line-range → user_tag suggestions (review queue)</dd>
+            <dt>Last run</dt><dd>—</dd>
+          </dl>
+        </section>`,
+    },
+  };
+  function openModal(kind) {
+    const d = STAGE_DETAILS[kind];
+    if (!d) return;
+    document.getElementById('modal-title').textContent = d.title;
+    document.getElementById('modal-sub').textContent = d.sub;
+    document.getElementById('modal-body').innerHTML = d.body;
+    document.getElementById('modal').classList.add('show');
+    document.getElementById('modal').setAttribute('aria-hidden', 'false');
+  }
+  function closeModal() {
+    document.getElementById('modal').classList.remove('show');
+    document.getElementById('modal').setAttribute('aria-hidden', 'true');
+  }
+  document.querySelectorAll('.stage-row').forEach((row) => {
+    row.addEventListener('click', (e) => {
+      // Don't open modal when clicking the action button — let it run.
+      if (e.target.closest('.stage-action')) return;
+      const k = row.dataset.kind;
+      if (k) openModal(k);
+    });
+  });
+
+  /* Pipeline mini-runs rows · clickable too. The Runs tab was
+   * removed because this list + the stage modal cover the same
+   * ground — past run details now open the same modal as a click
+   * on the live stage row. We read the kind out of the row's
+   * .kind cell text so the markup stays simple. */
+  document.querySelectorAll('.runs-mini .row').forEach((row) => {
+    row.addEventListener('click', () => {
+      const kindText = row.querySelector('.kind')?.textContent.trim().toLowerCase();
+      if (kindText && STAGE_DETAILS[kindText]) openModal(kindText);
+    });
+  });
+  document.getElementById('modal-close').addEventListener('click', closeModal);
+  document.getElementById('modal').addEventListener('click', (e) => {
+    if (e.target.id === 'modal') closeModal();
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+
+  // Raw content + jump-to-line
+  const RAW_LINES = [
+    "# 2026-04 reading log","",
+    "## Apr 2 · stand-up",
+    "- backlog grooming 30min",
+    "- @lin: auth migration blocked on jwt rotation",
+    "- @kim: pgvector PoC done, eval next week",
+    "- #4521 unblock by EOW","",
+    "Action items:",
+    "- [ ] @lin draft jwt-rotation runbook",
+    "- [ ] @kim share pgvector recall numbers",
+    "- [ ] me — schedule arch review","",
+    "Three blockers raised, two assigned, one parked.",
+    "Will revisit Friday.","",
+    "## Apr 3 · pgvector deep dive",
+    "Read the pgvector docs end to end.","",
+    "IVF vs HNSW",
+    "- IVF: faster build, recall caps ~0.85",
+    "- HNSW: 3x build time, 0.95+ recall",
+    "- HNSW M=16 ef_construction=128 sweet spot","",
+    "Distance metric:",
+    "For sparse tf-idf-like vectors prefer cosine.",
+    "Magnitude on sparse vectors is noisy and L2",
+    "ends up sorting by document length more than",
+    "by similarity. <-> in pgvector = L2.",
+    "<=> = cosine.","",
+    "Memory cost back-of-napkin:",
+    "  HNSW: ~1.3 KB / vector",
+    "  + 4 KB original float32",
+    "  ≈ 5.3 KB / vec",
+    "  → 200k vectors ≈ 1.06 GB warm","",
+    "Index build time benchmark from the docs:",
+    "  200k vectors, 1024 dim, m7g.large",
+    "  ef_construction=128 → ~4 min",
+    "  ef_construction=256 → ~9 min","",
+    "## Apr 4 · attention paper re-read",
+    "Section 3.2 Multi-Head Attention.","",
+    "Question: how does flash-attention restructure",
+    "the softmax to avoid materializing the full",
+    "attention matrix in HBM?","",
+    "TODO read the flash-attention v2 paper.","",
+    "## Apr 5 · personal",
+    "跑步 5km 32:14 配速 6:22 · 体感 RPE 7",
+    "周累计 18km","",
+    "## Weekend TODO",
+    "- 续签健身房会员",
+    "- 给 @yan 打电话",
+    "- 周末备份照片到 NAS",
+    "- (optional) 试试 deepseek 新版"
+  ];
+  const rawBody = document.getElementById('raw-body');
+  RAW_LINES.forEach((line, i) => {
+    const el = document.createElement('div');
+    el.className = 'raw-line'; el.dataset.line = i + 1;
+    el.innerHTML = `<span class="lineno">${i + 1}</span><span>${line || ' '}</span>`;
+    rawBody.appendChild(el);
+  });
+  function jumpTo(start, end) {
+    document.querySelectorAll('#view-toggle button').forEach((x) => x.classList.toggle('active', x.dataset.view === 'raw'));
+    activateTab('raw');
+    document.getElementById('kn-tabs').style.display = 'none';
+    document.querySelectorAll('.raw-line').forEach((el) => el.classList.remove('flash'));
+    for (let n = start; n <= end; n++) {
+      const el = document.querySelector(`.raw-line[data-line="${n}"]`);
+      if (el) el.classList.add('flash');
+    }
+    const target = document.querySelector(`.raw-line[data-line="${start}"]`);
+    if (target) target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+
+  activateTab('pipeline');
+</script>
+</body>
+</html>

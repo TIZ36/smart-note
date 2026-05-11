@@ -68,6 +68,32 @@ export type StageInfo = {
   at?: string | null;
   /** When status === running, this lets the modal compute live elapsed. */
   runStartedAt?: number | null;
+  /** Cloud-derived: artefact exists but inputs changed since the last run.
+   *  When true, the modal shows a "Why stale?" section so the user
+   *  understands why the row is gold-tinted instead of green. */
+  stale?: boolean;
+};
+
+/* Cloud association · maps a cloudStage value to the canonical
+ * endpoint, request body shape, and the DB tables the run writes.
+ * Source: docs/library-client-integration.md §2.1 + §10.3 + cloud
+ * processing.py. Used by the Stage Detail modal so the user (and
+ * eng) can see exactly what hitting "Re-run" sends. */
+const CLOUD_ASSOC: Record<string, {
+  scope: "per-document" | "workspace";
+  body: string;
+  tables: string;
+  llm: "yes" | "no" | "no — deterministic";
+  notes?: string;
+}> = {
+  chunk_embed:    { scope: "per-document", body: `{"kind":"chunk_embed","force":false}`,    tables: "chunks · chunk_embeddings", llm: "no" },
+  chunk_enrich:   { scope: "per-document", body: `{"kind":"chunk_enrich","force":false,"options":{"provider_pref":["cloud_pool","ws_relay","mcp_pull"]}}`, tables: "tag_segments · entities · entity_links", llm: "yes" },
+  graph_topology: { scope: "per-document", body: `{"kind":"graph_topology","force":false}`, tables: "document_links WHERE source_document_id = this", llm: "no — deterministic", notes: "No auto-rerun: client triggers explicitly when stale (doc §6.1)." },
+  wiki_abstract:  { scope: "per-document", body: `{"kind":"wiki_abstract","force":false}`,  tables: "wiki_chapters · wiki_chapters.summary", llm: "yes" },
+  note_classify:  { scope: "per-document", body: `{"kind":"note_classify","force":false}`,  tables: "note_tag_suggestions", llm: "yes", notes: "Requires ≥1 workspace user tag (412 if none)." },
+  // Legacy aliases — older StageInfo callers may still pass these.
+  ai_enrich:      { scope: "per-document", body: `{"kind":"chunk_enrich","force":false}`,   tables: "tag_segments · entities · entity_links", llm: "yes" },
+  graph:          { scope: "per-document", body: `{"kind":"graph_topology","force":false}`, tables: "document_links", llm: "no — deterministic" },
 };
 
 export type StageDetailModalProps = {
@@ -334,6 +360,45 @@ export function StageDetailModal(props: StageDetailModalProps) {
                 <div className="proto-stage-cost-row-l">Node</div>
                 <div className="proto-stage-cost-row-r">{stage.compute.node}</div>
               </>)}
+            </div>
+          )}
+
+          {/* Cloud association — what the desktop sends + what the
+              cloud writes when this stage runs. Source: integration
+              doc §2.1 + §10.3. Always rendered so devs can copy the
+              endpoint/body straight from the modal. */}
+          {(() => {
+            const assoc = CLOUD_ASSOC[stage.cloudStage];
+            if (!assoc) return null;
+            return (
+              <dl className="proto-stage-kv">
+                <dt>endpoint</dt>
+                <dd><code className="proto-stage-code">POST /v1/processing/{"{document_id}"}/run</code></dd>
+                <dt>kind</dt>
+                <dd><code className="proto-stage-code">{stage.cloudStage}</code></dd>
+                <dt>scope</dt>
+                <dd>{assoc.scope}</dd>
+                <dt>body</dt>
+                <dd><code className="proto-stage-code">{assoc.body}</code></dd>
+                <dt>tables</dt>
+                <dd><code className="proto-stage-code">{assoc.tables}</code></dd>
+                <dt>LLM</dt>
+                <dd>{assoc.llm}</dd>
+                {assoc.notes && (<><dt>note</dt><dd style={{ color: "var(--color-text-muted)" }}>{assoc.notes}</dd></>)}
+              </dl>
+            );
+          })()}
+
+          {stage.stale && (
+            <div className="proto-stage-stale-card">
+              <div className="proto-stage-stale-head">Why stale?</div>
+              <p className="proto-stage-stale-body">
+                The artefact exists from a prior successful run, but its inputs (document
+                content or an upstream stage's output) changed since. No implicit
+                re-run — click <b>Re-run</b> to refresh, or <b>Update {stage.cloudStage.replace(/_/g, " ")}</b>
+                from the Pipeline tab. Topology re-runs deterministically and never
+                burns tokens; chunk_enrich / wiki_abstract / note_classify will.
+              </p>
             </div>
           )}
 

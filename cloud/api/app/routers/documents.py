@@ -9,6 +9,7 @@ async jobs + richer chunking.
 
 from __future__ import annotations
 
+import json as _json
 import re
 from datetime import datetime
 from uuid import UUID
@@ -30,7 +31,10 @@ _AUTO_INGEST_KINDS = {"note", "wiki_topic"}
 
 
 def _schedule_auto_ingest(
-    bg: BackgroundTasks, workspace_id: str, doc_id: str, metadata: dict | None,
+    bg: BackgroundTasks,
+    workspace_id: str,
+    doc_id: str,
+    metadata: dict | None,
 ) -> None:
     md = metadata or {}
     snt = md.get("smartnote_type") if isinstance(md, dict) else None
@@ -43,11 +47,16 @@ def _schedule_auto_ingest(
             await _ingest(workspace_id, doc_id)
         except Exception:
             import logging
+
             logging.getLogger(__name__).warning(
-                "auto-ingest failed for %s/%s", workspace_id, doc_id, exc_info=True,
+                "auto-ingest failed for %s/%s",
+                workspace_id,
+                doc_id,
+                exc_info=True,
             )
 
     bg.add_task(_runner)
+
 
 router = APIRouter(prefix="/v1/documents", tags=["documents"])
 
@@ -96,6 +105,19 @@ def _row_to_out(r) -> DocumentOut:
     )
 
 
+def _json_value(value, default=None):
+    if value is None:
+        return default
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str):
+        try:
+            return _json.loads(value)
+        except Exception:
+            return default
+    return value
+
+
 @router.post(
     "",
     response_model=DocumentOut,
@@ -124,7 +146,10 @@ async def create_document(
     # Auto-ingest after the doc lands so a sync push from device A
     # makes the chunks immediately available to device B's search.
     _schedule_auto_ingest(
-        background_tasks, identity.workspace_id, str(row["id"]), req.metadata,
+        background_tasks,
+        identity.workspace_id,
+        str(row["id"]),
+        req.metadata,
     )
     await usage.bump(identity.workspace_id, document_delta=1)
     return _row_to_out(row)
@@ -148,7 +173,8 @@ async def ingest_document(
         doc = await conn.fetchrow(
             "SELECT id, name, content, workspace_id FROM documents "
             "WHERE id = $1 AND workspace_id = $2",
-            UUID(document_id), UUID(identity.workspace_id),
+            UUID(document_id),
+            UUID(identity.workspace_id),
         )
     if not doc:
         raise HTTPException(404, "document not found")
@@ -194,8 +220,13 @@ async def ingest_document(
 @router.get("", dependencies=[Depends(require_scope("documents:read"))])
 async def list_documents(
     identity: Identity = Depends(require_scope("documents:read")),
-    since: str | None = Query(default=None, description="ISO timestamp; return docs updated after this"),
-    smartnote_type: str | None = Query(default=None, description="metadata.smartnote_type filter (note|wiki_topic|smart_table)"),
+    since: str | None = Query(
+        default=None, description="ISO timestamp; return docs updated after this"
+    ),
+    smartnote_type: str | None = Query(
+        default=None,
+        description="metadata.smartnote_type filter (note|wiki_topic|smart_table)",
+    ),
 ) -> dict:
     where = ["workspace_id = $1"]
     args: list = [UUID(identity.workspace_id)]
@@ -213,8 +244,7 @@ async def list_documents(
     sql = (
         "SELECT id, workspace_id, name, kind, byte_size, ingested_at, "
         "       created_at, updated_at, metadata "
-        "FROM documents WHERE " + " AND ".join(where) +
-        " ORDER BY updated_at DESC"
+        "FROM documents WHERE " + " AND ".join(where) + " ORDER BY updated_at DESC"
     )
     async with pool().acquire() as conn:
         rows = await conn.fetch(sql, *args)
@@ -238,15 +268,20 @@ async def patch_document(
     sets = ["updated_at = now()"]
     args: list = []
     if "name" in updates:
-        args.append(updates["name"]); sets.append(f"name = ${len(args)}")
+        args.append(updates["name"])
+        sets.append(f"name = ${len(args)}")
     if "kind" in updates:
-        args.append(updates["kind"]); sets.append(f"kind = ${len(args)}")
+        args.append(updates["kind"])
+        sets.append(f"kind = ${len(args)}")
     if "metadata" in updates:
-        args.append(updates["metadata"] or {}); sets.append(f"metadata = ${len(args)}")
+        args.append(updates["metadata"] or {})
+        sets.append(f"metadata = ${len(args)}")
     if "content" in updates and updates["content"] is not None:
         content = updates["content"]
-        args.append(content); sets.append(f"content = ${len(args)}")
-        args.append(len(content.encode("utf-8"))); sets.append(f"byte_size = ${len(args)}")
+        args.append(content)
+        sets.append(f"content = ${len(args)}")
+        args.append(len(content.encode("utf-8")))
+        sets.append(f"byte_size = ${len(args)}")
         # Clear ingest timestamp — chunks from the old content no longer
         # reflect the doc; caller should re-ingest (or leave it stale).
         sets.append("ingested_at = NULL")
@@ -256,8 +291,9 @@ async def patch_document(
     ws_pos = len(args)
 
     sql = (
-        "UPDATE documents SET " + ", ".join(sets) +
-        f" WHERE id = ${doc_pos} AND workspace_id = ${ws_pos} "
+        "UPDATE documents SET "
+        + ", ".join(sets)
+        + f" WHERE id = ${doc_pos} AND workspace_id = ${ws_pos} "
         "RETURNING id, workspace_id, name, kind, byte_size, ingested_at, "
         "          created_at, updated_at, metadata"
     )
@@ -269,7 +305,9 @@ async def patch_document(
     # patches (renames, scope tweaks) don't need it.
     if "content" in updates and updates["content"] is not None:
         _schedule_auto_ingest(
-            background_tasks, identity.workspace_id, str(row["id"]),
+            background_tasks,
+            identity.workspace_id,
+            str(row["id"]),
             row.get("metadata"),
         )
     return _row_to_out(row)
@@ -290,11 +328,13 @@ async def delete_document(
             await conn.execute(
                 "DELETE FROM memories WHERE workspace_id = $1 "
                 "AND kind = 'document_ref' AND structured->>'document_id' = $2",
-                UUID(identity.workspace_id), document_id,
+                UUID(identity.workspace_id),
+                document_id,
             )
             result = await conn.execute(
                 "DELETE FROM documents WHERE id = $1 AND workspace_id = $2",
-                UUID(document_id), UUID(identity.workspace_id),
+                UUID(document_id),
+                UUID(identity.workspace_id),
             )
     if not result.endswith(" 1"):
         raise HTTPException(404, "document not found")
@@ -311,7 +351,8 @@ async def get_document(
             "SELECT id, workspace_id, name, kind, content, metadata, byte_size, "
             "       ingested_at, created_at "
             "FROM documents WHERE id = $1 AND workspace_id = $2",
-            UUID(document_id), UUID(identity.workspace_id),
+            UUID(document_id),
+            UUID(identity.workspace_id),
         )
     if not row:
         raise HTTPException(404, "document not found")
@@ -322,17 +363,14 @@ async def get_document(
     }
 
 
-@router.get("/{document_id}/kn", dependencies=[Depends(require_scope("documents:read"))])
+@router.get(
+    "/{document_id}/kn", dependencies=[Depends(require_scope("documents:read"))]
+)
 async def get_document_kn(
     document_id: str,
     identity: Identity = Depends(require_scope("documents:read")),
 ) -> dict:
-    """Knowledge view of a document — what's been computed for it:
-    chunks (chunk + embed pass), tag_segments (LLM enrich pass),
-    enrich_jobs history. One round-trip for the desktop's Library
-    KN tab so it can render the actual processed state instead of
-    placeholders.
-    """
+    """Canonical Library knowledge read model for one document."""
     ws = UUID(identity.workspace_id)
     doc = UUID(document_id)
     async with pool().acquire() as conn:
@@ -340,25 +378,54 @@ async def get_document_kn(
         # decide which downstream tables to consult (wiki_chapters for
         # wiki_topic, tag_segments for everything else).
         meta_row = await conn.fetchrow(
-            "SELECT metadata FROM documents WHERE id=$1 AND workspace_id=$2",
-            doc, ws,
+            "SELECT metadata, content_sha256 FROM documents WHERE id=$1 AND workspace_id=$2",
+            doc,
+            ws,
         )
         if not meta_row:
             raise HTTPException(404, "document not found")
-        import json as _json
-        meta = meta_row["metadata"] or {}
-        if isinstance(meta, str):
-            try:
-                meta = _json.loads(meta)
-            except Exception:
-                meta = {}
-        kind = (meta.get("smartnote_type") or "")
+        meta = _json_value(meta_row["metadata"], {}) or {}
+        kind = meta.get("smartnote_type") or ""
+        content_sha = meta_row["content_sha256"]
+        counts = await conn.fetchrow(
+            """
+            SELECT
+              count(*)::int AS chunk_total,
+              count(*) FILTER (WHERE embedding IS NOT NULL)::int AS embedded_chunk_count
+            FROM chunks
+            WHERE document_id=$1 AND workspace_id=$2
+            """,
+            doc,
+            ws,
+        )
+        entity_count = await conn.fetchval(
+            """
+            SELECT count(DISTINCT te.entity_id)::int
+            FROM tag_entities te
+            WHERE te.workspace_id=$1
+              AND te.tag IN (
+                SELECT DISTINCT dimension
+                FROM chunks
+                WHERE document_id=$2 AND workspace_id=$1
+              )
+            """,
+            ws,
+            doc,
+        )
+        # Larger cap so big wiki docs (e.g. ~500 chapter chunks) round-
+        # trip in one /kn call. The full chunks list is needed for the
+        # KN tab body + tree-row counts; capping at 200 hid the rest
+        # of a 467-chunk doc and left the tab label disagreeing with
+        # the row's chunk_total. 2000 ≈ 1MB over the wire — bounded
+        # and well within JSON sanity. If we ever need more, add
+        # cursor pagination instead of nudging the cap higher.
         chunks = await conn.fetch(
             "SELECT id, dimension, line_start, line_end, text, keywords, "
             "       source_ref "
             "FROM chunks WHERE document_id=$1 AND workspace_id=$2 "
-            "ORDER BY line_start ASC LIMIT 200",
-            doc, ws,
+            "ORDER BY line_start ASC LIMIT 2000",
+            doc,
+            ws,
         )
         # Wiki docs don't write tag_segments (chapter summary replaces
         # line-range tags); skip the query so we don't show stale rows
@@ -377,19 +444,105 @@ async def get_document_kn(
                 "SELECT id, start_line, end_line, tag, confidence, summary, meta "
                 "FROM tag_segments WHERE document_id=$1 AND workspace_id=$2 "
                 "ORDER BY start_line ASC LIMIT 200",
-                doc, ws,
+                doc,
+                ws,
             )
             wiki_chapters = []
-        jobs = await conn.fetch(
-            "SELECT id, status, executor, attempts, error, created_at, "
-            "       dispatched_at, finished_at, result "
-            "FROM enrich_jobs WHERE document_id=$1 "
-            "ORDER BY created_at DESC LIMIT 10",
+        runs = await conn.fetch(
+            """
+            SELECT id, kind, status, executor, error, revision, attempts,
+                   created_at, started_at, finished_at, result, input_snapshot
+            FROM processing_runs
+            WHERE document_id=$1 AND workspace_id=$2
+            ORDER BY created_at DESC LIMIT 20
+            """,
             doc,
+            ws,
         )
+        suggestions = await conn.fetch(
+            """
+            SELECT id, run_id, tag, confidence, reasoning, status, proposed_at, reviewed_at
+            FROM note_tag_suggestions
+            WHERE document_id=$1 AND workspace_id=$2
+            ORDER BY proposed_at DESC LIMIT 50
+            """,
+            doc,
+            ws,
+        )
+        links = await conn.fetch(
+            """
+            SELECT dl.target_document_id, d.name AS target_name, dl.relation_type,
+                   dl.score, dl.evidence, dl.run_id, dl.created_at
+            FROM document_links dl
+            JOIN documents d ON d.id=dl.target_document_id
+            WHERE dl.source_document_id=$1 AND dl.workspace_id=$2
+            ORDER BY dl.score DESC, dl.created_at DESC LIMIT 50
+            """,
+            doc,
+            ws,
+        )
+    processing_runs = [
+        {
+            "id": str(r["id"]),
+            "run_id": str(r["id"]),
+            "kind": r["kind"],
+            "status": r["status"],
+            "executor": r["executor"],
+            "error": _json_value(r["error"], r["error"]),
+            "revision": int(r["revision"] or 0),
+            "attempts": int(r["attempts"] or 0),
+            "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+            "started_at": r["started_at"].isoformat() if r["started_at"] else None,
+            "finished_at": r["finished_at"].isoformat() if r["finished_at"] else None,
+            "result": _json_value(r["result"], None),
+            "input_snapshot": _json_value(r["input_snapshot"], {}),
+        }
+        for r in runs
+    ]
+    latest_by_kind = {}
+    for run in processing_runs:
+        latest_by_kind.setdefault(run["kind"], run)
+
+    def stage_state(stage: str, available: bool = True) -> dict:
+        latest = latest_by_kind.get(stage)
+        snap = latest.get("input_snapshot", {}) if latest else {}
+        stale = bool(latest and content_sha and snap.get("content_sha") != content_sha)
+        return {
+            "stage": stage,
+            "available": available,
+            "status": latest["status"]
+            if latest
+            else ("idle" if available else "unavailable"),
+            "run_id": latest["run_id"] if latest else None,
+            "revision": latest["revision"] if latest else 0,
+            "stale": stale,
+            "error": latest.get("error") if latest else None,
+            "result": latest.get("result") if latest else None,
+            "updated_at": latest.get("finished_at")
+            or latest.get("started_at")
+            or latest.get("created_at")
+            if latest
+            else None,
+        }
+
+    chunkable = kind in ("note", "wiki_topic")
+    stages = {
+        "chunk_embed": stage_state("chunk_embed", chunkable),
+        "chunk_enrich": stage_state("chunk_enrich", kind != "wiki_topic" and chunkable),
+        "graph_topology": stage_state("graph_topology", chunkable),
+        "wiki_abstract": stage_state("wiki_abstract", kind == "wiki_topic"),
+        "note_classify": stage_state("note_classify", kind == "note"),
+    }
     return {
         "document_id": str(doc),
         "kind": kind or "doc",
+        "content_sha": content_sha,
+        "entity_count": int(entity_count or 0),
+        "chunk_total": int(counts["chunk_total"] if counts else 0),
+        "embedded_chunk_count": int(counts["embedded_chunk_count"] if counts else 0),
+        "stages": stages,
+        "runs": processing_runs,
+        "processing_runs": processing_runs[:30],
         "wiki_chapters": [
             {
                 "id": str(ch["id"]),
@@ -400,13 +553,14 @@ async def get_document_kn(
                 "line_start": int(ch["line_start"]),
                 "line_end": int(ch["line_end"]),
                 "summary": ch["summary"] or "",
-                "keywords": (
-                    list(ch["keywords"]) if isinstance(ch["keywords"], list)
-                    else (_json.loads(ch["keywords"]) if ch["keywords"] else [])
-                ),
+                "keywords": _json_value(ch["keywords"], []) or [],
                 "summarized": bool(ch["summary_sha"]),
-                "updated_at": ch["updated_at"].isoformat() if ch["updated_at"] else None,
-            } for ch in wiki_chapters
+                "last_error": None,
+                "updated_at": ch["updated_at"].isoformat()
+                if ch["updated_at"]
+                else None,
+            }
+            for ch in wiki_chapters
         ],
         "chunks": [
             {
@@ -417,7 +571,8 @@ async def get_document_kn(
                 "text": c["text"],
                 "keywords": list(c["keywords"]) if c["keywords"] else [],
                 "source_ref": c["source_ref"],
-            } for c in chunks
+            }
+            for c in chunks
         ],
         "tag_segments": [
             {
@@ -427,28 +582,40 @@ async def get_document_kn(
                 "tag": t["tag"],
                 "confidence": float(t["confidence"] or 0),
                 "summary": t["summary"] or "",
-                "meta": (t["meta"] if isinstance(t["meta"], dict) else (
-                    _json.loads(t["meta"]) if t["meta"] else {}
-                )),
-            } for t in tag_segs
+                "meta": _json_value(t["meta"], {}) or {},
+            }
+            for t in tag_segs
         ],
-        "enrich_jobs": [
+        "note_tag_suggestions": [
             {
-                "id": str(j["id"]),
-                "status": j["status"],
-                "executor": j["executor"],
-                "attempts": int(j["attempts"] or 0),
-                "error": j["error"],
-                "created_at": j["created_at"].isoformat() if j["created_at"] else None,
-                "dispatched_at": j["dispatched_at"].isoformat() if j["dispatched_at"] else None,
-                "finished_at": j["finished_at"].isoformat() if j["finished_at"] else None,
-                "tokens_total": (
-                    (j["result"] if isinstance(j["result"], dict) else (
-                        _json.loads(j["result"]) if j["result"] else {}
-                    )).get("total_tokens", 0)
-                    if j["result"] else 0
-                ),
-            } for j in jobs
+                "id": str(s["id"]),
+                "run_id": str(s["run_id"]) if s["run_id"] else None,
+                "tag": s["tag"],
+                "user_tag": s["tag"],
+                "confidence": float(s["confidence"] or 0),
+                "reason": s["reasoning"],
+                "reasoning": s["reasoning"],
+                "status": s["status"],
+                "created_at": s["proposed_at"].isoformat()
+                if s["proposed_at"]
+                else None,
+                "decided_at": s["reviewed_at"].isoformat()
+                if s["reviewed_at"]
+                else None,
+            }
+            for s in suggestions
+        ],
+        "document_links": [
+            {
+                "target_document_id": str(l["target_document_id"]),
+                "target_name": l["target_name"],
+                "relation_type": l["relation_type"],
+                "score": float(l["score"] or 0),
+                "evidence": _json_value(l["evidence"], {}) or {},
+                "run_id": str(l["run_id"]) if l["run_id"] else None,
+                "created_at": l["created_at"].isoformat() if l["created_at"] else None,
+            }
+            for l in links
         ],
     }
 

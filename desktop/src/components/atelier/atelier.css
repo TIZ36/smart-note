@@ -1545,9 +1545,131 @@
   width: 100%;
 }
 
-/* Left tree (220px) */
+/* Right Inspector — 320px context column. Per integration doc + the
+ * library-redesign-b prototype, surfaces tab-specific detail:
+ *   pipeline → run inspector (concurrency, tokens, live logs)
+ *   chunks   → chunk inspector (vector/dim/keywords/neighbors)
+ *   segments → segment detail
+ *   tags     → suggestion detail (accept/dismiss CTA)
+ *   chapters → chapter detail
+ *   graph    → document-link detail
+ *   bulk     → bulk plan summary
+ *   raw      → raw-view info
+ * Stacks under main content on narrow screens.
+ */
+.proto-library-inspector {
+  width: 320px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--color-border);
+  background: var(--color-bg-sidebar);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+/* On narrow viewports drop the inspector so the content pane
+ * doesn't get squeezed to <450px. The data inside the inspector is
+ * always reachable via the stage-detail modal + the segments/chunks
+ * tabs, so hiding it is non-destructive. Threshold: rail (~56) +
+ * tree (280) + content (~500 min) + inspector (320) ≈ 1156px. */
+@media (max-width: 1180px) {
+  .proto-library-inspector { display: none; }
+}
+/* Below that, also collapse the tree to a tighter 220px so the
+ * content pane keeps a usable width on a typical 1280 macbook. */
+@media (max-width: 1024px) {
+  .proto-library-tree { width: 220px; }
+}
+.proto-library-inspector-head {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-border);
+  display: flex; align-items: flex-start; gap: 10px;
+}
+.proto-library-inspector-head .title {
+  font-size: 13px; font-weight: 500;
+  color: var(--color-text-primary);
+}
+.proto-library-inspector-head .sub {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+.proto-library-inspector-body {
+  padding: 14px 16px;
+  overflow: auto;
+  flex: 1;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+.proto-library-inspector-body h4 {
+  font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin: 14px 0 6px; font-weight: 500;
+}
+.proto-library-inspector-body h4:first-child { margin-top: 0; }
+.proto-library-inspector-body .kv {
+  display: grid; grid-template-columns: max-content 1fr;
+  gap: 6px 14px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+}
+.proto-library-inspector-body dt { color: var(--color-text-muted); }
+.proto-library-inspector-body dd { margin: 0; color: var(--color-text-primary); }
+.proto-library-inspector-body p {
+  margin: 4px 0; line-height: 1.55;
+}
+.proto-library-inspector-body ul {
+  padding-left: 18px;
+  margin: 4px 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+.proto-library-inspector-body code {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--color-bg-soft, var(--color-bg-elevated));
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+}
+.proto-library-inspector-empty {
+  padding: 28px 18px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+.proto-library-inspector-logbox {
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 10px 12px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10.5px;
+  color: var(--color-text-muted);
+  margin-top: 4px;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+.proto-library-inspector-badge {
+  display: inline-flex;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  margin-left: 6px;
+}
+.proto-library-inspector-badge.done    { background: color-mix(in oklab, var(--color-accent) 12%, transparent); color: var(--color-accent); }
+.proto-library-inspector-badge.running { background: color-mix(in oklab, var(--color-accent) 12%, transparent); color: var(--color-accent); }
+.proto-library-inspector-badge.failed  { background: color-mix(in oklab, var(--color-danger) 12%, transparent); color: var(--color-danger); }
+.proto-library-inspector-badge.warn    { background: color-mix(in oklab, var(--color-warning) 12%, transparent); color: var(--color-warning); }
+
+/* Left tree · 280px to match prototype's 4-column shell
+ * (44 rail / 280 tree / 1fr content / 320 inspector). */
 .proto-library-tree {
-  width: 220px;
+  width: 280px;
   flex-shrink: 0;
   border-right: 1px solid var(--color-border);
   background: var(--color-bg-elevated);
@@ -1617,6 +1739,40 @@
   margin-top: 8px;
 }
 .proto-library-group:first-of-type { margin-top: 0; }
+/* Per-group quick actions · Select all / Invert · same-kind only.
+ * Idle at 60% opacity, fully lit on group hover (matches prototype
+ * §group-helpers — keeps tree calm when not in use). */
+.proto-library-group-helpers {
+  padding: 3px 12px 4px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  opacity: 0.6;
+  transition: opacity 160ms ease;
+}
+.proto-library-tree-group:hover .proto-library-group-helpers,
+.proto-library-tree-group:focus-within .proto-library-group-helpers {
+  opacity: 1;
+}
+.proto-library-group-helper {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  padding: 2px 7px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.proto-library-group-helper:hover {
+  color: var(--color-text-primary);
+  border-color: var(--color-text-muted);
+}
+.proto-library-group-helper[data-active="true"] {
+  color: var(--color-accent);
+  border-color: color-mix(in oklab, var(--color-accent) 35%, var(--color-border));
+}
 .proto-library-group-count {
   font-size: 10px;
   color: var(--color-text-muted);
@@ -1626,11 +1782,20 @@
   font-weight: 400;
 }
 
+/* Library tree row · two-line layout
+ *   ┌─[check] [name ……………………] [size·age]
+ *   │         [bits dots]  [status text]
+ * Bits represent each kind's stage state per doc — derived from the
+ * useDocPipelineStates rollup. Status text is a short human label
+ * (`enriching` / `all done` / `embed only` / `enrich failed` / `not
+ * processed`) so users don't need to memorize bit positions. */
 .proto-library-tree-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 12px;
+  display: grid;
+  grid-template-columns: 16px 1fr auto;
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  row-gap: 2px;
+  padding: 6px 12px 7px;
   font-size: 12px;
   color: var(--color-text-secondary);
   cursor: pointer;
@@ -1658,12 +1823,25 @@
   margin-left: -6px;
   margin-right: 3px;
 }
+.proto-library-tree-item .proto-library-tree-item-check {
+  grid-column: 1; grid-row: 1;
+  display: flex; align-items: center; justify-content: center;
+}
 .proto-library-tree-item-name {
-  flex: 1;
+  grid-column: 2; grid-row: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.proto-library-tree-item-meta {
+  grid-column: 3; grid-row: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10.5px;
+  color: var(--color-text-muted);
 }
 .proto-library-tree-item-count {
   font-size: 10px;
@@ -1671,6 +1849,37 @@
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
+.proto-library-tree-item-bits {
+  grid-column: 2 / 4; grid-row: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+.proto-library-tree-item-bits-dots {
+  display: inline-flex;
+  gap: 2px;
+}
+.proto-library-tree-item-bits-dots span {
+  width: 5px; height: 9px;
+  border-radius: 1px;
+  background: var(--color-bg-elevated);
+}
+.proto-library-tree-item-bits-dots span.on   { background: var(--color-accent); opacity: 0.85; }
+.proto-library-tree-item-bits-dots span.run  { background: var(--color-accent); animation: proto-tree-bit-blink 1.4s ease-in-out infinite; }
+.proto-library-tree-item-bits-dots span.fail { background: var(--color-danger); }
+.proto-library-tree-item-bits-dots span.gtop { background: color-mix(in oklab, var(--color-accent) 60%, var(--color-warning)); }
+@keyframes proto-tree-bit-blink {
+  50% { opacity: 0.35; }
+}
+.proto-library-tree-item-bits-label {
+  opacity: 0.85;
+}
+.proto-library-tree-item-bits-label.fail { color: var(--color-danger); }
+.proto-library-tree-item-bits-label.run  { color: var(--color-accent); }
 
 /* Right content */
 .proto-library-content {
@@ -1680,18 +1889,29 @@
   min-width: 0;
   min-height: 0;
 }
+/* Right content pane is the responsive container — Tree (280) +
+ * Inspector (320) take 600px on the side, so on a 1280 viewport
+ * `content` can squeeze to <500px. Use container queries (scoped
+ * to the content pane) instead of viewport media so the breakpoint
+ * fires only when the pane itself is narrow. */
+.proto-library-content {
+  container-type: inline-size;
+  container-name: librarycontent;
+}
 .proto-library-content-bar {
   padding: 12px 24px;
   border-bottom: 1px solid var(--color-border);
   display: flex;
   align-items: center;
-  gap: 12px;
+  flex-wrap: wrap;
+  row-gap: 6px;
+  column-gap: 12px;
 }
 .proto-library-content-title {
   font-size: 14px;
   font-weight: 500;
   letter-spacing: -0.005em;
-  flex: 1;
+  flex: 1 1 200px;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1701,10 +1921,37 @@
   font-size: 11px;
   color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
 }
 .proto-library-content-actions {
   display: flex;
   gap: 4px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* Tight breakpoint · ≤640px content pane.
+ *   - Drop the meta (size/age) — least informational; doc name
+ *     keeps full primacy.
+ *   - Tighten paddings so the title + actions can both fit.
+ *   - Allow actions to wrap to a second row when they still
+ *     don't fit (rare, but degrades gracefully).
+ */
+@container librarycontent (max-width: 640px) {
+  .proto-library-content-bar {
+    padding: 10px 16px;
+    column-gap: 8px;
+  }
+  .proto-library-content-meta { display: none; }
+  .proto-library-content-actions { gap: 3px; }
+}
+
+/* Very tight · ≤460px (e.g. side panel docked tree+content stack).
+ * Title takes its own row; actions wrap below to avoid clipping. */
+@container librarycontent (max-width: 460px) {
+  .proto-library-content-title { flex: 1 1 100%; }
+  .proto-library-content-actions { margin-left: 0; }
 }
 .proto-library-content-scroll {
   flex: 1;
@@ -1774,6 +2021,15 @@
 .proto-library-kn-tab-active .proto-library-kn-tab-count {
   background: color-mix(in oklab, var(--color-accent) 15%, transparent);
   color: var(--color-accent);
+}
+/* Partial-summarized state · structure exists but the LLM stage
+ * hasn't filled all rows. Gold-tinted so users notice "0/14" means
+ * "wiki_abstract still needs to run", not "all done". */
+.proto-library-kn-tab-count-partial {
+  background: color-mix(in oklab, var(--color-warning) 14%, transparent) !important;
+  color: var(--color-warning) !important;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
 }
 .proto-library-kn-body {
   flex: 1;
@@ -1860,6 +2116,49 @@
   width: 100%;
   margin-left: auto;
   margin-right: auto;
+}
+
+/* Line-anchored variant — used when KN tabs need to scroll-jump
+ * to a specific line range. Each row has data-line so the parent
+ * can target it via querySelector. The flash class fades in then
+ * out so the user sees where the click landed without permanent
+ * highlight noise. */
+.proto-library-raw-lines {
+  padding: 12px 0 48px;
+}
+.proto-library-raw-line {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  align-items: baseline;
+  padding: 0 28px 0 0;
+  scroll-margin-top: 16px;
+  scroll-margin-bottom: 16px;
+}
+.proto-library-raw-lineno {
+  user-select: none;
+  text-align: right;
+  padding-right: 14px;
+  color: var(--color-text-muted);
+  opacity: 0.5;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+.proto-library-raw-linetext {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+@keyframes proto-raw-flash {
+  0%   { background: color-mix(in oklab, var(--color-accent) 22%, transparent); }
+  100% { background: transparent; }
+}
+.proto-library-raw-line-flash {
+  animation: proto-raw-flash 1.6s ease-out 1 both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .proto-library-raw-line-flash {
+    background: color-mix(in oklab, var(--color-accent) 14%, transparent);
+    animation: none;
+  }
 }
 
 /* Inline kind picker — sits in the Library Docs actions row.
@@ -1956,6 +2255,1460 @@
   gap: 4px;
   margin-top: 8px;
   flex-wrap: wrap;
+}
+
+/* ────────────────────────────────────────────────────────────────
+ * Pipeline tab · per-doc KP UI (Library Docs → KN → Pipeline).
+ *
+ * Layout inside the Pipeline status card:
+ *   .proto-pipeline-stages   E/R/G rows · badge ◂──▸ trigger
+ *   .proto-pipeline-runs-hint   one-line cloud-not-set hint
+ *   .proto-pipeline-runlog   collapsible run history
+ *
+ * Triggers used to live in a top toolbar (.proto-pipeline-runs
+ * heading); folding them into the stage rows means the action sits
+ * next to the state it changes. Tone-tinted icon (LLM = accent,
+ * non-LLM = muted) replaces the LLM/no-LLM pills the bulk-action
+ * tiles use — at this size pills crowd the row.
+ * ──────────────────────────────────────────────────────────────── */
+.proto-pipeline-runs-hint {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin: 10px 0 0;
+  line-height: 1.45;
+}
+
+/* Stage rows · grouped by category (Chunk · Wiki / Note · Graph)
+ * so the dependency direction reads top-down. Group head is soft
+ * (no bg fill) to keep the contained rows reading as one unit. */
+.proto-pipeline-stages {
+  display: flex;
+  flex-direction: column;
+  margin-top: 10px;
+}
+.proto-pipeline-stage-group {
+  display: flex; flex-direction: column;
+  border-top: 1px solid var(--color-border);
+  padding-top: 6px;
+  margin-top: 8px;
+}
+.proto-pipeline-stage-group:first-child {
+  border-top: none;
+  padding-top: 2px;
+  margin-top: 0;
+}
+.proto-pipeline-stage-group-head {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 0 0 6px;
+}
+.proto-pipeline-stage-group-name {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-primary);
+  font-weight: 500;
+}
+.proto-pipeline-stage-group-applies-to {
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+.proto-pipeline-stage {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-top: 1px solid color-mix(in oklab, var(--color-border) 60%, transparent);
+  transition: background-color 180ms ease-out, opacity 180ms ease-out;
+}
+.proto-pipeline-stage-group .proto-pipeline-stage:first-of-type { border-top: none; padding-top: 2px; }
+.proto-pipeline-stage-letter {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 4px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+.proto-pipeline-stage-done .proto-pipeline-stage-letter {
+  background: color-mix(in oklab, var(--color-accent) 14%, transparent);
+  color: var(--color-accent);
+  border-color: transparent;
+}
+.proto-pipeline-running .proto-pipeline-stage-letter,
+.proto-pipeline-stage-running .proto-pipeline-stage-letter {
+  color: var(--color-accent);
+  border-color: color-mix(in oklab, var(--color-accent) 35%, var(--color-border));
+  animation: proto-stage-breathe 1400ms ease-out infinite;
+}
+/* Clickable stage rows · subtle hover + cursor so users discover
+ * "click for details". Used to open the stage-detail modal. */
+.proto-pipeline-stage-clickable { cursor: pointer; }
+.proto-pipeline-stage-clickable:hover {
+  background: color-mix(in oklab, var(--color-bg-hover) 55%, transparent);
+}
+.proto-pipeline-stage-clickable:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--color-accent) 40%, transparent);
+  outline-offset: -2px;
+}
+/* Stale = artefact exists but inputs changed since the run.
+ * Cloud derives this and reports stages[kind].stale = true (see
+ * docs/library-client-integration.md §2.2 + §8). The user sees the
+ * row in warn-tinted state with an Update button; nothing auto-runs. */
+.proto-pipeline-stage-stale .proto-pipeline-stage-letter {
+  background: color-mix(in oklab, var(--color-warning) 14%, transparent);
+  color: var(--color-warning);
+  border-color: transparent;
+}
+.proto-pipeline-stage-stale .proto-pipeline-stage-label,
+.proto-pipeline-stage-stale .proto-pipeline-stage-pending {
+  color: var(--color-warning);
+}
+/* Failed = last run errored. Pipeline continues to show the prior
+ * artefact count (which may be 0) but signals that the user needs
+ * to look at the error / retry. Recovery CTAs live in the run detail
+ * modal + the failed row in RunHistory. */
+.proto-pipeline-stage-failed .proto-pipeline-stage-letter {
+  background: color-mix(in oklab, var(--color-danger) 12%, transparent);
+  color: var(--color-danger);
+  border-color: transparent;
+}
+.proto-pipeline-stage-failed .proto-pipeline-stage-pending {
+  color: var(--color-danger);
+}
+.proto-pipeline-stage-main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+.proto-pipeline-stage-label {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.proto-pipeline-stage-done .proto-pipeline-stage-label {
+  color: var(--color-text-primary);
+}
+.proto-pipeline-stage-count {
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  margin-left: 2px;
+}
+.proto-pipeline-stage-pending {
+  color: var(--color-text-muted);
+  font-style: italic;
+  margin-left: 2px;
+}
+.proto-pipeline-stage-live {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 10.5px;
+  color: var(--color-text-muted);
+  line-height: 1.2;
+}
+.proto-pipeline-stage-progress {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--color-accent) 8%, var(--color-bg-elevated));
+}
+.proto-pipeline-stage-progress > span {
+  display: block;
+  height: 100%;
+  min-width: 18%;
+  border-radius: inherit;
+  background: color-mix(in oklab, var(--color-accent) 72%, var(--color-text-muted));
+  transform-origin: left center;
+  transition: width 220ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+.proto-pipeline-stage-running .proto-pipeline-stage-progress > span:not([style]) {
+  animation: proto-stage-indeterminate 1300ms cubic-bezier(0.25, 1, 0.5, 1) infinite;
+}
+.proto-pipeline-stage-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.proto-pipeline-run-btn {
+  /* extends .proto-library-btn — overrides only what's tone-specific */
+  --tone-color: var(--color-text-muted);
+  height: 26px;
+  padding: 0 9px;
+  gap: 5px;
+}
+/* LLM tone uses the warn (gold) palette so the visual reads as
+ * "this costs money". Plus a tinted background so it stands apart
+ * from no-LLM buttons at a glance. Don't use accent here — accent
+ * is for fast/free, the brain shouldn't conflate "primary" with
+ * "burns tokens". */
+.proto-pipeline-run-btn[data-tone="llm"] {
+  --tone-color: var(--color-warning);
+  background: color-mix(in oklab, var(--color-warning) 10%, transparent);
+  border-color: color-mix(in oklab, var(--color-warning) 35%, var(--color-border));
+}
+.proto-pipeline-run-btn[data-tone="llm"]:not(:disabled):hover {
+  background: color-mix(in oklab, var(--color-warning) 16%, transparent);
+}
+.proto-pipeline-run-btn[data-tone="non-llm"]  { --tone-color: var(--color-text-muted); }
+/* "⚡ LLM" pill on LLM-stage buttons — small but loud, paired with
+ * the gold-tinted button bg so the cost cue reads at a glance. */
+.proto-pipeline-run-llm-mark {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 2px;
+  background: color-mix(in oklab, var(--color-warning) 22%, transparent);
+  color: var(--color-warning);
+  margin-left: 2px;
+}
+.proto-pipeline-run-btn .proto-pipeline-run-icon {
+  display: inline-flex;
+  color: var(--tone-color);
+}
+.proto-pipeline-run-btn:not(:disabled):hover {
+  border-color: color-mix(in oklab, var(--tone-color) 50%, var(--color-border));
+}
+.proto-pipeline-run-btn[aria-busy="true"] {
+  border-color: var(--tone-color);
+  color: var(--tone-color);
+}
+.proto-pipeline-run-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.proto-pipeline-run-btn:disabled:hover {
+  color: var(--color-text-secondary);
+  border-color: var(--color-border);
+}
+@keyframes proto-stage-breathe {
+  0%, 100% { background: var(--color-bg-elevated); }
+  50% { background: color-mix(in oklab, var(--color-accent) 11%, var(--color-bg-elevated)); }
+}
+@keyframes proto-stage-indeterminate {
+  0% { transform: translateX(-80%) scaleX(0.35); }
+  45% { transform: translateX(70%) scaleX(0.75); }
+  100% { transform: translateX(450%) scaleX(0.35); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .proto-pipeline-stage,
+  .proto-pipeline-stage-progress > span {
+    transition: none;
+  }
+  .proto-pipeline-stage-running .proto-pipeline-stage-letter,
+  .proto-pipeline-stage-running .proto-pipeline-stage-progress > span:not([style]) {
+    animation: none;
+  }
+}
+
+/* Run history — collapsible feed below the stage rows. Rows fold
+ * to a single line; the most recent is auto-expanded. Status colors
+ * the left-edge accent strip so the user can scan the column for
+ * failures without reading every row. */
+/* Recent runs · flat table-like grid · per prototype §runs-mini.
+ * No collapsible expand — each row is one line; failed rows wrap
+ * to a second line for inline recovery CTAs.
+ *
+ * Fixed-height shell so the table doesn't push the rest of the
+ * Pipeline tab off-screen as the run history grows. Internal scroll
+ * keeps the head row pinned (sticky) so column meaning stays in
+ * sight while scrolling.
+ */
+.proto-pipeline-runs-mini {
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg-elevated);
+  display: flex;
+  flex-direction: column;
+  max-height: 320px;
+  overflow: hidden;
+}
+.proto-pipeline-runs-mini-head {
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.proto-pipeline-runs-mini-scroll {
+  overflow-y: auto;
+  min-height: 0;
+}
+.proto-pipeline-runs-mini-head,
+.proto-pipeline-runs-mini-row {
+  display: grid;
+  grid-template-columns: 80px 110px 70px 1fr 80px 60px;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 14px;
+  font-size: 12px;
+}
+.proto-pipeline-runs-mini-head {
+  background: var(--color-bg-soft, var(--color-bg-elevated));
+  border-bottom: 1px solid var(--color-border);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+.proto-pipeline-runs-mini-row {
+  border-bottom: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-border);
+  cursor: default;
+}
+.proto-pipeline-runs-mini-row:last-child { border-bottom: none; }
+.proto-pipeline-runs-mini-row:hover { background: var(--color-bg-hover); }
+.proto-pipeline-runs-mini-row-done    { border-left-color: var(--color-accent); }
+.proto-pipeline-runs-mini-row-running { border-left-color: var(--color-accent); }
+.proto-pipeline-runs-mini-row-failed  { border-left-color: var(--color-danger); }
+.proto-pipeline-runs-mini-row-queued  { border-left-color: var(--color-text-muted); }
+.proto-pipeline-runs-mini-runid {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10.5px;
+  color: var(--color-text-muted);
+}
+.proto-pipeline-runs-mini-kind {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+.proto-pipeline-runs-mini-row-done    .proto-pipeline-runs-mini-kind { color: var(--color-accent); }
+.proto-pipeline-runs-mini-row-running .proto-pipeline-runs-mini-kind { color: var(--color-accent); }
+.proto-pipeline-runs-mini-row-failed  .proto-pipeline-runs-mini-kind { color: var(--color-danger); }
+.proto-pipeline-runs-mini-status {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10.5px;
+  color: var(--color-text-muted);
+}
+.proto-pipeline-runs-mini-row-done    .proto-pipeline-runs-mini-status { color: var(--color-accent); }
+.proto-pipeline-runs-mini-row-running .proto-pipeline-runs-mini-status { color: var(--color-accent); }
+.proto-pipeline-runs-mini-row-failed  .proto-pipeline-runs-mini-status { color: var(--color-danger); }
+.proto-pipeline-runs-mini-desc {
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.proto-pipeline-runs-mini-when,
+.proto-pipeline-runs-mini-dur {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  text-align: right;
+}
+.proto-pipeline-runs-mini-recovery {
+  grid-column: 1 / -1;
+  padding: 6px 0 4px 24px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  font-size: 11px;
+}
+.proto-pipeline-runs-mini-recovery .hint {
+  color: var(--color-text-muted);
+  margin-right: 6px;
+}
+
+.proto-pipeline-runlog {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+.proto-pipeline-runlog-head {
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin-bottom: 6px;
+}
+.proto-pipeline-runs-empty {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+  font-size: 11px;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+.proto-pipeline-runlog-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.proto-pipeline-runlog-row {
+  border-radius: 4px;
+  border-left: 2px solid var(--color-border);
+  background: var(--color-bg-soft);
+  overflow: hidden;
+  transition: border-color 160ms ease-out;
+}
+.proto-pipeline-runlog-row-running { border-left-color: var(--color-accent); }
+.proto-pipeline-runlog-row-done    { border-left-color: color-mix(in oklab, var(--color-accent) 60%, transparent); }
+.proto-pipeline-runlog-row-failed  { border-left-color: var(--color-danger); }
+.proto-pipeline-runlog-row-queued  { border-left-color: var(--color-text-muted); }
+.proto-pipeline-runlog-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+.proto-pipeline-runlog-runid {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10px;
+  color: var(--color-text-muted);
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--color-bg-soft);
+}
+.proto-pipeline-runlog-summary:hover {
+  background: var(--color-bg-elevated);
+}
+.proto-pipeline-runlog-caret {
+  width: 10px;
+  display: inline-flex;
+  justify-content: center;
+  color: var(--color-text-muted);
+}
+.proto-pipeline-runlog-kind {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+.proto-pipeline-runlog-status {
+  font-size: 10.5px;
+  color: var(--color-text-secondary);
+}
+.proto-pipeline-runlog-row-failed .proto-pipeline-runlog-status { color: var(--color-danger); }
+.proto-pipeline-runlog-row-done   .proto-pipeline-runlog-status { color: var(--color-accent); }
+.proto-pipeline-runlog-when {
+  margin-left: auto;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.proto-pipeline-runlog-dur {
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+}
+.proto-pipeline-runlog-body {
+  padding: 4px 10px 10px 22px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-soft);
+}
+.proto-pipeline-runlog-error {
+  color: var(--color-danger);
+  margin-bottom: 6px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10.5px;
+  word-break: break-word;
+}
+.proto-pipeline-runlog-kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 12px;
+  margin: 0;
+}
+.proto-pipeline-runlog-kv dt {
+  color: var(--color-text-muted);
+  font-size: 10.5px;
+}
+.proto-pipeline-runlog-kv dd {
+  margin: 0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Recovery CTA block · only rendered for failed runs. The hint
+ * line summarizes the inferred cause; buttons below offer the
+ * actions outlined in docs/library-client-integration.md §9.2. */
+.proto-pipeline-runlog-recovery {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed color-mix(in oklab, var(--color-danger) 25%, var(--color-border));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.proto-pipeline-runlog-recovery-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  line-height: 1.45;
+}
+.proto-pipeline-runlog-recovery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* ════════════════════════════════════════════════════════════════
+ * Library landing · zero-docs empty state.
+ *
+ * Replaces the workspace-controls panel when there are no docs to
+ * operate on. Goal: explain the processing model + offer a single
+ * clear Import CTA. Read order: hero (welcome + CTA) → "How
+ * processing works" → 5 stage cards → "What Inspector shows".
+ * ════════════════════════════════════════════════════════════════ */
+.proto-library-landing {
+  overflow: auto;
+  padding: 32px clamp(24px, 6%, 48px) 56px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  max-width: 720px;
+  margin: 0 auto;
+  width: 100%;
+}
+.proto-library-landing-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+.proto-library-landing-icon {
+  width: 40px; height: 40px;
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--color-accent) 14%, transparent);
+  color: var(--color-accent);
+  display: flex; align-items: center; justify-content: center;
+  margin-bottom: 4px;
+}
+.proto-library-landing-title {
+  font-size: 20px; font-weight: 500;
+  color: var(--color-text-primary);
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+.proto-library-landing-sub {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+  max-width: 56ch;
+  margin: 0;
+}
+.proto-library-landing-cta {
+  display: flex; align-items: center; gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.proto-library-landing-or {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+.proto-library-landing-or b { color: var(--color-text-secondary); font-weight: 500; }
+
+.proto-library-landing-section h3 {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin: 0 0 6px;
+  font-weight: 500;
+}
+.proto-library-landing-section p {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+  max-width: 64ch;
+  margin: 0;
+}
+
+.proto-library-landing-stages {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.proto-library-landing-stage {
+  display: grid;
+  grid-template-columns: 32px 1fr;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg-elevated);
+}
+.proto-library-landing-stage-letter {
+  width: 24px; height: 24px;
+  align-self: start;
+  border-radius: 4px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px; font-weight: 600;
+  background: var(--color-bg-soft, var(--color-bg-elevated));
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+}
+.proto-library-landing-stage-fast .proto-library-landing-stage-letter {
+  background: color-mix(in oklab, var(--color-accent) 14%, transparent);
+  color: var(--color-accent);
+  border-color: transparent;
+}
+.proto-library-landing-stage-llm .proto-library-landing-stage-letter {
+  background: color-mix(in oklab, var(--color-warning) 14%, transparent);
+  color: var(--color-warning);
+  border-color: transparent;
+}
+.proto-library-landing-stage-custom .proto-library-landing-stage-letter {
+  background: color-mix(in oklab, var(--color-wiki, var(--color-warning)) 14%, transparent);
+  color: var(--color-wiki, var(--color-warning));
+  border-color: transparent;
+}
+.proto-library-landing-stage-head {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+}
+.proto-library-landing-stage-name {
+  font-size: 13px; font-weight: 500;
+  color: var(--color-text-primary);
+}
+.proto-library-landing-stage-mark {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 2px;
+}
+.proto-library-landing-stage-mark.mark-fast {
+  background: color-mix(in oklab, var(--color-accent) 12%, transparent);
+  color: var(--color-accent);
+}
+.proto-library-landing-stage-mark.mark-llm {
+  background: color-mix(in oklab, var(--color-warning) 12%, transparent);
+  color: var(--color-warning);
+}
+.proto-library-landing-stage-mark.mark-custom {
+  background: color-mix(in oklab, var(--color-wiki, var(--color-warning)) 12%, transparent);
+  color: var(--color-wiki, var(--color-warning));
+}
+.proto-library-landing-stage-desc {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  line-height: 1.55;
+}
+
+/* ════════════════════════════════════════════════════════════════
+ * Stage detail modal · the dialog that opens when the user clicks
+ * a Pipeline stage row. Carries cloud association + live progress
+ * + tokens + error in one place. CSS classes here are .proto-stage-*
+ * (NOT .proto-pipeline-*) to keep the modal's look isolated from
+ * the stage row chrome it was launched from.
+ * ════════════════════════════════════════════════════════════════ */
+.proto-stage-modal-scrim {
+  position: fixed; inset: 0;
+  background: var(--color-scrim, rgba(0,0,0,0.5));
+  display: flex; align-items: center; justify-content: center;
+  z-index: 100;
+  backdrop-filter: blur(2px);
+  padding: 24px;
+}
+.proto-stage-modal {
+  width: min(640px, 96vw);
+  max-height: calc(100vh - 48px);
+  display: flex; flex-direction: column;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 12px 36px rgba(0,0,0,0.35), 0 2px 6px rgba(0,0,0,0.2);
+}
+/* Status accent strip on the left edge of the modal */
+.proto-stage-modal::before {
+  content: ""; position: absolute; pointer-events: none;
+}
+.proto-stage-modal.s-running { box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-accent) 35%, transparent), 0 12px 36px rgba(0,0,0,0.35); }
+.proto-stage-modal.s-failed  { box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-danger) 35%, transparent), 0 12px 36px rgba(0,0,0,0.35); }
+.proto-stage-modal.s-done    { box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-accent) 25%, transparent), 0 12px 36px rgba(0,0,0,0.35); }
+
+.proto-stage-head {
+  display: grid;
+  grid-template-columns: 36px 1fr auto;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+.proto-stage-stamp {
+  width: 28px; height: 28px;
+  border-radius: 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px; font-weight: 600;
+  background: var(--color-bg-soft, var(--color-bg-elevated));
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+}
+.proto-stage-modal.s-running .proto-stage-stamp { background: color-mix(in oklab, var(--color-accent) 14%, transparent); color: var(--color-accent); border-color: transparent; }
+.proto-stage-modal.s-done    .proto-stage-stamp { background: color-mix(in oklab, var(--color-accent) 14%, transparent); color: var(--color-accent); border-color: transparent; }
+.proto-stage-modal.s-failed  .proto-stage-stamp { background: color-mix(in oklab, var(--color-danger) 14%, transparent); color: var(--color-danger); border-color: transparent; }
+
+.proto-stage-titles { min-width: 0; }
+.proto-stage-eyebrow {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10.5px; letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  margin-bottom: 4px;
+}
+.proto-stage-title {
+  margin: 0;
+  font-size: 16px; font-weight: 500; letter-spacing: -0.005em;
+  color: var(--color-text-primary);
+}
+.proto-stage-subline {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin-top: 6px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+.proto-stage-pill {
+  padding: 1px 6px; border-radius: 3px;
+  background: var(--color-bg-soft, var(--color-bg-elevated));
+  color: var(--color-text-secondary);
+  letter-spacing: 0.04em;
+}
+.proto-stage-modal.s-running .proto-stage-pill {
+  background: color-mix(in oklab, var(--color-accent) 14%, transparent);
+  color: var(--color-accent);
+}
+.proto-stage-modal.s-failed .proto-stage-pill {
+  background: color-mix(in oklab, var(--color-danger) 14%, transparent);
+  color: var(--color-danger);
+}
+.proto-stage-modal.s-done .proto-stage-pill {
+  background: color-mix(in oklab, var(--color-accent) 14%, transparent);
+  color: var(--color-accent);
+}
+.proto-stage-elapsed { color: var(--color-text-muted); margin-left: 4px; }
+
+.proto-stage-close {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--color-text-muted);
+  width: 24px; height: 24px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px; line-height: 1;
+}
+.proto-stage-close:hover { color: var(--color-text-primary); border-color: var(--color-border); }
+
+.proto-stage-body {
+  padding: 14px 18px 16px;
+  overflow: auto;
+  display: flex; flex-direction: column; gap: 14px;
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
+}
+.proto-stage-purpose {
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
+  line-height: 1.55;
+}
+
+.proto-stage-prog {
+  display: flex; flex-direction: column; gap: 4px;
+}
+.proto-stage-prog-readout {
+  display: flex; align-items: baseline; gap: 8px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+}
+.proto-stage-prog-readout .num {
+  font-size: 14px; font-weight: 500;
+  color: var(--color-text-primary);
+}
+.proto-stage-prog-readout .pct { margin-left: auto; }
+.proto-stage-prog-bar {
+  height: 4px;
+  background: color-mix(in oklab, var(--color-text-muted) 14%, transparent);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.proto-stage-prog-fill {
+  height: 100%;
+  background: var(--color-accent);
+  transition: width 200ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+.proto-stage-modal.s-failed .proto-stage-prog-fill { background: var(--color-danger); }
+
+.proto-stage-err {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in oklab, var(--color-danger) 35%, var(--color-border));
+  border-left: 3px solid var(--color-danger);
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--color-danger) 6%, transparent);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  color: var(--color-danger);
+  word-break: break-word;
+}
+.proto-stage-err-label {
+  font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--color-danger);
+  display: block; margin-bottom: 4px;
+}
+
+.proto-stage-ai {
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 10px 12px;
+  background: var(--color-bg-soft, var(--color-bg-elevated));
+}
+.proto-stage-ai-head {
+  display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px;
+}
+.proto-stage-ai-badge {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 1px 6px; border-radius: 2px;
+  background: color-mix(in oklab, var(--color-warning) 14%, transparent);
+  color: var(--color-warning);
+}
+.proto-stage-ai-model {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+.proto-stage-ai-list { display: flex; flex-direction: column; gap: 4px; }
+.proto-stage-ai-step {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+}
+.proto-stage-ai-step.s-done { color: var(--color-text-muted); }
+.proto-stage-ai-step.s-running .proto-stage-ai-state {
+  color: var(--color-accent);
+  font-weight: 500;
+}
+.proto-stage-ai-step.s-failed .proto-stage-ai-state {
+  color: var(--color-danger);
+}
+.proto-stage-ai-state {
+  margin-left: auto;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.proto-stage-cost {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg-soft, var(--color-bg-elevated));
+  font-size: 11.5px;
+}
+.proto-stage-cost-head {
+  grid-column: 1 / -1;
+  display: flex; align-items: baseline; justify-content: space-between;
+  margin-bottom: 4px;
+}
+.proto-stage-cost-head .lbl {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+.proto-stage-cost-head .amt {
+  font-size: 16px; font-weight: 500;
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.proto-stage-cost-head .amt.estimating { color: var(--color-warning); }
+.proto-stage-cost-row-l {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10.5px;
+  color: var(--color-text-muted);
+}
+.proto-stage-cost-row-r {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  color: var(--color-text-primary);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.proto-stage-cost-rate {
+  margin-left: 6px;
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+
+.proto-stage-kv {
+  display: grid;
+  grid-template-columns: 130px 1fr;
+  gap: 5px 16px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  margin: 0;
+}
+.proto-stage-kv dt { color: var(--color-text-muted); }
+.proto-stage-kv dd { margin: 0; color: var(--color-text-primary); word-break: break-all; }
+.proto-stage-kv dd .copy-btn {
+  margin-left: 6px;
+  background: transparent; border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  padding: 1px 5px; border-radius: 3px; cursor: pointer;
+  font-size: 11px;
+}
+.proto-stage-kv dd .copy-btn:hover { color: var(--color-text-primary); border-color: var(--color-text-muted); }
+
+.proto-stage-json {
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg-primary);
+}
+.proto-stage-json summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 8px 12px;
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+.proto-stage-json summary::-webkit-details-marker { display: none; }
+.proto-stage-json summary .chev {
+  font-size: 10px; color: var(--color-text-muted);
+  transition: transform 160ms ease;
+}
+.proto-stage-json[open] summary .chev { transform: rotate(90deg); }
+.proto-stage-json summary .lbl {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+}
+.proto-stage-json summary .hint {
+  margin-left: auto;
+  color: var(--color-text-muted);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10.5px;
+}
+.proto-stage-json pre {
+  margin: 0;
+  padding: 10px 12px;
+  border-top: 1px solid var(--color-border);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+  overflow: auto;
+  max-height: 280px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.proto-stage-json pre .k { color: var(--color-text-muted); }
+.proto-stage-json pre .s { color: var(--color-accent); }
+.proto-stage-json pre .n { color: var(--color-warning); }
+.proto-stage-json pre .b { color: var(--color-wiki, var(--color-warning)); }
+
+.proto-stage-foot {
+  padding: 10px 18px;
+  border-top: 1px solid var(--color-border);
+  display: flex; justify-content: flex-end; gap: 6px;
+  background: var(--color-bg-soft, var(--color-bg-elevated));
+}
+
+/* Graph tab · per-section empty-state message. Used when topology
+ * ran but produced 0 links (e.g. only one doc in workspace), to
+ * explain WHY the section is empty rather than just leaving a
+ * blank pane. */
+.proto-pipeline-graph-empty {
+  border: 1px dashed var(--color-border);
+  background: var(--color-bg-soft, var(--color-bg-elevated));
+  border-radius: 4px;
+  padding: 14px 16px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  line-height: 1.55;
+}
+.proto-pipeline-graph-empty p { margin: 0; }
+.proto-pipeline-graph-empty p + p { margin-top: 6px; }
+
+/* Stage detail modal · supplements for the cloud-association card.
+ * The base .proto-stage-* classes live in StageDetailModal's own
+ * scope; these are the bits added in Task 13 (integration doc §13). */
+.proto-stage-code {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--color-bg-soft);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+  word-break: break-all;
+}
+.proto-stage-stale-card {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in oklab, var(--color-warning) 35%, var(--color-border));
+  border-left: 3px solid var(--color-warning);
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--color-warning) 6%, transparent);
+}
+.proto-stage-stale-head {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-warning);
+  margin-bottom: 4px;
+  font-weight: 500;
+}
+.proto-stage-stale-body {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--color-text-secondary);
+}
+
+/* ════════════════════════════════════════════════════════════════
+ * Bulk View — replaces the single-doc detail when ≥1 doc is checked
+ * in the tree. Per integration doc §5: shows numbered execution
+ * order at top + per-file rows with stage verdict chips so the
+ * user sees exactly what "Run" will dispatch.
+ * ════════════════════════════════════════════════════════════════ */
+.proto-bulk-view {
+  padding: 14px 16px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.proto-bulk-head {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg-elevated);
+  padding: 14px 16px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+.proto-bulk-head h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+.proto-bulk-head .sub {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  margin-top: 4px;
+}
+.proto-bulk-head h5 {
+  margin: 0 0 6px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
+.proto-bulk-order {
+  display: flex; flex-direction: column; gap: 4px;
+}
+.proto-bulk-order-step {
+  display: grid;
+  grid-template-columns: 18px 110px 1fr;
+  align-items: center; gap: 8px;
+  font-size: 11.5px;
+}
+.proto-bulk-order-step .num {
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10px;
+  color: var(--color-text-muted);
+  background: var(--color-bg-soft);
+}
+.proto-bulk-order-step .kind {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10.5px;
+  color: var(--color-text-primary);
+}
+.proto-bulk-order-step .verdict {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10.5px;
+  color: var(--color-text-muted);
+}
+
+/* File rows — one per checked doc */
+.proto-bulk-files { display: flex; flex-direction: column; gap: 6px; }
+.proto-bulk-file {
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-accent);
+  border-radius: 4px;
+  background: var(--color-bg-elevated);
+  padding: 10px 14px;
+}
+.proto-bulk-file.wiki { border-left-color: color-mix(in oklab, var(--color-accent) 60%, var(--color-warning)); }
+.proto-bulk-file-head {
+  display: flex; align-items: baseline; gap: 10px;
+  margin-bottom: 8px;
+}
+.proto-bulk-file-name {
+  font-size: 13px;
+  color: var(--color-text-primary);
+  font-weight: 500;
+}
+.proto-bulk-file-meta {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-left: auto;
+}
+.proto-bulk-stages {
+  display: flex; flex-wrap: wrap; gap: 4px;
+}
+.proto-bulk-stage {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10.5px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  background: var(--color-bg-soft);
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.proto-bulk-stage::before {
+  font-size: 9.5px;
+  opacity: 0.85;
+}
+.proto-bulk-stage.run    { background: color-mix(in oklab, var(--color-accent) 10%, transparent); color: var(--color-accent); border-color: transparent; }
+.proto-bulk-stage.run::before    { content: "▶"; }
+.proto-bulk-stage.rerun  { background: color-mix(in oklab, var(--color-warning) 12%, transparent); color: var(--color-warning); border-color: transparent; }
+.proto-bulk-stage.rerun::before  { content: "↻"; }
+.proto-bulk-stage.retry  { background: color-mix(in oklab, var(--color-danger) 10%, transparent); color: var(--color-danger); border-color: transparent; }
+.proto-bulk-stage.retry::before  { content: "↻"; }
+.proto-bulk-stage.auto   { background: color-mix(in oklab, var(--color-warning) 8%, transparent); color: color-mix(in oklab, var(--color-warning) 70%, var(--color-text-muted)); border-color: transparent; }
+.proto-bulk-stage.auto::before   { content: "↪"; }
+.proto-bulk-stage.skip   { color: var(--color-text-faint); border-style: dashed; }
+.proto-bulk-stage.skip::before   { content: "✓"; }
+
+/* Tag-suggestions review bar — sits above the suggestion list. */
+.proto-pipeline-review-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; margin-bottom: 8px;
+  border: 1px solid var(--color-border); border-radius: 4px;
+  background: var(--color-bg-soft); font-size: 12px;
+}
+.proto-pipeline-review-stat { color: var(--color-text-muted); }
+.proto-pipeline-review-stat b { color: var(--color-text-primary); font-variant-numeric: tabular-nums; }
+
+/* Suggestion row variant — uses the segment row chrome but accents
+ * via a subtle accent-tinted left edge so review queue feels
+ * different from the read-only segments list. */
+.proto-pipeline-segment-suggestion {
+  border-left: 3px solid color-mix(in oklab, var(--color-accent) 35%, var(--color-border));
+}
+
+/* Empty-state card — used by Tag suggestions when no tags / no
+ * pending. Calmer than KnEmpty because there's a CTA. */
+.proto-pipeline-empty-state {
+  border: 1px dashed var(--color-border);
+  border-radius: 6px;
+  padding: 22px 18px;
+  background: var(--color-bg-soft);
+  text-align: center;
+  color: var(--color-text-muted);
+}
+.proto-pipeline-empty-state h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--color-text-primary);
+  font-weight: 500;
+}
+.proto-pipeline-empty-state p {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.55;
+  max-width: 50ch;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Segment / chapter cards — used by both TagSegmentsTab (notes)
+ * and ChaptersTab (wiki). Buttons (not divs) so the click affords
+ * clearly and keyboard nav works; click jumps the parent raw view
+ * to the segment's line range. */
+.proto-pipeline-segments {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.proto-pipeline-segment {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg-soft);
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 160ms ease-out, background 160ms ease-out;
+}
+.proto-pipeline-segment:hover {
+  border-color: color-mix(in oklab, var(--color-accent) 35%, var(--color-border));
+  background: var(--color-bg-elevated);
+}
+.proto-pipeline-segment:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+.proto-pipeline-segment-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 11px;
+}
+.proto-pipeline-segment-title {
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+.proto-pipeline-segment-lines {
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+.proto-pipeline-segment-conf {
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.proto-pipeline-segment-status {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--color-text-muted);
+}
+.proto-pipeline-segment-status-ok {
+  color: var(--color-accent);
+}
+.proto-pipeline-segment-summary {
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+.proto-pipeline-segment-keywords {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+.proto-pipeline-segment-kw {
+  display: inline-flex;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+}
+.proto-pipeline-segments-more {
+  text-align: center;
+  font-size: 10px;
+  color: var(--color-text-muted);
+  padding: 4px;
+}
+
+/* Compact metadata footer — small chips in a row, replaces the
+ * full .proto-doc-card treatment that was overweight for 3-6
+ * fields of metadata. */
+.proto-pipeline-metadata {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--color-bg-soft);
+  margin-top: 4px;
+}
+.proto-pipeline-metadata-label {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin-right: 4px;
+}
+.proto-pipeline-metadata-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  font-size: 10.5px;
+  color: var(--color-text-secondary);
+}
+.proto-pipeline-metadata-key {
+  color: var(--color-text-muted);
+}
+.proto-pipeline-metadata-val {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10.5px;
+  word-break: break-all;
+}
+
+/* Graph tab — workspace entity graph viewer. List-style for now
+ * (no SVG simulation); ranks nodes by mention and edges by weight.
+ * Bars use --color-accent at low alpha so the column reads as a
+ * single visual rhythm without competing with the text. */
+.proto-pipeline-graph {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.proto-pipeline-graph-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.proto-pipeline-graph-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+.proto-pipeline-graph-stats {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+.proto-pipeline-graph-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.proto-pipeline-graph-subhead {
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+.proto-pipeline-graph-nodes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.proto-pipeline-graph-node {
+  display: grid;
+  grid-template-columns: minmax(80px, 1.4fr) minmax(60px, 0.8fr) 1fr 36px;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11.5px;
+}
+.proto-pipeline-graph-node:hover {
+  background: var(--color-bg-soft);
+}
+.proto-pipeline-graph-node-name {
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.proto-pipeline-graph-node-type {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  text-transform: lowercase;
+}
+.proto-pipeline-graph-node-bar {
+  display: block;
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--color-accent) 8%, transparent);
+  overflow: hidden;
+}
+.proto-pipeline-graph-node-bar-fill {
+  display: block;
+  height: 100%;
+  background: color-mix(in oklab, var(--color-accent) 60%, transparent);
+}
+.proto-pipeline-graph-node-count {
+  font-size: 10.5px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.proto-pipeline-graph-edges {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.proto-pipeline-graph-edge {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr 44px;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11.5px;
+}
+.proto-pipeline-graph-edge:hover { background: var(--color-bg-soft); }
+.proto-pipeline-graph-edge-from,
+.proto-pipeline-graph-edge-to {
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.proto-pipeline-graph-edge-to { text-align: right; }
+.proto-pipeline-graph-edge-rel {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  padding: 1px 6px;
+  background: var(--color-bg-soft);
+  border-radius: 999px;
+}
+.proto-pipeline-graph-edge-weight {
+  font-size: 10.5px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 /* Memory card (Library Memories) */
@@ -2674,9 +4427,7 @@
   flex-direction: column;
 }
 .proto-note-v3-canvas-inner {
-  max-width: 760px;
   width: 100%;
-  margin: 0 auto;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -2716,6 +4467,180 @@
   height: 100%;
   padding: 24px;
   background: var(--color-bg-primary);
+}
+
+/* ════════════════════════════════════════════════════════════════
+ * Note landing · zero-file onboarding.
+ *
+ * Same shape as LibraryLanding (hero → How it works → feature cards)
+ * so the two creation surfaces read consistently. Tone palette:
+ *   raw    — neutral / muted        (you write)
+ *   ai     — gold (LLM tone)        (AI enriches)
+ *   tags   — purple (custom tags)   (workspace tags)
+ *   search — accent (active)        (Spotlight)
+ *   cloud  — accent (active)        (Sync to Library)
+ * ════════════════════════════════════════════════════════════════ */
+.proto-note-landing {
+  flex: 1;
+  overflow: auto;
+  padding: 32px clamp(24px, 6%, 48px) 56px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  max-width: 720px;
+  width: 100%;
+  margin: 0 auto;
+  background: var(--color-bg-primary);
+}
+.proto-note-landing-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+.proto-note-landing-icon {
+  width: 40px; height: 40px;
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--color-accent) 14%, transparent);
+  color: var(--color-accent);
+  display: flex; align-items: center; justify-content: center;
+  margin-bottom: 4px;
+}
+.proto-note-landing-title {
+  font-size: 20px; font-weight: 500;
+  color: var(--color-text-primary);
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+.proto-note-landing-sub {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+  max-width: 56ch;
+  margin: 0;
+}
+.proto-note-landing-sub code {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11.5px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+}
+.proto-note-landing-cta {
+  display: flex; align-items: center; gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.proto-note-landing-section h3 {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin: 0 0 6px;
+  font-weight: 500;
+}
+.proto-note-landing-section p {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+  max-width: 64ch;
+  margin: 0;
+}
+.proto-note-landing-section code {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11.5px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+}
+.proto-note-landing-stages {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.proto-note-landing-stage {
+  display: grid;
+  grid-template-columns: 32px 1fr;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg-elevated);
+}
+.proto-note-landing-stage-icon {
+  width: 24px; height: 24px;
+  align-self: start;
+  border-radius: 4px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--color-bg-soft, var(--color-bg-elevated));
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+}
+.proto-note-landing-stage-raw    .proto-note-landing-stage-icon {
+  background: var(--color-bg-soft, var(--color-bg-elevated));
+  color: var(--color-text-secondary);
+}
+.proto-note-landing-stage-ai     .proto-note-landing-stage-icon {
+  background: color-mix(in oklab, var(--color-warning) 14%, transparent);
+  color: var(--color-warning);
+  border-color: transparent;
+}
+.proto-note-landing-stage-tags   .proto-note-landing-stage-icon {
+  background: color-mix(in oklab, var(--color-wiki, var(--color-warning)) 14%, transparent);
+  color: var(--color-wiki, var(--color-warning));
+  border-color: transparent;
+}
+.proto-note-landing-stage-search .proto-note-landing-stage-icon,
+.proto-note-landing-stage-cloud  .proto-note-landing-stage-icon {
+  background: color-mix(in oklab, var(--color-accent) 14%, transparent);
+  color: var(--color-accent);
+  border-color: transparent;
+}
+.proto-note-landing-stage-head {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+}
+.proto-note-landing-stage-name {
+  font-size: 13px; font-weight: 500;
+  color: var(--color-text-primary);
+}
+.proto-note-landing-stage-mark {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 2px;
+  background: var(--color-bg-soft, var(--color-bg-elevated));
+  color: var(--color-text-muted);
+}
+.proto-note-landing-stage-mark.mark-ai {
+  background: color-mix(in oklab, var(--color-warning) 12%, transparent);
+  color: var(--color-warning);
+}
+.proto-note-landing-stage-mark.mark-tags {
+  background: color-mix(in oklab, var(--color-wiki, var(--color-warning)) 12%, transparent);
+  color: var(--color-wiki, var(--color-warning));
+}
+.proto-note-landing-stage-mark.mark-search,
+.proto-note-landing-stage-mark.mark-cloud {
+  background: color-mix(in oklab, var(--color-accent) 12%, transparent);
+  color: var(--color-accent);
+}
+.proto-note-landing-stage-desc {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  line-height: 1.55;
+}
+.proto-note-landing-stage-desc code {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10.5px;
+  padding: 0 4px;
+  border-radius: 2px;
+  background: var(--color-bg-soft, var(--color-bg-elevated));
 }
 .proto-note-v3-empty-inner {
   display: flex;
@@ -3551,4 +5476,708 @@
   .proto-atelier-bottom-progress-fill { transition: none; }
   .proto-toggle::after { transition: none; }
   .proto-note-v3-pill-active .proto-note-v3-pill-dot { animation: none; }
+}
+
+/* ── Note multi-tab workspace ────────────────────────────────── */
+.proto-note-workspace {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.proto-note-workspace-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+.proto-note-workspace-canvas {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.proto-note-workspace-canvas > .proto-note-v3 { flex: 1; min-height: 0; }
+
+/* Tab strip — horizontal, scrolling overflow, close on each, + at end. */
+.proto-note-tabs {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-sidebar);
+}
+.proto-note-tabs-strip {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 8px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.proto-note-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px 5px 10px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  max-width: 200px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.proto-note-tab:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+.proto-note-tab-active,
+.proto-note-tab-active:hover {
+  background: var(--color-bg-elevated);
+  border-color: var(--color-border);
+  color: var(--color-text-primary);
+}
+.proto-note-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.proto-note-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.proto-note-tab-close:hover {
+  background: color-mix(in oklab, var(--color-danger) 18%, transparent);
+  color: var(--color-danger);
+}
+.proto-note-tab-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.proto-note-tab-add:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
+/* Left file tree (siblings of the active note). */
+.proto-note-tree {
+  width: 220px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-bg-sidebar);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.proto-note-tree-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border);
+}
+.proto-note-tree-root {
+  flex: 1;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.proto-note-tree-act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.proto-note-tree-act:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+.proto-note-tree-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px;
+}
+.proto-note-tree-empty {
+  padding: 12px 10px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+.proto-note-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.proto-note-tree-row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.proto-note-tree-row:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+.proto-note-tree-row-active,
+.proto-note-tree-row-active:hover {
+  background: var(--color-bg-active);
+  color: var(--color-text-primary);
+  font-weight: 500;
+}
+/* Bookmark-count pill on the right of each file row. Blue-ish dot
+ * pattern keeps it visually quiet — primary signal is "this file has
+ * marked sections", count is secondary. */
+.proto-note-tree-row-bm {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: color-mix(in oklab, var(--color-accent) 22%, transparent);
+  color: var(--color-accent);
+  font-size: 10.5px;
+  font-weight: 600;
+  font-feature-settings: "tnum";
+  line-height: 1;
+}
+.proto-note-tree-row-active .proto-note-tree-row-bm {
+  background: color-mix(in oklab, var(--color-accent) 32%, transparent);
+}
+
+/* Minimal modal for New-note dialog (reused for any future light
+ * dialog). Distinct from the heavier StageDetailModal — this is a
+ * single-form pop-up so it stays tight. */
+.proto-newnote-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--color-scrim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.proto-newnote-card {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 18px 20px;
+  width: 420px;
+  max-width: 92vw;
+  box-shadow: 0 24px 56px rgba(0,0,0,0.18);
+}
+.proto-newnote-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--color-text-primary);
+}
+.proto-newnote-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.proto-newnote-input {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
+  padding: 7px 10px;
+  font-size: 13px;
+  border-radius: 5px;
+  text-transform: none;
+  letter-spacing: normal;
+  flex: 1;
+  min-width: 0;
+}
+.proto-newnote-input:focus {
+  outline: 2px solid color-mix(in oklab, var(--color-accent) 60%, transparent);
+  outline-offset: -1px;
+}
+.proto-newnote-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.proto-newnote-err {
+  font-size: 12px;
+  color: var(--color-danger);
+  margin-bottom: 10px;
+}
+.proto-newnote-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+.proto-newnote-btn {
+  padding: 6px 14px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  font-size: 12.5px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.proto-newnote-btn:hover { background: var(--color-bg-hover); }
+.proto-newnote-btn-primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: white;
+}
+.proto-newnote-btn-primary:hover { background: var(--color-accent-hover); }
+.proto-newnote-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Bookmark dialog · variant of newnote-card ─────────────── */
+.proto-bookmark-dialog .proto-bookmark-dialog-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  background: var(--color-bg-soft, var(--color-bg-elevated));
+  font-size: 12px;
+}
+.proto-bookmark-dialog-line {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  padding: 1px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.proto-bookmark-dialog-preview {
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.proto-bookmark-dialog-remove {
+  color: var(--color-danger);
+  border-color: color-mix(in oklab, var(--color-danger) 30%, var(--color-border));
+}
+.proto-bookmark-dialog-remove:hover {
+  background: color-mix(in oklab, var(--color-danger) 14%, transparent);
+}
+
+/* :b bookmark-list rows in the QuickSearch palette — show label
+ * (bold) followed by line preview in muted tail. */
+.proto-quicksearch-item-bookmark .proto-quicksearch-item-icon {
+  color: var(--color-warning);
+  flex-shrink: 0;
+}
+.proto-quicksearch-item-sub {
+  color: var(--color-text-muted);
+  font-weight: 400;
+}
+
+/* ── Memories pane · view switcher (Pending vs Saved) ────────── */
+.proto-library-tree-view-switch {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  margin-bottom: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  background: var(--color-bg-soft, var(--color-bg-elevated));
+}
+.proto-library-tree-view-switch button {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 11.5px;
+  font-weight: 500;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.proto-library-tree-view-switch button:hover {
+  color: var(--color-text-primary);
+}
+.proto-library-tree-view-switch button[aria-pressed="true"] {
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+.proto-library-tree-view-switch-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 14px;
+  padding: 0 4px;
+  border-radius: 7px;
+  background: color-mix(in oklab, var(--color-accent) 18%, transparent);
+  color: var(--color-accent);
+  font-size: 9.5px;
+  font-weight: 600;
+  font-feature-settings: "tnum";
+  line-height: 1;
+}
+
+.proto-memory-pin {
+  color: var(--color-warning);
+  margin-right: 6px;
+}
+
+/* ════════════════════════════════════════════════════════════
+   Chunks tab — table layout, faithful to prototypes/library-redesign-b.html
+   .ctable / .ctable-head / .ctable-row spec at L546–563.
+   ════════════════════════════════════════════════════════════ */
+.proto-chunks { display: flex; flex-direction: column; }
+
+/* Section head — mono uppercase title + right-aligned meta */
+.proto-chunks-section-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0 8px;
+}
+.proto-chunks-section-head:first-child { margin-top: 0; }
+.proto-chunks-section-title {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-faint, var(--color-text-muted));
+}
+.proto-chunks-section-meta {
+  margin-left: auto;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10.5px;
+  color: var(--color-text-faint, var(--color-text-muted));
+}
+
+/* Table outer — single border + 4px radius, body bg is "soft" (lifted
+ * from page background by one shade). Matches prototype.bg-1 visual. */
+.proto-chunks-table {
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg-soft, var(--color-bg-elevated));
+  overflow: hidden;
+}
+
+/* Head + rows: identical grid templates per table flavor. The
+ * embed flavor has 6 cols, enrich has 5. Both: 7px 14px padding
+ * and 10px column gap exactly as prototype. */
+.proto-chunks-thead,
+.proto-chunks-trow {
+  display: grid;
+  gap: 10px;
+  padding: 7px 14px;
+  align-items: center;
+}
+.proto-chunks-table-embed .proto-chunks-thead,
+.proto-chunks-table-embed .proto-chunks-trow {
+  grid-template-columns: 32px 60px 80px 1.2fr 1fr 60px;
+}
+.proto-chunks-table-enrich .proto-chunks-thead,
+.proto-chunks-table-enrich .proto-chunks-trow {
+  grid-template-columns: 32px 80px 1fr 1.2fr 60px;
+}
+
+/* Head: mono uppercase tiny, hover-color background, hairline below */
+.proto-chunks-thead {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-faint, var(--color-text-muted));
+  background: var(--color-bg-hover);
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* Rows: 12px body font, 3px transparent left bar (→ accent on hover),
+ * hairline bottom between rows, no last-child line. */
+.proto-chunks-trow {
+  font-size: 12px;
+  border-bottom: 1px solid var(--color-border);
+  border-left: 3px solid transparent;
+  cursor: pointer;
+}
+.proto-chunks-trow:last-child { border-bottom: none; }
+.proto-chunks-trow:hover {
+  background: var(--color-bg-hover);
+  border-left-color: var(--color-accent);
+}
+
+/* Column-specific cell styling */
+.proto-chunks-idx {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  color: var(--color-text-faint, var(--color-text-muted));
+}
+.proto-chunks-mono {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  color: var(--color-text-primary);
+}
+.proto-chunks-r,
+.proto-chunks-th-r { text-align: right; }
+/* "dim" cell uses the secondary accent (purple) to make it
+ * visually distinct from other mono columns — matches prototype's
+ * .ctable-row .dim { color: var(--accent2); } */
+.proto-chunks-table-embed .proto-chunks-trow > div:nth-child(2) {
+  color: var(--color-wiki, #b78bff);
+  font-size: 10.5px;
+}
+/* "src" cell (rightmost) is muted/faint */
+.proto-chunks-table-embed .proto-chunks-trow > div:nth-child(6),
+.proto-chunks-table-embed .proto-chunks-trow > div:nth-child(5) {
+  font-size: 10.5px;
+  color: var(--color-text-faint, var(--color-text-muted));
+}
+.proto-chunks-preview {
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.proto-chunks-topic {
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+/* Keyword chips: mono, tiny, bg-3 background (deeper than row),
+ * 2px radius — feels like the prototype */
+.proto-chunks-kw {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+  overflow: hidden;
+}
+.proto-chunks-kw-chip {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 2px;
+  background: var(--color-bg-active);
+  color: var(--color-text-muted);
+}
+.proto-chunks-kw-empty {
+  color: var(--color-text-faint, var(--color-text-muted));
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10.5px;
+}
+.proto-chunks-status-done { color: var(--color-success); }
+.proto-chunks-status-queued { color: var(--color-text-faint, var(--color-text-muted)); }
+.proto-chunks-status-running { color: var(--color-warning); }
+.proto-chunks-more {
+  padding: 8px 14px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10.5px;
+  text-align: center;
+  color: var(--color-text-faint, var(--color-text-muted));
+  border-top: 1px solid var(--color-border);
+}
+
+/* ════════════════════════════════════════════════════════════
+   Graph — 2-column workspace cards + related-list per prototype
+   ════════════════════════════════════════════════════════════ */
+.proto-graph-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.proto-graph-card {
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg-soft, var(--color-bg-elevated));
+  overflow: hidden;
+}
+.proto-graph-card-head {
+  margin: 0;
+  padding: 7px 14px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-faint, var(--color-text-muted));
+  background: color-mix(in oklab, var(--color-bg-hover) 70%, transparent);
+  border-bottom: 1px solid var(--color-border);
+  font-weight: 500;
+}
+.proto-graph-card-body { display: flex; flex-direction: column; }
+.proto-graph-empty-row {
+  padding: 10px 14px;
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+}
+.proto-gnode {
+  display: grid;
+  grid-template-columns: 1.2fr 60px 1fr 36px;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 14px;
+  font-size: 11.5px;
+}
+.proto-gnode + .proto-gnode { border-top: 1px solid var(--color-border); }
+.proto-gnode-name { color: var(--color-text-primary); font-weight: 500; }
+.proto-gnode-type {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10px;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.proto-gnode-bar {
+  position: relative;
+  display: block;
+  height: 6px;
+  background: var(--color-bg-hover);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.proto-gnode-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--color-accent);
+  opacity: 0.7;
+}
+.proto-gnode-count {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  text-align: right;
+}
+.proto-gedge {
+  display: grid;
+  grid-template-columns: 1fr 90px 1fr 40px;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  font-size: 11.5px;
+}
+.proto-gedge + .proto-gedge { border-top: 1px solid var(--color-border); }
+.proto-gedge-from,
+.proto-gedge-to {
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.proto-gedge-rel {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10px;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+.proto-gedge-w {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  text-align: right;
+}
+
+/* Related list — "This document · related" rows */
+.proto-related-list { display: flex; flex-direction: column; gap: 6px; }
+.proto-rel-row {
+  display: grid;
+  grid-template-columns: 1fr 140px 50px;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg-soft, var(--color-bg-elevated));
+}
+.proto-rel-row:hover { background: var(--color-bg-hover); }
+.proto-rel-name {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  margin-bottom: 3px;
+}
+.proto-rel-evidence {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  flex-wrap: wrap;
+}
+.proto-rel-pill {
+  display: inline-block;
+  padding: 1px 7px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-accent);
+  background: color-mix(in oklab, var(--color-accent) 14%, transparent);
+  border-radius: 3px;
+}
+.proto-rel-type {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 9.5px;
+  color: var(--color-text-faint, var(--color-text-muted));
+  text-align: right;
+  letter-spacing: 0.05em;
+}
+.proto-rel-score {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  color: var(--color-text-primary);
+  text-align: right;
+  font-weight: 500;
 }

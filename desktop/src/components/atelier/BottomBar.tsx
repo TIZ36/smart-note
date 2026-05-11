@@ -80,7 +80,7 @@ export function BottomBar({
           className="proto-atelier-bottom-dot"
           data-tone={
             snap === null ? "muted"
-              : snap.primaryOnline ? "ok" : "warn"
+              : snap.devicesOnline > 0 ? "ok" : "warn"
           }
         />
         <span>

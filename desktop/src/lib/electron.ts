@@ -104,6 +104,20 @@ export async function pickRawFile(): Promise<string | null> {
   return getDesktop().invoke("dialog_open_raw") as Promise<string | null>;
 }
 
+/* Notes-workspace helpers — for the multi-tab note page. The dir
+ * is whatever folder the user's current rawPath lives in (or the
+ * one they pick via pickNoteDir). */
+export type DirListing = { ok: boolean; root?: string; files: Array<{ name: string; path: string }>; error?: string };
+export async function listNoteDir(dir: string): Promise<DirListing> {
+  return getDesktop().invoke("note:list_dir", { dir }) as Promise<DirListing>;
+}
+export async function createNewNote(dir: string, name: string): Promise<{ ok: boolean; path?: string; error?: string }> {
+  return getDesktop().invoke("note:create_new", { dir, name }) as Promise<{ ok: boolean; path?: string; error?: string }>;
+}
+export async function pickNoteDir(): Promise<string | null> {
+  return getDesktop().invoke("note:pick_dir") as Promise<string | null>;
+}
+
 export async function pickNoteFile(): Promise<string | null> {
   return getDesktop().invoke("dialog_save_note") as Promise<string | null>;
 }
@@ -160,7 +174,17 @@ export function onWikiIngestStatus(
  * a typed handler for ergonomic React consumption. */
 export type WsEvent =
   | { type: "agent_active"; agent: string; tool: string; method: string; at: string }
-  | { type: "enrich_done"; document_id: string; document_name?: string; at: string }
+  | {
+      type: "processing_progress" | "processing_done";
+      document_id: string;
+      run_id?: string;
+      stage?: string;
+      status?: string;
+      message?: string;
+      progress?: { current?: number; total?: number };
+      error?: string | { message?: string };
+      at: string;
+    }
   | { type: "memory_proposed"; proposal_id: string; agent?: string; at: string }
   | { type: "search_recorded"; query: string; author: string; at: string }
   | { type: "hello-ack"; workspace_id: string; device_id: string }
@@ -173,7 +197,16 @@ export function onWsEvent(
     onWsEvent?: (cb: (data: WsEvent) => void) => () => void;
   };
   if (!d?.onWsEvent) return () => {};  // browser preview / older preload
-  return d.onWsEvent(handler);
+  return d.onWsEvent((data) => {
+    // Diagnostic — confirms IPC main→renderer leg. Filter at tail
+    // with `console.filter [ws-renderer]` in Electron DevTools.
+    const t = (data as { type?: string })?.type;
+    if (t && t !== "pong" && t !== "hello-ack") {
+      // eslint-disable-next-line no-console
+      console.log("[ws-renderer] event", t, data);
+    }
+    handler(data);
+  });
 }
 
 export async function getIngestStatus(): Promise<{ noteIngestRunning: boolean; wikiIngestRunning: boolean }> {

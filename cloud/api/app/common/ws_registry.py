@@ -61,18 +61,28 @@ async def broadcast(workspace_id: str, payload: dict) -> int:
     will GC them. Best-effort by design.
     """
     import json
+    import logging
+    log = logging.getLogger(__name__)
     sessions = list(_sessions.get(workspace_id, set()))
+    etype = payload.get("event") or payload.get("type")
     if not sessions:
+        log.warning("ws.broadcast NO_SESSIONS ws=%s event=%s run=%s",
+                    workspace_id, etype, payload.get("run_id"))
         return 0
     text = json.dumps(payload, ensure_ascii=False)
     delivered = 0
+    failed = 0
     for s in sessions:
         try:
             await s.ws.send_text(text)
             delivered += 1
-        except Exception:
-            # Silent — the disconnect handler will unregister.
-            pass
+        except Exception as e:
+            failed += 1
+            log.warning("ws.broadcast SEND_FAIL ws=%s session=%s device=%s err=%s",
+                        workspace_id, s.id, s.device_id, e)
+    log.info("ws.broadcast event=%s ws=%s sessions=%d delivered=%d failed=%d run=%s status=%s",
+             etype, workspace_id, len(sessions), delivered, failed,
+             payload.get("run_id"), payload.get("status"))
     return delivered
 
 

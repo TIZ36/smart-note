@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, AlertTriangle, Loader2, Clock, X, Trash2 } from "lucide-react";
 import * as cloudApi from "@/lib/cloud-api";
+import { onWsEvent } from "@/lib/electron";
 import { cn } from "@/lib/cn";
-import type { RunStatus, RunKind } from "./RAGPage";
+import type { RunStatus, RunKind } from "./bulkTypes";
 
-/* RAGProcessingPanel — live job feed.
+/* ProcessingPanel — live job feed for Library Docs bulk runs.
  *
  * Two data sources merged:
  *   1. clientRuns — real-time per-doc state for ops dispatched from
@@ -36,41 +37,61 @@ type Row = {
 type Props = {
   clientRuns: Map<string, RunStatus>;
   onClearDone: () => void;
+  /** When set, only show runs / cloud jobs that target this doc id.
+   *  Used by the Pipeline tab so a doc's own runs are visible there. */
+  filterDocId?: string;
 };
 
-export function RAGProcessingPanel({ clientRuns, onClearDone }: Props) {
+export function ProcessingPanel({ clientRuns, onClearDone, filterDocId }: Props) {
   const [cloudJobs, setCloudJobs] = useState<cloudApi.EnrichJob[]>([]);
 
-  // Cloud poll for background enrich jobs
-  useEffect(() => {
-    let alive = true;
-    async function poll() {
-      try {
-        if (!(await cloudApi.isCloudConfigured())) {
-          if (alive) setCloudJobs([]);
-          return;
-        }
-        const all = await cloudApi.listEnrichJobs();
-        if (!alive) return;
-        const cutoff = Date.now() - SHOW_DONE_FOR_MS;
-        setCloudJobs(all.filter((j) => {
-          if (j.status === "queued" || j.status === "running" || j.status === "dispatched") return true;
-          if (!j.finished_at) return true;
-          return new Date(j.finished_at).getTime() > cutoff;
-        }));
-      } catch {
-        /* silent */
+  // Cloud poll for background enrich jobs. Polls on a 2.5s interval
+  // AND kicks an immediate refetch when the cloud broadcasts an
+  // enrich_done event over WS — the user sees the row flip to "done"
+  // within ms instead of after the next poll tick.
+  const pollOnce = useCallback(async () => {
+    try {
+      if (!(await cloudApi.isCloudConfigured())) {
+        setCloudJobs([]);
+        return;
       }
+      const all = await cloudApi.listEnrichJobs();
+      const cutoff = Date.now() - SHOW_DONE_FOR_MS;
+      setCloudJobs(all.filter((j) => {
+        if (j.status === "queued" || j.status === "running" || j.status === "dispatched") return true;
+        if (!j.finished_at) return true;
+        return new Date(j.finished_at).getTime() > cutoff;
+      }));
+    } catch {
+      /* silent — feed is decorative, transient cloud blip shouldn't error-flash UI */
     }
-    poll();
-    const id = setInterval(poll, POLL_MS);
-    return () => { alive = false; clearInterval(id); };
   }, []);
+
+  useEffect(() => {
+    pollOnce();
+    const id = setInterval(pollOnce, POLL_MS);
+    return () => clearInterval(id);
+  }, [pollOnce]);
+
+  useEffect(() => {
+    const off = onWsEvent((e) => {
+      // Trigger an immediate refetch on terminal state for any of:
+      //   - processing_done (canonical, all kinds — doc §3.1)
+      //   - enrich_done     (legacy — kept until cloud drops it)
+      // so the row redraws as done within ms instead of after the
+      // next poll tick.
+      if (e.type === "processing_done" || e.type === "enrich_done") {
+        pollOnce();
+      }
+    });
+    return off;
+  }, [pollOnce]);
 
   const rows = useMemo<Row[]>(() => {
     const result: Row[] = [];
     // Client-side runs (instant, real-time)
     for (const [docId, r] of clientRuns) {
+      if (filterDocId && docId !== filterDocId) continue;
       result.push({
         id: `client:${docId}`,
         name: r.name,
@@ -83,6 +104,7 @@ export function RAGProcessingPanel({ clientRuns, onClearDone }: Props) {
     }
     // Cloud enrich jobs (background, MCP-triggered)
     for (const j of cloudJobs) {
+      if (filterDocId && j.document_id !== filterDocId) continue;
       result.push({
         id: `cloud:${j.id}`,
         name: j.document_name || j.document_id.slice(0, 8),
@@ -101,7 +123,7 @@ export function RAGProcessingPanel({ clientRuns, onClearDone }: Props) {
       if (ao !== bo) return ao - bo;
       return (b.finishedAt ?? Date.now()) - (a.finishedAt ?? Date.now());
     });
-  }, [clientRuns, cloudJobs]);
+  }, [clientRuns, cloudJobs, filterDocId]);
 
   if (rows.length === 0) return null;
 

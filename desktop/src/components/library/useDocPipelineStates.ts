@@ -24,8 +24,13 @@ export type StageState =
 
 export type DocStates = {
   chunk_embed?: StageState;
-  ai_enrich?: StageState;
+  chunk_enrich?: StageState;
+  graph_topology?: StageState;
   wiki_abstract?: StageState;
+  note_classify?: StageState;
+  // Legacy alias — old name preserved for existing call sites; new
+  // code should read chunk_enrich.
+  ai_enrich?: StageState;
   // Most recent terminal run for the whole doc — used to derive
   // an "overall" status for filter/dot UI.
   overall?: StageState;

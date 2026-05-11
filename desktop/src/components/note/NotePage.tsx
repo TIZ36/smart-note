@@ -1,11 +1,12 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   FolderOpen, Shuffle, ArrowDownToLine, Save, CloudUpload,
-  Plus, Minus,
+  Plus, Minus, FileEdit, Sparkles, Search, Tags,
 } from "lucide-react";
 import * as cloudApi from "@/lib/cloud-api";
 import { NoteEditor, type LineMeta } from "../editor/NoteEditor";
+import { BookmarksButton } from "./BookmarksButton";
 import { IngestDialog } from "./IngestDialog";
 import { ReorganizeDialog } from "./ReorganizeDialog";
 import { QuickSearch } from "./QuickSearch";
@@ -77,14 +78,237 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
   const [scrollTarget, setScrollTarget] = useState<{ start: number; end: number } | null>(null);
   const [recentDone, setRecentDone] = useState(false);
 
-  // Bookmarks / pack queue / pack stats / activeBuild were backed by
-  // the legacy local Python gateway (127.0.0.1:8787) which has been
-  // retired. The right-side bookmark widget, "N since full" badge,
-  // build version chip, and 20s external-edit poll are removed
-  // until reimplemented on cloud state. Note read/save still works
-  // (electron IPC / cloud sync). Empty stand-ins keep the JSX honest
-  // without re-introducing the failing fetches.
-  const lineMeta = useMemo<LineMeta>(() => new Map(), []);
+  // Bookmarks — purely client-side now (the original cloud-backed
+  // implementation went away with the local Python gateway). Each
+  // bookmark anchors to a line_hash so adding/removing lines elsewhere
+  // in the file doesn't break the jump target. Persisted per-file in
+  // localStorage; rehydrated on file load by re-hashing every line.
+  type LocalBookmark = {
+    line_hash: string;
+    label: string;
+    line_no_last: number;
+    line_preview: string;
+  };
+  const [bookmarks, setBookmarks] = useState<LocalBookmark[]>([]);
+  // `loaded` gates the persist effect — without it, the initial empty
+  // [] would race the async load and wipe localStorage + clobber any
+  // unsynced cloud value (the user's reported "重启丢失" bug). Tracked
+  // per rawPath: it flips false→true once we've hydrated, and resets
+  // on path change so we re-load cleanly.
+  const [bookmarksLoaded, setBookmarksLoaded] = useState(false);
+  // Cloud doc id for the current rawPath, looked up once on load.
+  // Bookmarks are stored in that doc's metadata.bookmarks so they
+  // sync across devices. null means we couldn't find a cloud doc
+  // (note hasn't been synced yet) — localStorage is the fallback.
+  const [bookmarksCloudDocId, setBookmarksCloudDocId] = useState<string | null>(null);
+  // Cache the cloud doc's full metadata so the bookmark-save PATCH
+  // can preserve sibling keys (local_path, smartnote_type, etc.).
+  // Cloud's PATCH replaces metadata wholesale, not merges.
+  const bookmarksCloudMetaRef = useRef<Record<string, unknown>>({});
+  const bookmarksKey = rawPath ? `smartnote-bookmarks:${rawPath}` : "";
+
+  // Re-anchor + load: every time the file changes:
+  //   1. Reset state (mark unloaded so persist doesn't fire)
+  //   2. Pull cloud doc + its metadata.bookmarks (source of truth)
+  //   3. Fall back to localStorage if no cloud doc / cloud fetch fails
+  //   4. Re-hash every line of the on-disk content and remap each
+  //      stored bookmark to its current line_no (so L42 stays
+  //      accurate after the user inserts paragraphs above)
+  //   5. Commit + mark loaded
+  useEffect(() => {
+    if (!rawPath || !bookmarksKey) {
+      setBookmarks([]);
+      setBookmarksLoaded(false);
+      setBookmarksCloudDocId(null);
+      return;
+    }
+    let cancelled = false;
+    setBookmarksLoaded(false);
+    (async () => {
+      // Cloud lookup — find a note doc whose metadata.local_path
+      // matches this rawPath. handleSyncToKp uses the same predicate.
+      let cloudDocId: string | null = null;
+      let cloudBookmarks: LocalBookmark[] | null = null;
+      try {
+        const list = await cloudApi.listDocuments({ smartnote_type: "note" });
+        const match = list.documents.find((d) => {
+          const md = (d.metadata && typeof d.metadata === "object" ? d.metadata : {}) as Record<string, unknown>;
+          return md.local_path === rawPath;
+        });
+        if (match) {
+          cloudDocId = match.id;
+          const md = (match.metadata && typeof match.metadata === "object" ? match.metadata : {}) as Record<string, unknown>;
+          bookmarksCloudMetaRef.current = md;
+          const raw = md.bookmarks;
+          if (Array.isArray(raw)) {
+            cloudBookmarks = raw.filter((x: unknown) => x && typeof (x as { line_hash?: unknown }).line_hash === "string") as LocalBookmark[];
+          }
+        }
+      } catch {
+        /* offline / no auth — fall back to localStorage */
+      }
+
+      // Local-storage fallback for unsynced notes.
+      let stored: LocalBookmark[] = [];
+      if (cloudBookmarks !== null) {
+        stored = cloudBookmarks;
+      } else {
+        try {
+          const raw = localStorage.getItem(bookmarksKey);
+          const arr = raw ? JSON.parse(raw) : [];
+          if (Array.isArray(arr)) stored = arr;
+        } catch { stored = []; }
+      }
+
+      // Re-anchor against current file content.
+      const r = await readFileFull(rawPath).catch(() => null);
+      const content = (r && r.ok && typeof r.output === "string") ? r.output : "";
+      const lines = content.split("\n");
+      const hashToLine = new Map<string, { line_no: number; text: string }>();
+      for (let i = 0; i < lines.length; i++) {
+        const h = await api.lineHash(lines[i]);
+        if (!hashToLine.has(h)) hashToLine.set(h, { line_no: i + 1, text: lines[i] });
+      }
+      const rebuilt: LocalBookmark[] = stored.map((b) => {
+        const hit = hashToLine.get(b.line_hash);
+        return hit
+          ? { ...b, line_no_last: hit.line_no, line_preview: hit.text.trim().slice(0, 80) }
+          : b; // orphaned — keep stale line_no_last so the user can still rename/remove
+      });
+
+      if (!cancelled) {
+        setBookmarksCloudDocId(cloudDocId);
+        setBookmarks(rebuilt);
+        setBookmarksLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [rawPath, bookmarksKey, buildVersion]);
+
+  // Persist on every bookmarks change. Two destinations:
+  //   - localStorage (immediate, always)
+  //   - cloud doc.metadata.bookmarks (debounced, fire-and-forget)
+  // `bookmarksLoaded` gates this — without it, the initial render's
+  // empty [] would write before we'd loaded anything, wiping the
+  // saved values.
+  useEffect(() => {
+    if (!bookmarksLoaded || !bookmarksKey) return;
+    try {
+      if (bookmarks.length === 0) localStorage.removeItem(bookmarksKey);
+      else localStorage.setItem(bookmarksKey, JSON.stringify(bookmarks));
+    } catch { /* ignore */ }
+    // Same-tab StorageEvent isn't fired by localStorage writes — only
+    // OTHER tabs see those. NoteWorkspace's file-tree badge listener
+    // needs an in-tab nudge to recount, so we dispatch this on every
+    // bookmark change.
+    try { window.dispatchEvent(new CustomEvent("smartnote:bookmarks-changed")); } catch { /* silent */ }
+
+    if (!bookmarksCloudDocId) return;
+    // Debounce cloud patch by 600ms — every keystroke in the rename
+    // dialog re-fires this, so we don't want a PATCH per char.
+    const handle = window.setTimeout(() => {
+      // Strip line_no_last / line_preview before persisting to cloud;
+      // those are derived from the live document each load, not
+      // canonical. Keep line_hash + label as the durable shape.
+      const payload = bookmarks.map((b) => ({
+        line_hash: b.line_hash,
+        label: b.label,
+      }));
+      // Cloud PATCH replaces metadata wholesale, so merge our
+      // bookmarks into the cached snapshot of the doc's metadata.
+      const merged = { ...bookmarksCloudMetaRef.current, bookmarks: payload };
+      bookmarksCloudMetaRef.current = merged;
+      cloudApi.patchDocument(bookmarksCloudDocId, { metadata: merged })
+        .catch(() => { /* offline — localStorage already saved */ });
+    }, 600);
+    return () => window.clearTimeout(handle);
+  }, [bookmarks, bookmarksKey, bookmarksLoaded, bookmarksCloudDocId]);
+
+  // Per-line meta passed to the editor: maps current line_no →
+  // bookmark label so the left gutter shows the marker + tooltip.
+  const lineMeta = useMemo<LineMeta>(() => {
+    const m: LineMeta = new Map();
+    for (const b of bookmarks) {
+      if (b.line_no_last > 0) m.set(b.line_no_last, { bookmark: b.label });
+    }
+    return m;
+  }, [bookmarks]);
+
+  // ⌘B toggle UX — instead of window.prompt (which is blocking and
+  // unreliable in Electron, and was crashing the render when called
+  // from inside a setState updater), open a proper inline dialog.
+  // The dialog owns label state; submit → mutate `bookmarks`.
+  type BookmarkDlg = {
+    mode: "create" | "rename";
+    hash: string;
+    lineNo: number;
+    preview: string;
+    initialLabel: string;
+  };
+  const [bookmarkDlg, setBookmarkDlg] = useState<BookmarkDlg | null>(null);
+  const [bookmarkLabelInput, setBookmarkLabelInput] = useState("");
+  // Ref tracking the latest bookmarks so callbacks can read the
+  // current value without depending on it (avoids stale closures
+  // AND avoids the React anti-pattern of calling setBookmarks from
+  // inside another setter — which was running twice in Strict Mode
+  // and producing duplicate entries on every Add.).
+  const bookmarksRef = useRef(bookmarks);
+  bookmarksRef.current = bookmarks;
+
+  const handleToggleBookmark = useCallback(async (lineNo: number, lineText: string) => {
+    const hash = await api.lineHash(lineText);
+    const preview = lineText.trim().slice(0, 80);
+    const existing = bookmarksRef.current.find((b) => b.line_hash === hash);
+    const dlg: BookmarkDlg = existing
+      ? { mode: "rename", hash, lineNo, preview, initialLabel: existing.label }
+      : { mode: "create", hash, lineNo, preview, initialLabel: preview || `Line ${lineNo}` };
+    setBookmarkLabelInput(dlg.initialLabel);
+    setBookmarkDlg(dlg);
+  }, []);
+
+  const submitBookmarkDlg = useCallback(() => {
+    const dlg = bookmarkDlg;
+    if (!dlg) return;
+    const label = bookmarkLabelInput.trim();
+    setBookmarks((prev) => {
+      if (dlg.mode === "rename") {
+        if (!label) return prev.filter((b) => b.line_hash !== dlg.hash);
+        return prev.map((b) =>
+          b.line_hash === dlg.hash
+            ? { ...b, label, line_no_last: dlg.lineNo, line_preview: dlg.preview }
+            : b,
+        );
+      }
+      // create — guard against duplicate insertion (Strict Mode runs
+      // updaters twice; without this check we'd push a second entry).
+      if (!label) return prev;
+      if (prev.some((b) => b.line_hash === dlg.hash)) return prev;
+      return [...prev, {
+        line_hash: dlg.hash,
+        label,
+        line_no_last: dlg.lineNo,
+        line_preview: dlg.preview,
+      }];
+    });
+    setBookmarkDlg(null);
+  }, [bookmarkDlg, bookmarkLabelInput]);
+
+  const cancelBookmarkDlg = useCallback(() => setBookmarkDlg(null), []);
+
+  const removeBookmarkFromDlg = useCallback(() => {
+    const dlg = bookmarkDlg;
+    if (!dlg) return;
+    setBookmarks((prev) => prev.filter((b) => b.line_hash !== dlg.hash));
+    setBookmarkDlg(null);
+  }, [bookmarkDlg]);
+
+  const handleJumpToBookmark = useCallback((line: number) => {
+    setScrollTarget({ start: line, end: line });
+  }, []);
+
+  const handleRemoveBookmark = useCallback((hash: string) => {
+    setBookmarks((prev) => prev.filter((b) => b.line_hash !== hash));
+  }, []);
 
   // No-op stand-in: callers (save/apply/discard handlers, ReorganizeDialog
   // onApproved) used to trigger a gateway refresh of line meta + pack
@@ -449,12 +673,27 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
     return () => window.removeEventListener("keydown", onKey);
   }, [rawPath]);
 
-  // Sync this local note to cloud as a CloudDocument so it appears
-  // on the KP (RAG) surface for embedding / enrich processing.
-  // Reads the FULL file from disk — NOT from .cm-content innerText,
-  // which only contains the virtually-rendered viewport (CodeMirror
-  // virtualizes large files — a 6000-line note would upload as
-  // ~30 visible lines if we scraped the DOM).
+  /* Sync this local note to cloud as a CloudDocument so it appears
+   * on the Library surface for embedding / enrich processing.
+   *
+   * Upsert by `metadata.local_path`:
+   *   - First sync of a path → POST /v1/documents (create)
+   *   - Subsequent syncs of the same path → PATCH content of the
+   *     existing doc (cloud clears ingested_at + schedules re-ingest).
+   *
+   * Earlier behaviour stamped each sync with `__YYYY-MM-DD_HHMMSS`
+   * which:
+   *   1. Created N copies of the same note in the workspace
+   *   2. Forked retrieval (search returned the wrong / stale version)
+   *   3. Made vec / embedding scoring noisy because old un-embedded
+   *      duplicates competed with the freshly-embedded current doc
+   * The "version snapshot" feature was theoretical — nothing read
+   * the suffix. Drop it; one local note → one cloud document.
+   *
+   * Reads the FULL file from disk — NOT from .cm-content innerText,
+   * which only holds the rendered viewport (CodeMirror virtualizes
+   * large files — a 6000-line note would upload as ~30 visible lines).
+   */
   async function handleSyncToKp() {
     if (!rawPath) return;
     setSyncState("syncing");
@@ -464,32 +703,51 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
       // saved", as the user put it.
       if (dirty) {
         handleSaveClick();
-        // Tiny grace so CodeMirror's auto-save round-trip lands
-        // before we re-read the file.
         await new Promise((r) => setTimeout(r, 250));
       }
       const result = await readFileFull(rawPath);
       const content = result.output || "";
       const filename = rawPath.split("/").pop() || "note.md";
-      // Suffix the cloud-side name with a second-level timestamp so
-      // every Sync-to-KP creates a clearly-distinguishable snapshot.
-      // User can later filter/delete duplicates by date in Library.
-      // Original filename + ISO timestamp also preserved in metadata.
-      const stampedName = stampFilename(filename);
       const nowIso = new Date().toISOString();
-      await cloudApi.createDocument({
-        name: stampedName,
-        content,
-        kind: "markdown",
-        metadata: {
-          smartnote_type: "note",
-          local_path: rawPath,
-          original_name: filename,
-          synced_at: nowIso,
-          line_count: content.split("\n").length,
-          byte_size: new Blob([content]).size,
-        },
-      });
+      const baseMeta: Record<string, unknown> = {
+        smartnote_type: "note",
+        local_path: rawPath,
+        original_name: filename,
+        synced_at: nowIso,
+        line_count: content.split("\n").length,
+        byte_size: new Blob([content]).size,
+      };
+
+      // Look up existing doc with the same local_path so re-syncs
+      // update content in place.
+      let existingId: string | null = null;
+      try {
+        const list = await cloudApi.listDocuments({ smartnote_type: "note" });
+        const match = list.documents.find((d) => {
+          const md = (d.metadata && typeof d.metadata === "object" ? d.metadata : {}) as Record<string, unknown>;
+          return md.local_path === rawPath;
+        });
+        if (match) existingId = match.id;
+      } catch {
+        // List failure isn't fatal — fall through to create.
+      }
+
+      if (existingId) {
+        // Re-sync · update content + bump synced_at. Cloud clears
+        // ingested_at + queues re-ingest so chunks/embeddings refresh.
+        await cloudApi.patchDocument(existingId, {
+          name: filename,
+          content,
+          metadata: baseMeta,
+        });
+      } else {
+        await cloudApi.createDocument({
+          name: filename,
+          content,
+          kind: "markdown",
+          metadata: baseMeta,
+        });
+      }
       setSyncState("ok");
       setTimeout(() => setSyncState("idle"), 1800);
     } catch (e) {
@@ -517,33 +775,7 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
   }
 
   if (!rawPath) {
-    return (
-      <div className="proto-note-v3-empty">
-        <div className="proto-note-v3-empty-inner">
-          <span className="proto-note-v3-empty-eyebrow">Note</span>
-          <h2 className="proto-note-v3-empty-title">Open a markdown file to start.</h2>
-          <p className="proto-note-v3-empty-desc">
-            Raw content is never rewritten — all AI enrichment is additive and reversible.
-          </p>
-          <div className="proto-note-v3-empty-actions">
-            <button
-              type="button"
-              onClick={handleTrySample}
-              className="proto-note-v3-btn proto-note-v3-btn-primary"
-            >
-              Try with sample
-            </button>
-            <button
-              type="button"
-              onClick={handlePickFile}
-              className="proto-note-v3-btn"
-            >
-              <FolderOpen size={12} strokeWidth={2} /> Use your own file
-            </button>
-          </div>
-        </div>
-      </div>
-    );
+    return <NoteLanding onSample={handleTrySample} onPickFile={handlePickFile} />;
   }
 
   return (
@@ -648,11 +880,12 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
             onSave={handleSave}
             onDirty={setDirty}
             scrollToRange={scrollTarget}
-            lineMeta={activeView && activeView.display.show_ts === false ? undefined : lineMeta}
+            lineMeta={lineMeta}
             memberLines={memberLineSet}
             dimMode={activeView?.display.dim_mode || "opacity"}
             dimLevel={activeView?.display.dim_level || "medium"}
             onSelectionChange={setEditorSelection}
+            onToggleBookmark={handleToggleBookmark}
           />
           {rawPath && (
             <div className="proto-note-v3-floating-stack">
@@ -694,6 +927,23 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
                   })()}
                 </div>
               )}
+              {/* Bookmarks · ⌘B on any line to add (prompt for label).
+                  Adapter shape — fill the NoteLineMeta fields the
+                  component reads; the rest are placeholders. */}
+              <BookmarksButton
+                bookmarks={bookmarks.map((b) => ({
+                  line_hash: b.line_hash,
+                  line_no_last: b.line_no_last,
+                  line_preview: b.line_preview,
+                  bookmark: b.label,
+                  ts: null,
+                  highlight_color: "",
+                  highlight_note: "",
+                  updated_at: "",
+                }))}
+                onJumpToLine={handleJumpToBookmark}
+                onRemove={handleRemoveBookmark}
+              />
               <button
                 type="button"
                 className="proto-bookmarks-badge"
@@ -726,6 +976,11 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
         open={showQuickSearch}
         onClose={() => setShowQuickSearch(false)}
         onJumpToLine={(line) => setScrollTarget({ start: line, end: line })}
+        bookmarks={bookmarks.map((b) => ({
+          line_no: b.line_no_last,
+          label: b.label,
+          preview: b.line_preview,
+        }))}
       />
 
       <NoteViewDialog
@@ -745,6 +1000,65 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
           onIngestComplete();
         }}
       />
+
+      {bookmarkDlg && (
+        <div
+          className="proto-newnote-backdrop"
+          onClick={cancelBookmarkDlg}
+        >
+          <div
+            className="proto-newnote-card proto-bookmark-dialog"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="proto-newnote-title">
+              {bookmarkDlg.mode === "rename" ? "Rename bookmark" : "New bookmark"}
+            </h3>
+            <div className="proto-bookmark-dialog-meta">
+              <span className="proto-bookmark-dialog-line">L{bookmarkDlg.lineNo}</span>
+              <span className="proto-bookmark-dialog-preview" title={bookmarkDlg.preview}>
+                {bookmarkDlg.preview || <em>(blank line)</em>}
+              </span>
+            </div>
+            <label className="proto-newnote-label">
+              <span>Name</span>
+              <input
+                className="proto-newnote-input"
+                type="text"
+                value={bookmarkLabelInput}
+                onChange={(e) => setBookmarkLabelInput(e.target.value)}
+                placeholder="What is this section about?"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") submitBookmarkDlg();
+                  else if (e.key === "Escape") cancelBookmarkDlg();
+                }}
+              />
+            </label>
+            <div className="proto-newnote-actions">
+              {bookmarkDlg.mode === "rename" && (
+                <button
+                  type="button"
+                  className="proto-newnote-btn proto-bookmark-dialog-remove"
+                  onClick={removeBookmarkFromDlg}
+                >
+                  Remove
+                </button>
+              )}
+              <span style={{ flex: 1 }} />
+              <button type="button" className="proto-newnote-btn" onClick={cancelBookmarkDlg}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="proto-newnote-btn proto-newnote-btn-primary"
+                onClick={submitBookmarkDlg}
+              >
+                {bookmarkDlg.mode === "rename" ? "Save" : "Add"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -753,6 +1067,120 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
  * upload creates a uniquely-named snapshot in the cloud workspace.
  * Users can later see "note__2026-04-29_173045.md" alongside
  * "note__2026-04-30_091200.md" and choose which to keep. */
+/* NoteLanding · zero-file empty state for the Note pane.
+ *
+ * Mirrors LibraryLanding's structure (hero · "How it works" · feature
+ * cards · subtle close) so the desktop's two main creation surfaces
+ * read consistently. The four cards explain Note-specific concepts:
+ *   1. Plain markdown raw file is sacred — never rewritten
+ *   2. AI side file (note.md) holds enrichments — additive, reversible
+ *   3. Spotlight (⌘K) crosses the workspace
+ *   4. Sync to Library upgrades retrieval / cross-device / MCP access
+ */
+function NoteLanding({ onSample, onPickFile }: { onSample: () => void; onPickFile: () => void }) {
+  return (
+    <div className="proto-note-landing">
+      <div className="proto-note-landing-hero">
+        <div className="proto-note-landing-icon" aria-hidden="true">
+          <FileEdit size={22} strokeWidth={1.5} />
+        </div>
+        <h2 className="proto-note-landing-title">Open a markdown file to start</h2>
+        <p className="proto-note-landing-sub">
+          You write plain markdown. SmartNote enriches in a side file
+          (<code>note.md</code>) — your raw text is never rewritten and
+          every AI annotation is reversible.
+        </p>
+        <div className="proto-note-landing-cta">
+          <button
+            type="button"
+            onClick={onSample}
+            className="proto-note-v3-btn proto-note-v3-btn-primary"
+          >
+            Try with sample
+          </button>
+          <button
+            type="button"
+            onClick={onPickFile}
+            className="proto-note-v3-btn"
+          >
+            <FolderOpen size={12} strokeWidth={2} /> Open your own file
+          </button>
+        </div>
+      </div>
+
+      <div className="proto-note-landing-section">
+        <h3>How it works</h3>
+        <p>
+          Two files per note: the <code>raw</code> markdown you control,
+          and a sibling <code>note.md</code> SmartNote writes into. Saving
+          the raw file is the only thing that ever touches your bytes.
+        </p>
+      </div>
+
+      <div className="proto-note-landing-stages">
+        <NoteLandingCard
+          icon={<FileEdit size={14} strokeWidth={1.7} />}
+          tone="raw"
+          name="You write"
+          mark="RAW · NEVER REWRITTEN"
+          desc="Plain markdown in your file. Hotkey-paste from the system clipboard appends a timestamped block. Save with ⌘S."
+        />
+        <NoteLandingCard
+          icon={<Sparkles size={14} strokeWidth={1.7} />}
+          tone="ai"
+          name="AI enriches in note.md"
+          mark="ADDITIVE · REVERSIBLE"
+          desc="A separate sidecar file holds AI-generated tags, summaries, and outlines. Delete it any time — the raw stays clean."
+        />
+        <NoteLandingCard
+          icon={<Tags size={14} strokeWidth={1.7} />}
+          tone="tags"
+          name="Custom tags"
+          mark="USER-DEFINED"
+          desc="Define tags with descriptions in workspace settings. Note tag-classify (LLM) suggests line ranges to label; you Accept or Dismiss."
+        />
+        <NoteLandingCard
+          icon={<Search size={14} strokeWidth={1.7} />}
+          tone="search"
+          name="Spotlight ⌘K"
+          mark="ACROSS NOTES"
+          desc="Hit ⌘K anywhere in SmartNote to jump to any line by content, tag, or smart-view name."
+        />
+        <NoteLandingCard
+          icon={<CloudUpload size={14} strokeWidth={1.7} />}
+          tone="cloud"
+          name="Sync to Library"
+          mark="OPTIONAL · CLOUD"
+          desc="Push a note to SmartNote Cloud and the Library kicks off chunk_embed → chunk_enrich → topology so other devices and MCP agents can retrieve it."
+        />
+      </div>
+    </div>
+  );
+}
+
+function NoteLandingCard({
+  icon, name, tone, mark, desc,
+}: {
+  icon: React.ReactNode;
+  name: string;
+  tone: "raw" | "ai" | "tags" | "search" | "cloud";
+  mark: string;
+  desc: string;
+}) {
+  return (
+    <div className={`proto-note-landing-stage proto-note-landing-stage-${tone}`}>
+      <span className="proto-note-landing-stage-icon">{icon}</span>
+      <div className="proto-note-landing-stage-body">
+        <div className="proto-note-landing-stage-head">
+          <span className="proto-note-landing-stage-name">{name}</span>
+          <span className={`proto-note-landing-stage-mark mark-${tone}`}>{mark}</span>
+        </div>
+        <p className="proto-note-landing-stage-desc">{desc}</p>
+      </div>
+    </div>
+  );
+}
+
 function stampFilename(name: string): string {
   const d = new Date();
   const p = (n: number) => n.toString().padStart(2, "0");

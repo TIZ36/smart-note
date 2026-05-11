@@ -26,9 +26,16 @@ async def upsert_entities_for_segments(
     conn,
     workspace_id: str,
     segments: list[dict],
+    source_kind: str = "note_segment",
 ) -> dict:
     """Persist entities + co-occurrence edges + tag_entities from one
     enrich pass over a document. Caller wraps in a transaction.
+
+    `source_kind` lands in entity_links.source_kind (NOT NULL after
+    migration 022) so the workspace can distinguish note vs wiki
+    derived edges later. Defaults to 'note_segment'; wiki callers
+    must pass 'wiki_chapter'. The previous default of None worked
+    pre-022 and started 500ing as soon as the constraint landed.
 
     Returns: { entities: N, links: N, tag_entities: N }
     """
@@ -55,7 +62,9 @@ async def upsert_entities_for_segments(
                       last_seen = now()
                 RETURNING id, (xmax = 0) AS inserted
                 """,
-                ws, name, etype,
+                ws,
+                name,
+                etype,
             )
             if row["inserted"]:
                 new_entities += 1
@@ -72,7 +81,9 @@ async def upsert_entities_for_segments(
                     ON CONFLICT (workspace_id, tag, entity_id) DO UPDATE
                       SET count = tag_entities.count + 1
                     """,
-                    ws, tag, row["id"],
+                    ws,
+                    tag,
+                    row["id"],
                 )
                 tag_links += 1
 
@@ -80,19 +91,22 @@ async def upsert_entities_for_segments(
         # (smaller uuid → source) so (a→b) and (b→a) collapse onto the
         # unique index.
         for i, a in enumerate(seg_entity_ids):
-            for b in seg_entity_ids[i + 1:]:
+            for b in seg_entity_ids[i + 1 :]:
                 if a == b:
                     continue
                 src, dst = (a, b) if str(a) < str(b) else (b, a)
                 await conn.execute(
                     """
                     INSERT INTO entity_links
-                      (workspace_id, source_entity_id, target_entity_id, relation)
-                    VALUES ($1, $2, $3, 'co-occurs')
+                      (workspace_id, source_entity_id, target_entity_id, relation, source_kind)
+                    VALUES ($1, $2, $3, 'co-occurs', $4)
                     ON CONFLICT (workspace_id, source_entity_id, target_entity_id, relation)
                     DO UPDATE SET weight = entity_links.weight + 1
                     """,
-                    ws, src, dst,
+                    ws,
+                    src,
+                    dst,
+                    source_kind,
                 )
                 links += 1
     return {
@@ -111,7 +125,8 @@ async def get_graph(conn, workspace_id: str, *, top_n: int = 200) -> dict:
     nodes_rows = await conn.fetch(
         "SELECT id, name, entity_type, mention_count FROM entities "
         "WHERE workspace_id = $1 ORDER BY mention_count DESC LIMIT $2",
-        ws, top_n,
+        ws,
+        top_n,
     )
     keep_ids = {str(r["id"]) for r in nodes_rows}
 
@@ -126,7 +141,8 @@ async def get_graph(conn, workspace_id: str, *, top_n: int = 200) -> dict:
         ORDER BY el.weight DESC
         LIMIT $2
         """,
-        ws, top_n * 4,
+        ws,
+        top_n * 4,
     )
 
     tag_rows = await conn.fetch(
@@ -143,11 +159,13 @@ async def get_graph(conn, workspace_id: str, *, top_n: int = 200) -> dict:
     for r in tag_rows:
         if str(r["id"]) not in keep_ids:
             continue
-        tag_entities.setdefault(r["tag"], []).append({
-            "name": r["name"],
-            "count": int(r["count"]),
-            "mention_count": int(r["mention_count"]),
-        })
+        tag_entities.setdefault(r["tag"], []).append(
+            {
+                "name": r["name"],
+                "count": int(r["count"]),
+                "mention_count": int(r["mention_count"]),
+            }
+        )
 
     counts = await conn.fetchrow(
         """
@@ -161,8 +179,12 @@ async def get_graph(conn, workspace_id: str, *, top_n: int = 200) -> dict:
 
     return {
         "nodes": [
-            {"id": str(r["id"]), "name": r["name"], "type": r["entity_type"],
-             "mentions": int(r["mention_count"])}
+            {
+                "id": str(r["id"]),
+                "name": r["name"],
+                "type": r["entity_type"],
+                "mentions": int(r["mention_count"]),
+            }
             for r in nodes_rows
         ],
         "edges": [

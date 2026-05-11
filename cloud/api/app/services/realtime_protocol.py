@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
+import json
 from typing import Any, Literal
 from uuid import UUID
 
@@ -25,9 +26,15 @@ from app.common.db import pool
 
 log = logging.getLogger(__name__)
 
-# note_classify joined the family in v3.6 alongside the user-dictionary
-# constrained classifier for note kinds.
-Stage = Literal["chunk_embed", "ai_enrich", "wiki_abstract", "graph", "note_classify"]
+# Library processing stages. Keep this aligned with
+# docs/library-client-integration.md.
+Stage = Literal[
+    "chunk_embed",
+    "chunk_enrich",
+    "graph_topology",
+    "wiki_abstract",
+    "note_classify",
+]
 Status = Literal["queued", "running", "done", "failed", "partial", "skipped"]
 
 
@@ -42,7 +49,7 @@ def event_payload(
     progress_current: int | None = None,
     progress_total: int | None = None,
     message: str | None = None,
-    error: str | None = None,
+    error: str | dict[str, Any] | None = None,
     data: dict[str, Any] | None = None,
     **legacy: Any,
 ) -> dict[str, Any]:
@@ -128,9 +135,18 @@ async def _persist_event(workspace_id: str, payload: dict[str, Any]) -> None:
     # filters; data jsonb stays open for future fields without schema
     # churn.
     envelope_keys = {
-        "type", "event", "schema_version", "at",
-        "workspace_id", "document_id", "run_id",
-        "stage", "kind", "status", "message", "error",
+        "type",
+        "event",
+        "schema_version",
+        "at",
+        "workspace_id",
+        "document_id",
+        "run_id",
+        "stage",
+        "kind",
+        "status",
+        "message",
+        "error",
     }
     data: dict[str, Any] = {k: v for k, v in payload.items() if k not in envelope_keys}
     # `progress` is structured but useful in the data blob too — keep both
@@ -153,9 +169,20 @@ async def _persist_event(workspace_id: str, payload: dict[str, Any]) -> None:
                 payload.get("event") or payload.get("type") or "unknown",
                 payload.get("status"),
                 payload.get("message"),
-                payload.get("error"),
+                _text_error(payload.get("error")),
                 int(payload.get("schema_version") or 1),
                 data,
             )
     except Exception as e:
         log.debug("pipeline_events insert failed: %s", e, exc_info=True)
+
+
+def _text_error(error: Any) -> str | None:
+    if error is None:
+        return None
+    if isinstance(error, str):
+        return error
+    try:
+        return json.dumps(error, ensure_ascii=False)
+    except Exception:
+        return str(error)

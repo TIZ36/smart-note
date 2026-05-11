@@ -78,8 +78,11 @@ export async function search(
 }
 
 export async function fetchTagStats(): Promise<{ tags: { name: string; segments: number; lines: number; coverage_pct: number }[]; daily_growth: { day: string; tag: string; count: number }[] }> {
-  const res = await fetch(`${BASE}/tags/stats`);
-  return res.json();
+  // Local /tags/stats was served by the retired Python gateway. The
+  // cloud tag taxonomy is the source of truth now; coverage stats are
+  // not yet exposed as a workspace endpoint, so return an empty stats
+  // surface instead of making a cross-origin localserver request.
+  return { tags: [], daily_growth: [] };
 }
 
 // Search history
@@ -276,29 +279,21 @@ export type TagSegment = {
 export async function fetchTags(): Promise<{ tags: TagInfo[] }> {
   try {
     const cloudApi = await import("./cloud-api");
-    if (await cloudApi.isCloudConfigured()) {
-      const cloudTags = await cloudApi.fetchTags();
-      // Adapt cloud Tag → local TagInfo (segments/lines counts default 0;
-      // the real numbers come from /tags/stats which is still local).
-      return {
-        tags: cloudTags.map((t) => ({
-          name: t.name,
-          desc: t.description,
-          color: t.color,
-          segments: 0,
-          lines: 0,
-        })),
-      };
-    }
+    if (!(await cloudApi.isCloudConfigured())) return { tags: [] };
+    const cloudTags = await cloudApi.fetchTags();
+    return {
+      tags: cloudTags.map((t) => ({
+        name: t.name,
+        desc: t.description,
+        color: t.color,
+        segments: 0,
+        lines: 0,
+      })),
+    };
   } catch (e) {
-    console.warn("cloud tags failed, falling back to local:", e);
+    console.warn("cloud tags failed:", e);
+    return { tags: [] };
   }
-  return _fetchLocalTags();
-}
-
-async function _fetchLocalTags(): Promise<{ tags: TagInfo[] }> {
-  const res = await fetch(`${BASE}/tags`);
-  return res.json();
 }
 
 // All four tag write APIs share the cloud-first guard. The cloud
@@ -325,14 +320,9 @@ export async function addTag(name: string, desc = ""): Promise<{ tags: TagInfo[]
       if (refreshed) return refreshed;
     }
   } catch (e) {
-    console.warn("cloud addTag failed, falling back to local:", e);
+    console.warn("cloud addTag failed:", e);
   }
-  const res = await fetch(`${BASE}/tags/add`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, desc }),
-  });
-  return res.json();
+  throw new Error("Cloud tags are not configured");
 }
 
 export async function deleteTag(name: string): Promise<{ tags: TagInfo[] }> {
@@ -344,10 +334,9 @@ export async function deleteTag(name: string): Promise<{ tags: TagInfo[] }> {
       if (refreshed) return refreshed;
     }
   } catch (e) {
-    console.warn("cloud deleteTag failed, falling back to local:", e);
+    console.warn("cloud deleteTag failed:", e);
   }
-  const res = await fetch(`${BASE}/tags/${encodeURIComponent(name)}`, { method: "DELETE" });
-  return res.json();
+  throw new Error("Cloud tags are not configured");
 }
 
 export async function setTagColor(name: string, color: string): Promise<{ tags: TagInfo[] }> {
@@ -367,14 +356,9 @@ export async function setTagColor(name: string, color: string): Promise<{ tags: 
       if (refreshed) return refreshed;
     }
   } catch (e) {
-    console.warn("cloud setTagColor failed, falling back to local:", e);
+    console.warn("cloud setTagColor failed:", e);
   }
-  const res = await fetch(`${BASE}/tags/color`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, color }),
-  });
-  return res.json();
+  throw new Error("Cloud tags are not configured");
 }
 
 export async function reorderTags(order: string[]): Promise<{ tags: TagInfo[] }> {
@@ -386,14 +370,9 @@ export async function reorderTags(order: string[]): Promise<{ tags: TagInfo[] }>
       if (refreshed) return refreshed;
     }
   } catch (e) {
-    console.warn("cloud reorderTags failed, falling back to local:", e);
+    console.warn("cloud reorderTags failed:", e);
   }
-  const res = await fetch(`${BASE}/tags/reorder`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ order }),
-  });
-  return res.json();
+  throw new Error("Cloud tags are not configured");
 }
 
 export type NoteSegment = TagSegment & { tag: string };
@@ -450,19 +429,16 @@ export async function fetchWikiSources(): Promise<{ sources: WikiSource[]; base_
   return res.json();
 }
 
-// OCR
+// OCR — legacy local-server feature. The 8787 Python gateway has
+// been retired (electron+cloud), so these calls would CORS-fail
+// every Settings panel mount. Return a stub until cloud OCR lands.
+// Settings UI gracefully renders "no langs detected" when has_tesseract is false.
 export async function fetchOcrLangs(): Promise<{ installed: string[]; has_tesseract: boolean; active: string }> {
-  const res = await fetch(`${BASE}/ocr-langs`);
-  return res.json();
+  return { installed: [], has_tesseract: false, active: "" };
 }
 
-export async function saveOcrConfig(ocrLangs: string): Promise<{ ok: boolean; ocr_langs: string }> {
-  const res = await fetch(`${BASE}/ocr-langs/config`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ocr_langs: ocrLangs }),
-  });
-  return res.json();
+export async function saveOcrConfig(_ocrLangs: string): Promise<{ ok: boolean; ocr_langs: string }> {
+  return { ok: false, ocr_langs: "" };
 }
 
 // MCP Servers

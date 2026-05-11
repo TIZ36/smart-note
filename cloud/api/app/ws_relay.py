@@ -47,6 +47,64 @@ async def _bump_last_seen(device_id: str) -> None:
         pass
 
 
+async def _ensure_device_for_key(workspace_id: str, api_key_id: str) -> str | None:
+    """Resolve / lazily create a device row bound to this api_key.
+
+    Bootstrap-issued keys (`POST /v1/dev/bootstrap`) and any other
+    key that wasn't minted via the /pair+/claim flow have
+    `api_keys.device_id IS NULL` and no devices row, so the workspace
+    UI shows "No devices online" forever even when the desktop is
+    actively connected. The WS connect is the strongest "this api_key
+    has a real device behind it" signal we get, so use it to repair
+    the binding once and keep heartbeats / online indicator working
+    for every key going forward.
+
+    Returns the device_id (existing or newly created), or None on any
+    DB error (we don't want online plumbing to break the WS handler)."""
+    try:
+        ak_uuid = UUID(api_key_id)
+        ws_uuid = UUID(workspace_id)
+    except (TypeError, ValueError):
+        return None
+    try:
+        async with pool().acquire() as conn:
+            existing = await conn.fetchval(
+                "SELECT device_id FROM api_keys WHERE id = $1",
+                ak_uuid,
+            )
+            if existing:
+                return str(existing)
+            # First device in a workspace becomes primary so existing
+            # `is_primary` consumers (BottomBar dot, ws_relay routing
+            # for enrich jobs) treat it as the canonical device. Later
+            # devices land as is_primary=false to avoid violating
+            # `idx_devices_one_primary`.
+            has_primary = await conn.fetchval(
+                "SELECT EXISTS(SELECT 1 FROM devices WHERE workspace_id=$1 AND is_primary=true)",
+                ws_uuid,
+            )
+            row = await conn.fetchrow(
+                """
+                INSERT INTO devices (workspace_id, name, platform, is_primary, last_seen_at)
+                VALUES ($1, $2, 'desktop', $3, now())
+                RETURNING id
+                """,
+                ws_uuid,
+                "desktop",
+                not has_primary,
+            )
+            await conn.execute(
+                "UPDATE api_keys SET device_id = $1 WHERE id = $2",
+                row["id"],
+                ak_uuid,
+            )
+            return str(row["id"])
+    except Exception as e:
+        log.warning("ws_relay: ensure_device_for_key failed ws=%s key=%s err=%s",
+                    workspace_id, api_key_id, e)
+        return None
+
+
 @router.websocket("/v1/device/relay")
 async def device_relay(
     ws: WebSocket,
@@ -58,6 +116,14 @@ async def device_relay(
         await ws.close(code=4401)
         return
     await ws.accept()
+    # If the desktop didn't know its device_id (bootstrap-issued key
+    # has none yet), lazily create + bind one. This makes the online
+    # indicator and /v1/devices listings work for every key without
+    # forcing users through the /pair flow.
+    if not device_id or device_id == "unknown":
+        resolved = await _ensure_device_for_key(claims.workspace_id, claims.api_key_id)
+        if resolved:
+            device_id = resolved
     sess = ws_registry.register(claims.workspace_id, ws, device_id)
     # WS connect itself is the strongest heartbeat signal — bump
     # last_seen_at immediately so the device shows online right away.

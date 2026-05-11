@@ -1,21 +1,22 @@
-import { FileEdit, Library, Network, Cloud, Settings, Loader2 } from "lucide-react";
+import { FileEdit, Library, Cloud, Settings, Loader2 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { ChannelId } from "@/lib/types";
 
 /* 48px left rail · v3 stream-centric.
  *
- * Four buttons + a top-anchored SN logo that returns to Stream:
- *
  *   SN logo            ← onClick = setActiveChannel("stream")
- *   ─────              ← Note (full-canvas markdown editor)
- *   Library            ← Docs · Memories · Skills (3 sub-tabs)
+ *   Note               ← full-canvas markdown editor
+ *   Library            ← Docs (now also hosts knowledge processing) ·
+ *                        Memories · Skills
  *   <spacer>
  *   Cloud              ← opens center modal (NOT a channel)
  *   Settings           ← full-canvas settings
  *
  * Stream is "home" — there is no rail icon for it; the logo doubles
  * as a return affordance. Cloud doesn't change the channel either —
- * it overlays a modal on whatever surface is showing.
+ * it overlays a modal on whatever surface is showing. The old RAG
+ * (knowledge-processing) page was folded into Library Docs: bulk
+ * Embed/Enrich, retrieval-path status, and tag CRUD all live there.
  */
 
 type Props = {
@@ -80,14 +81,6 @@ export function IconRail({
         }
       >
         <Library size={16} strokeWidth={1.7} />
-      </RailButton>
-
-      <RailButton
-        active={activeChannel === "rag"}
-        onClick={() => onSelect("rag")}
-        title="RAG — knowledge processing (embedding · enrich · 6-path retrieval · tags)"
-      >
-        <Network size={16} strokeWidth={1.7} />
       </RailButton>
 
       <div className="proto-atelier-rail-spacer" />

@@ -205,6 +205,7 @@ async def summarize_document(workspace_id: str, document_id: str) -> dict:
                        SET summary = $2,
                            keywords = $3::jsonb,
                            summary_sha = $4,
+                           entities = $5::jsonb,
                            updated_at = now()
                      WHERE id = $1
                     """,
@@ -212,6 +213,16 @@ async def summarize_document(workspace_id: str, document_id: str) -> dict:
                     cs.summary,
                     json.dumps(cs.keywords, ensure_ascii=False),
                     cs.summary_sha,
+                    # Mirror the entity list onto the chapter row so
+                    # graph_topology can find them by document_id.
+                    # Without this, wiki docs have entities only in
+                    # the workspace-level entities table with no
+                    # backreference to their source doc, and topology
+                    # produces 0 links for any wiki involvement.
+                    json.dumps([
+                        {"name": e.get("name"), "type": e.get("type", "concept")}
+                        for e in (cs.entities or []) if isinstance(e, dict) and e.get("name")
+                    ], ensure_ascii=False),
                 )
                 # Treat the chapter as a "segment" for the existing
                 # entity-link plumbing; tag is the chapter anchor so

@@ -125,6 +125,107 @@
   --radius-proto: 4px;
 }
 
+/* ── Library · GMGN palette scope ──
+ *
+ * The Library surface mirrors `prototypes/library-redesign-b.html`:
+ * true-black canvas, mint-green primary, gold warn, misty-pink
+ * danger. Scoped via .proto-library-shell so other surfaces (Stream,
+ * Note, Settings, Cloud modal) keep the project's ambient palette.
+ *
+ * Honors data-theme="light" — under light mode we restore the warm
+ * paper tokens so users who pick light don't get a dark Library.
+ */
+.proto-library-shell {
+  --color-bg-primary:    #000000;
+  --color-bg-sidebar:    #060709;
+  --color-bg-elevated:   #0c0f13;
+  --color-bg-surface:    #0c0f13;
+  --color-bg-hover:      #14181f;
+  --color-bg-active:     #1c2129;
+  --color-bg-input:      #060709;
+  --color-bg-soft:       #0a0d11;
+  --color-bg-pipeline-active: rgba(0, 229, 163, 0.06);
+
+  --color-text-primary:   #e8eaee;
+  --color-text-secondary: #b3b8bf;
+  --color-text-muted:     #91969d;
+  --color-text-faint:     #5b6066;
+
+  --color-accent:        #00e5a3;            /* GMGN mint */
+  --color-accent-hover:  #1ed8a0;
+  --color-success:       #19be7d;
+  --color-danger:        #f0a8be;            /* misty pink */
+  --color-warning:       #ffce4b;            /* GMGN gold */
+  --color-wiki:          #b78bff;
+
+  --color-border:        #1a2029;
+  --color-border-strong: #262d37;
+  --color-ring:          #20252d;
+  --color-scrim:         color-mix(in oklab, #000 64%, transparent);
+}
+/* Library light palette — applied when user explicitly picks light. */
+:root[data-theme="light"] .proto-library-shell {
+  --color-bg-primary:    #faf9f5;
+  --color-bg-sidebar:    #f3f2ec;
+  --color-bg-elevated:   #ffffff;
+  --color-bg-surface:    #ffffff;
+  --color-bg-hover:      #ebeae2;
+  --color-bg-active:     #ddddd2;
+  --color-bg-input:      #ffffff;
+  --color-bg-soft:       #f4f3ec;
+  --color-bg-pipeline-active: rgba(0, 173, 124, 0.06);
+
+  --color-text-primary:   #1c1f22;
+  --color-text-secondary: #45494e;
+  --color-text-muted:     #5b6066;
+  --color-text-faint:     #8e9298;
+
+  --color-accent:        #00ad7c;
+  --color-accent-hover:  #008e66;
+  --color-success:       #2e8a4d;
+  --color-danger:        #b9412f;
+  --color-warning:       #a16720;
+
+  --color-border:        #e7e5db;
+  --color-border-strong: #d4d3c8;
+  --color-ring:          #d4d3c8;
+}
+
+/* Same light palette under system theme when the OS is light.
+ * Without this, picking "system" on a light Mac left the library
+ * shell stuck on the GMGN dark palette while the rest of the UI
+ * went light — discordant. The `:not([data-theme="dark"])` /
+ * `:not([data-theme="niho"])` guards keep manual dark / niho
+ * choices from being overridden if the OS happens to be light. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]):not([data-theme="niho"]) .proto-library-shell {
+    --color-bg-primary:    #faf9f5;
+    --color-bg-sidebar:    #f3f2ec;
+    --color-bg-elevated:   #ffffff;
+    --color-bg-surface:    #ffffff;
+    --color-bg-hover:      #ebeae2;
+    --color-bg-active:     #ddddd2;
+    --color-bg-input:      #ffffff;
+    --color-bg-soft:       #f4f3ec;
+    --color-bg-pipeline-active: rgba(0, 173, 124, 0.06);
+
+    --color-text-primary:   #1c1f22;
+    --color-text-secondary: #45494e;
+    --color-text-muted:     #5b6066;
+    --color-text-faint:     #8e9298;
+
+    --color-accent:        #00ad7c;
+    --color-accent-hover:  #008e66;
+    --color-success:       #2e8a4d;
+    --color-danger:        #b9412f;
+    --color-warning:       #a16720;
+
+    --color-border:        #e7e5db;
+    --color-border-strong: #d4d3c8;
+    --color-ring:          #d4d3c8;
+  }
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 html, body, #app {

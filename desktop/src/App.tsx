@@ -3,11 +3,10 @@ import { AnimatePresence } from "framer-motion";
 import { AtelierShell } from "./components/atelier/AtelierShell";
 import { StreamHome } from "./components/atelier/StreamHome";
 import { LibraryShell } from "./components/library/LibraryShell";
-import { RAGPage } from "./components/rag/RAGPage";
 import { NihoParticles } from "./components/layout/NihoParticles";
 import { SettingsPanel } from "./components/settings/SettingsPanel";
 import { Toast } from "./components/layout/Toast";
-import { NotePage } from "./components/note/NotePage";
+import { NoteWorkspace } from "./components/note/NoteWorkspace";
 import { WikiSourceViewer } from "./components/wiki/WikiSourceViewer";
 import { usePrefs } from "./hooks/usePrefs";
 import { useTags } from "./hooks/useTags";
@@ -121,9 +120,10 @@ export default function App() {
   }, []);
 
   // Listen for tag-vocabulary changes from anywhere in the app —
-  // RAGPage's tag CRUD (add / rename / delete) dispatches this so
-  // the Note top-strip updates without an app restart. Avoids
-  // threading callbacks through every intermediate component.
+  // Library WorkspacePanel's tag CRUD (add / rename / delete)
+  // dispatches this so the Note top-strip updates without an app
+  // restart. Avoids threading callbacks through every intermediate
+  // component.
   useEffect(() => {
     const handler = () => refreshTags();
     window.addEventListener("smartnote:tags-changed", handler);
@@ -226,12 +226,55 @@ export default function App() {
     }).catch(() => {});
   }, []);
 
-  // Cloud-pushed events (enrich_done / memory_proposed) → toast.
-  // Closes "wiki_enrich 完成了用户没感知" feedback. agent_active is
-  // handled by useAgentActivity → BottomBar; we DON'T toast that one
-  // (would spam every time an agent calls a tool).
+  // Cloud-pushed events → toast + refresh.
+  //
+  // The unified envelope is `processing_done` (per integration doc
+  // §3.1 + §10.2). Legacy `enrich_done` is kept here for the cloud
+  // migration window and removed once cloud stops emitting it. Both
+  // funnel into the same handler so behavior is consistent.
   useEffect(() => {
     const off = onWsEvent((e) => {
+      if (e.type === "processing_done") {
+        const ev = e as {
+          document_id?: string; document_name?: string;
+          stage?: string; kind?: string; status?: string;
+          message?: string; progress?: { total?: number };
+          data?: { segments_count?: number; tokens_total?: number };
+        };
+        // Don't toast for routine background topology runs — they're
+        // fast + happen as bulk auto-tail and would spam.
+        if ((ev.kind || ev.stage) === "graph_topology") return;
+        const stage = (ev.kind || ev.stage || "Processing").replace(/_/g, " ");
+        const docName = ev.document_name || "a document";
+        const data = ev.data || {};
+        const segs = typeof data.segments_count === "number" ? data.segments_count : null;
+        const tokens = typeof data.tokens_total === "number" ? data.tokens_total : null;
+        const tail = [
+          segs !== null ? `${segs} segments` : null,
+          tokens ? `${tokens.toLocaleString()} tokens` : null,
+        ].filter(Boolean).join(" · ");
+        setToast({
+          message: ev.status === "failed"
+            ? `${stage} failed for ${docName}${ev.message ? ` — ${ev.message}` : ""}`
+            : `${stage} done · ${docName}${tail ? ` · ${tail}` : ""}`,
+          type: ev.status === "failed" ? "error" : "success",
+        });
+        setBuildVersion((v) => v + 1);
+        // Bridge into the DOM event so useDocPipelineStates (Library
+        // tree chips) and any other listeners refresh within ms
+        // instead of waiting for the 6s background poll. Without
+        // this, the chip stays grey/"running" until the next tick
+        // even though processing_done has already landed.
+        try { window.dispatchEvent(new CustomEvent("smartnote:doc-pipeline-changed")); } catch { /* silent */ }
+        // Tag vocabulary may have grown during chunk_enrich /
+        // note_classify; refresh once for either kind.
+        if ((ev.kind || ev.stage) === "chunk_enrich" || (ev.kind || ev.stage) === "note_classify") {
+          refreshTags();
+        }
+        return;
+      }
+      // Legacy event — covered by processing_done above for new
+      // cloud builds. Kept for backwards compat during rollout.
       if (e.type === "enrich_done") {
         const ev = e as { document_name?: string; segments_count?: number; tokens_total?: number };
         const docName = ev.document_name || "a document";
@@ -240,19 +283,23 @@ export default function App() {
           message: `Enriched ${docName} — ${ev.segments_count || 0} segments${tokens}`,
           type: "success",
         });
-        // Trigger Library / RAG re-fetch via build version bump.
         setBuildVersion((v) => v + 1);
-        // Workspace tag vocabulary may have grown during enrichment
-        // (classifier auto-creates tags). Re-pull so the Note top
-        // strip and other tag chips reflect the new vocabulary
-        // without an app restart.
         refreshTags();
-      } else if (e.type === "memory_proposed") {
+        return;
+      }
+      if (e.type === "memory_proposed") {
         const ev = e as { agent?: string; kind?: string; preview?: string };
         setToast({
           message: `${ev.agent || "Agent"} proposed a ${ev.kind || "memory"}: "${(ev.preview || "").slice(0, 80)}…"`,
           type: "info",
         });
+      }
+      // WS link recovered (initial connect or after a zombie-socket
+      // reconnect). Bridge to the DOM event so hooks like
+      // useDocPipelineStates can refetch state that may have drifted
+      // while we were silently disconnected.
+      if (e.type === "ws_recovered") {
+        try { window.dispatchEvent(new CustomEvent("smartnote:ws-recovered")); } catch { /* silent */ }
       }
     });
     return off;
@@ -270,7 +317,7 @@ export default function App() {
     if (activeChannel === "settings") return <SettingsPanel />;
     if (activeChannel === "note") {
       return (
-        <NotePage
+        <NoteWorkspace
           rawPath={prefs.rawPath}
           notePath={prefs.notePath}
           onSetRawPath={prefs.setRawPath}
@@ -296,9 +343,6 @@ export default function App() {
           pendingMemoryCount={pendingMemoryCount}
         />
       );
-    }
-    if (activeChannel === "rag") {
-      return <RAGPage />;
     }
     if (activeChannel.startsWith("source:")) {
       // Channel format: source:<id-or-path>[#L<start>-<end>]

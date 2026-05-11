@@ -1,19 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Search, CornerDownLeft, Hash } from "lucide-react";
+import { Search, CornerDownLeft, Hash, Bookmark } from "lucide-react";
 import { readFileFull } from "@/lib/electron";
+
+export type QuickSearchBookmark = { line_no: number; label: string; preview: string };
 
 type Props = {
   rawPath: string;
   open: boolean;
   onClose: () => void;
   onJumpToLine: (line: number) => void;
+  /** Current file's bookmarks. Used by the `:b` mode to list them. */
+  bookmarks?: QuickSearchBookmark[];
 };
 
-type Hit = { line: number; text: string };
+type Hit = { line: number; text: string; label?: string };
 
 const MAX_HITS = 200;
 
-export function QuickSearch({ rawPath, open, onClose, onJumpToLine }: Props) {
+export function QuickSearch({ rawPath, open, onClose, onJumpToLine, bookmarks = [] }: Props) {
   const [query, setQuery] = useState("");
   const [lines, setLines] = useState<string[]>([]);
   const [cursor, setCursor] = useState(0);
@@ -43,9 +47,34 @@ export function QuickSearch({ rawPath, open, onClose, onJumpToLine }: Props) {
     return Math.min(n, Math.max(1, lines.length));
   }, [query, lines.length]);
 
+  // Bookmark-list mode: `:b` (alone) shows every bookmark; `:b foo`
+  // filters bookmarks by label / preview substring.
+  const bookmarkFilter = useMemo<string | null>(() => {
+    const q = query.trim();
+    const m = q.match(/^:b(?:\s+(.*))?$/i);
+    if (!m) return null;
+    return (m[1] || "").trim().toLowerCase();
+  }, [query]);
+
+  const bookmarkHits = useMemo<Hit[]>(() => {
+    if (bookmarkFilter === null) return [];
+    const needle = bookmarkFilter;
+    const out: Hit[] = [];
+    for (const b of bookmarks) {
+      const hay = `${b.label} ${b.preview}`.toLowerCase();
+      if (!needle || hay.includes(needle)) {
+        out.push({ line: b.line_no, text: b.preview, label: b.label });
+      }
+    }
+    // Sort by line number ascending so the list reads top-to-bottom
+    // like the note itself.
+    out.sort((a, b) => a.line - b.line);
+    return out;
+  }, [bookmarks, bookmarkFilter]);
+
   const hits = useMemo<Hit[]>(() => {
     const q = query.trim();
-    if (!q || jumpLine !== null) return [];
+    if (!q || jumpLine !== null || bookmarkFilter !== null) return [];
     const needle = q.toLowerCase();
     const out: Hit[] = [];
     for (let i = 0; i < lines.length; i++) {
@@ -55,7 +84,7 @@ export function QuickSearch({ rawPath, open, onClose, onJumpToLine }: Props) {
       }
     }
     return out;
-  }, [query, lines, jumpLine]);
+  }, [query, lines, jumpLine, bookmarkFilter]);
 
   useEffect(() => { setCursor(0); }, [query]);
 
@@ -67,7 +96,8 @@ export function QuickSearch({ rawPath, open, onClose, onJumpToLine }: Props) {
 
   if (!open) return null;
 
-  const total = jumpLine !== null ? 1 : hits.length;
+  const activeHits = bookmarkFilter !== null ? bookmarkHits : hits;
+  const total = jumpLine !== null ? 1 : activeHits.length;
 
   const commit = () => {
     if (jumpLine !== null) {
@@ -75,7 +105,7 @@ export function QuickSearch({ rawPath, open, onClose, onJumpToLine }: Props) {
       onClose();
       return;
     }
-    const hit = hits[cursor];
+    const hit = activeHits[cursor];
     if (hit) {
       onJumpToLine(hit.line);
       onClose();
@@ -113,7 +143,11 @@ export function QuickSearch({ rawPath, open, onClose, onJumpToLine }: Props) {
             }}
           />
           <span className="proto-quicksearch-hint">
-            {jumpLine !== null ? "Line" : `${hits.length}${hits.length >= MAX_HITS ? "+" : ""}`}
+            {jumpLine !== null
+              ? "Line"
+              : bookmarkFilter !== null
+                ? `${bookmarkHits.length} bookmark${bookmarkHits.length === 1 ? "" : "s"}`
+                : `${hits.length}${hits.length >= MAX_HITS ? "+" : ""}`}
           </span>
         </div>
         <div ref={listRef} className="proto-quicksearch-list">
@@ -129,10 +163,39 @@ export function QuickSearch({ rawPath, open, onClose, onJumpToLine }: Props) {
               <CornerDownLeft size={12} className="proto-quicksearch-item-enter" strokeWidth={2} />
             </button>
           )}
-          {jumpLine === null && hits.length === 0 && query.trim() !== "" && (
+          {jumpLine === null && bookmarkFilter === null && hits.length === 0 && query.trim() !== "" && (
             <div className="proto-quicksearch-empty">No matches</div>
           )}
-          {jumpLine === null && hits.map((h, i) => (
+          {jumpLine === null && bookmarkFilter !== null && bookmarkHits.length === 0 && (
+            <div className="proto-quicksearch-empty">
+              {bookmarks.length === 0
+                ? "No bookmarks yet · press ⌘B on a line to add one"
+                : `No bookmarks matching "${bookmarkFilter}"`}
+            </div>
+          )}
+          {jumpLine === null && bookmarkFilter !== null && bookmarkHits.map((h, i) => (
+            <button
+              key={`bm-${h.line}-${i}`}
+              type="button"
+              data-idx={i}
+              className={
+                "proto-quicksearch-item proto-quicksearch-item-bookmark" +
+                (i === cursor ? " proto-quicksearch-item-active" : "")
+              }
+              onMouseEnter={() => setCursor(i)}
+              onClick={commit}
+            >
+              <Bookmark size={12} className="proto-quicksearch-item-icon" strokeWidth={2} />
+              <span className="proto-quicksearch-item-line">{h.line}</span>
+              <span className="proto-quicksearch-item-text">
+                <strong>{h.label}</strong>
+                {h.text && (
+                  <span className="proto-quicksearch-item-sub"> · {h.text}</span>
+                )}
+              </span>
+            </button>
+          ))}
+          {jumpLine === null && bookmarkFilter === null && hits.map((h, i) => (
             <button
               key={`${h.line}-${i}`}
               type="button"
@@ -150,9 +213,9 @@ export function QuickSearch({ rawPath, open, onClose, onJumpToLine }: Props) {
               </span>
             </button>
           ))}
-          {jumpLine === null && hits.length === 0 && query.trim() === "" && (
+          {jumpLine === null && bookmarkFilter === null && hits.length === 0 && query.trim() === "" && (
             <div className="proto-quicksearch-empty">
-              Type to search the current note · digits or <code>:N</code> jumps to a line
+              Type to search · <code>:N</code> jump to line · <code>:b</code> list bookmarks
             </div>
           )}
         </div>

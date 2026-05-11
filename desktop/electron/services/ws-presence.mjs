@@ -27,7 +27,13 @@ let _pingTimer = null;
 let _reconnectDelay = 1_000;       // start at 1s
 const _RECONNECT_MAX = 30_000;     // cap at 30s
 const _PING_MS = 25_000;
+// Zombie-socket guard: if no inbound traffic (pong or otherwise)
+// arrives within this window, treat the link as dead and reconnect.
+// A 60s budget covers two missed pings before tearing down.
+const _ZOMBIE_MS = 60_000;
 let _stopped = false;
+let _lastInboundAt = 0;
+let _zombieTimer = null;
 
 let _jwtCache = null;              // { jwt, expiresAt, key }
 let _deviceId = null;              // resolved on first connect
@@ -73,6 +79,7 @@ async function _resolveDeviceId(cloudUrl, jwt) {
 
 function _stop() {
   if (_pingTimer) { clearInterval(_pingTimer); _pingTimer = null; }
+  if (_zombieTimer) { clearInterval(_zombieTimer); _zombieTimer = null; }
   if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
   if (_ws) {
     try { _ws.terminate(); } catch {}
@@ -81,9 +88,34 @@ function _stop() {
 }
 
 async function _connectOnce() {
+  try {
+    return await _connectOnceInner();
+  } catch (e) {
+    // Most common cause: /v1/auth/token returns 401 because the
+    // api_key in cloud-creds.json is no longer valid (workspace was
+    // wiped via clean-all-data, key was rotated, etc). Without
+    // catching here, the rejection propagates up to start() which is
+    // called without a catch and produces an UnhandledPromiseRejection
+    // every reconnect cycle. Log once + schedule retry.
+    console.warn("[ws-presence] connect failed:", e?.message || e);
+    _scheduleReconnect();
+    return false;
+  }
+}
+
+async function _connectOnceInner() {
   const s = await settings.read();
   if (!s.cloud_sync_url || !s.cloud_sync_api_key) {
-    // No creds — don't attempt; will retry on next start cycle.
+    // No creds — schedule a low-frequency retry so the WS picks up
+    // automatically once the user pastes a key in Cloud panel.
+    // Without this, settings configured AFTER electron startup
+    // would never get a WS connection until the next app restart.
+    if (!_stopped && !_reconnectTimer) {
+      _reconnectTimer = setTimeout(async () => {
+        _reconnectTimer = null;
+        await _connectOnce();
+      }, 5_000);
+    }
     return false;
   }
   const baseUrl = s.cloud_sync_url.replace(/\/+$/, "");
@@ -101,6 +133,7 @@ async function _connectOnce() {
     _ws = ws;
     ws.on("open", () => {
       _reconnectDelay = 1_000;
+      _lastInboundAt = Date.now();
       try {
         ws.send(JSON.stringify({
           type: "hello",
@@ -116,18 +149,45 @@ async function _connectOnce() {
           }
         } catch {}
       }, _PING_MS);
+      // Watchdog — if we stop hearing from cloud (no pongs, no events)
+      // for _ZOMBIE_MS, the socket has silently died (NAT eviction,
+      // suspended laptop, dropped link with no FIN). The OS may keep
+      // it "OPEN" indefinitely, swallowing every event the cloud
+      // pushes. Force-terminate so the close handler reconnects.
+      _zombieTimer = setInterval(() => {
+        if (Date.now() - _lastInboundAt > _ZOMBIE_MS) {
+          try { ws.terminate(); } catch {}
+        }
+      }, _PING_MS);
+      // Emit a synthetic "ws-recovered" event so the renderer can
+      // reconcile state that may have drifted while we were
+      // disconnected (in-flight processing rows, pipeline chips).
+      if (typeof _emit === "function") {
+        try { _emit({ type: "ws_recovered", at: new Date().toISOString() }); } catch {}
+      }
       if (!resolved) { resolved = true; resolve(true); }
     });
     ws.on("message", (data) => {
+      _lastInboundAt = Date.now();
       let payload;
       try { payload = JSON.parse(data.toString()); } catch { return; }
+      // Diagnostic — confirms cloud→main WS leg is alive. Filter at
+      // tail with `grep '\[ws-presence\]'` in the Electron stderr.
+      const t = payload && payload.type;
+      if (t && t !== "pong" && t !== "hello-ack") {
+        console.log("[ws-presence] inbound", t,
+          "run=", payload.run_id, "status=", payload.status,
+          "doc=", payload.document_id);
+      }
       // Forward every typed message to renderer. Renderer filters by type.
       if (typeof _emit === "function") {
         try { _emit(payload); } catch {}
       }
     });
+    ws.on("pong", () => { _lastInboundAt = Date.now(); });
     ws.on("close", () => {
       if (_pingTimer) { clearInterval(_pingTimer); _pingTimer = null; }
+      if (_zombieTimer) { clearInterval(_zombieTimer); _zombieTimer = null; }
       _ws = null;
       if (!resolved) { resolved = true; resolve(false); }
       _scheduleReconnect();
@@ -160,6 +220,18 @@ export async function start() {
 export async function stop() {
   _stopped = true;
   _stop();
+}
+
+/** Re-establish the WS connection. Called when settings change so a
+ *  fresh URL / API key picks up without an Electron restart. Safe
+ *  to call repeatedly; current socket gets torn down + re-dialled. */
+export async function restart() {
+  _stopped = false;
+  _stop();                 // close any existing socket + timers
+  _jwtCache = null;        // forget cached JWT (settings may have new key)
+  _deviceId = null;
+  _reconnectDelay = 1_000; // reset backoff so we connect quickly
+  await _connectOnce();
 }
 
 export function status() {

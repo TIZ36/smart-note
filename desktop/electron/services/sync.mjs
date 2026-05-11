@@ -46,42 +46,67 @@ async function _jwt(cloudUrl, apiKey) {
   return d.jwt;
 }
 
-function _stampFilename(name) {
-  const d = new Date();
-  const p = (n) => String(n).padStart(2, "0");
-  const stamp = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
-  const slash = name.lastIndexOf("/");
-  const dot = name.lastIndexOf(".");
-  if (dot > slash && dot > 0) {
-    return `${name.slice(0, dot)}__${stamp}${name.slice(dot)}`;
-  }
-  return `${name}__${stamp}`;
-}
-
 async function _pushFile(relPath, absPath, jwt, cloudUrl) {
   const content = await fs.readFile(absPath, "utf8");
   await localSearch.indexFile(relPath, content);
-  // Each push creates a uniquely-named snapshot — every save adds a
-  // second-level timestamped name so duplicates are visible in
-  // Library and the user can decide which to keep / delete.
-  const stampedName = _stampFilename(relPath);
   const nowIso = new Date().toISOString();
+  // Upsert by metadata.local_path — first push creates, subsequent
+  // pushes PATCH the same doc's content. Earlier behaviour stamped
+  // every push with a __YYYY-MM-DD_HHMMSS suffix, fragmenting the
+  // workspace into N copies of the same note and breaking retrieval
+  // (vec scoring competed across stale + fresh duplicates).
+  const headers = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${jwt}`,
+  };
+  const baseMeta = {
+    smartnote_type: "note",
+    local_path: relPath,
+    original_name: relPath,
+    synced_at: nowIso,
+    source: "auto-sync",
+  };
+  // Find existing doc with the same local_path so we update it.
+  let existingId = null;
+  try {
+    const list = await fetch(
+      `${cloudUrl}/v1/documents?smartnote_type=note`,
+      { headers },
+    );
+    if (list.ok) {
+      const j = await list.json();
+      const docs = (j && j.documents) || [];
+      const match = docs.find((d) =>
+        d?.metadata && typeof d.metadata === "object"
+          && d.metadata.local_path === relPath,
+      );
+      if (match) existingId = match.id;
+    }
+  } catch { /* fall through to create */ }
+
+  const filename = relPath.split("/").pop() || relPath;
+  if (existingId) {
+    const r = await fetch(`${cloudUrl}/v1/documents/${existingId}`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({
+        name: filename,
+        content,
+        metadata: baseMeta,
+      }),
+    });
+    if (!r.ok) throw new Error(`patch ${relPath}: ${r.status}`);
+    return await r.json();
+  }
+
   const r = await fetch(`${cloudUrl}/v1/documents`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${jwt}`,
-    },
+    headers,
     body: JSON.stringify({
-      name: stampedName,
+      name: filename,
       content,
       kind: "markdown",
-      metadata: {
-        smartnote_type: "note",
-        original_name: relPath,
-        synced_at: nowIso,
-        source: "auto-sync",
-      },
+      metadata: baseMeta,
     }),
   });
   if (!r.ok) throw new Error(`push ${relPath}: ${r.status}`);

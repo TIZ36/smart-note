@@ -8,6 +8,7 @@ stays auditable via the `supersedes` chain.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from uuid import UUID
 
@@ -20,6 +21,22 @@ from app.deps import Identity, require_scope
 from app.embeddings import embed_one, format_vector_literal
 
 router = APIRouter(prefix="/v1/preferences", tags=["preferences"])
+
+
+def _coerce_structured(value: Any) -> dict[str, Any]:
+    """asyncpg returns jsonb as either dict or str depending on whether
+    the json codec was set on the connection — early-init or new
+    pools sometimes miss the registration. Be defensive: handle both
+    shapes and fall back to empty on parse errors."""
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            decoded = json.loads(value)
+            return decoded if isinstance(decoded, dict) else {}
+        except Exception:
+            return {}
+    return {}
 
 
 class PreferencePut(BaseModel):
@@ -50,7 +67,7 @@ async def list_preferences(
         )
     out: dict[str, Any] = {}
     for r in rows:
-        s = r["structured"] or {}
+        s = _coerce_structured(r["structured"])
         key = s.get("key")
         if not key:
             continue
@@ -72,7 +89,7 @@ async def get_preference(
         row = await _find_current_pref(conn, identity.workspace_id, key)
     if not row:
         raise HTTPException(404, f"preference not set: {key}")
-    s = row["structured"] or {}
+    s = _coerce_structured(row["structured"])
     return {
         "key": key,
         "value": s.get("value"),

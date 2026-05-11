@@ -8,6 +8,7 @@ bulky + rarely useful to clients).
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from uuid import UUID
 
@@ -23,6 +24,37 @@ router = APIRouter(prefix="/v1/memories", tags=["memories"])
 
 
 VALID_KINDS = {"fact", "preference", "procedure", "episode", "document_ref"}
+
+
+def _coerce_obj(value: Any) -> dict[str, Any] | None:
+    """JSONB cells sometimes come back as JSON-string-inside-jsonb when
+    legacy writes double-encoded (e.g. `json.dumps(dict)` was passed
+    where the asyncpg jsonb codec was already going to encode). Handle
+    both shapes on read so an old row doesn't 500 the response."""
+    if value is None or isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            decoded = json.loads(value)
+            return decoded if isinstance(decoded, dict) else None
+        except Exception:
+            return None
+    return None
+
+
+def _coerce_list(value: Any) -> list[Any]:
+    """Same defense for list-shaped jsonb (source_refs)."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            decoded = json.loads(value)
+            return decoded if isinstance(decoded, list) else []
+        except Exception:
+            return []
+    return []
 
 
 class MemoryCreate(BaseModel):
@@ -74,9 +106,9 @@ def _row_to_out(row) -> MemoryOut:
         kind=row["kind"],
         scope=row["scope"],
         content=row["content"],
-        structured=row["structured"],
+        structured=_coerce_obj(row["structured"]),
         tags=list(row["tags"] or []),
-        source_refs=list(row["source_refs"] or []),
+        source_refs=_coerce_list(row["source_refs"]),
         confidence=float(row["confidence"]),
         pinned=bool(row["pinned"]),
         supersedes=str(row["supersedes"]) if row["supersedes"] else None,

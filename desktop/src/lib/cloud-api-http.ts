@@ -16,7 +16,7 @@ async function getCreds(): Promise<{ baseUrl: string; key: string }> {
   const s = await readSettings();
   const baseUrl = (s.cloud_sync_url || "").replace(/\/+$/, "");
   const key = s.cloud_sync_api_key || "";
-  if (!baseUrl || !key) throw new Error("Cloud not configured (Sync tab → set URL + API key)");
+  if (!baseUrl || !key) throw new Error("Cloud not configured (Sync tab -> set URL + API key)");
   return { baseUrl, key };
 }
 
@@ -199,6 +199,7 @@ export type DocumentKnProcessingRun = {
   executor: string | null;
   error: string | null;
   revision: number;
+  attempts?: number;
   created_at: string | null;
   started_at: string | null;
   finished_at: string | null;

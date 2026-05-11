@@ -15,14 +15,39 @@ function settingsPath() {
   return path.join(app.getPath("userData"), "settings.json");
 }
 
-export async function read() {
+function credsPath() {
+  return path.join(app.getPath("userData"), "cloud-creds.json");
+}
+
+/* Cloud / provider credentials live in a SEPARATE file
+ * (`cloud-creds.json`) — written by main.mjs's write_settings IPC,
+ * scoped 0600, never touches `.env`. Callers that ask for
+ * cloud_sync_url / api_key (ws-presence, sync) used to silently get
+ * undefined because they only read `settings.json`. We now layer
+ * the creds file on top so a single read returns the merged view.
+ *
+ * Layering rule: settings.json wins for non-cred keys; cloud-creds.json
+ * wins for cred keys (it's the only writer for them). */
+async function readCreds() {
   try {
-    const txt = await fs.readFile(settingsPath(), "utf8");
+    const txt = await fs.readFile(credsPath(), "utf8");
     return txt.trim() ? JSON.parse(txt) : {};
   } catch (e) {
     if (e.code === "ENOENT") return {};
     throw e;
   }
+}
+
+export async function read() {
+  let base = {};
+  try {
+    const txt = await fs.readFile(settingsPath(), "utf8");
+    base = txt.trim() ? JSON.parse(txt) : {};
+  } catch (e) {
+    if (e.code !== "ENOENT") throw e;
+  }
+  const creds = await readCreds();
+  return { ...base, ...creds };
 }
 
 export async function write(patch) {

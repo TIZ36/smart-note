@@ -8,9 +8,14 @@ type Prefs = {
   notePath: string;
 };
 
+/* No default file paths. Earlier this hard-coded a developer's
+ * `routinework/mvp/sample/raw.md`, which (a) never exists on a real
+ * user's machine — silently breaks the editor — and (b) on the dev
+ * machine where it DID exist, hid the Note landing screen so users
+ * couldn't see the onboarding flow. Empty path → landing renders. */
 const DEFAULTS: Prefs = {
-  rawPath: "/Users/lilithgames/aiproj/routinework/mvp/sample/raw.md",
-  notePath: "/Users/lilithgames/aiproj/routinework/mvp/sample/note.md",
+  rawPath: "",
+  notePath: "",
 };
 
 export function usePrefs() {

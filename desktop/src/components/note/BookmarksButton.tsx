@@ -84,11 +84,14 @@ export function BookmarksButton({ bookmarks, onJumpToLine, onRemove }: Props) {
                       type="button"
                       className="proto-bookmarks-jump"
                       onClick={() => { onJumpToLine(b.line_no_last); setOpen(false); }}
-                      title={`Jump to line ${b.line_no_last}`}
+                      title={`L${b.line_no_last} · ${b.line_preview || ""}`}
                     >
                       <span className="proto-bookmarks-line-no">L{b.line_no_last}</span>
                       <span className="proto-bookmarks-preview">
-                        {b.line_preview || <em>(blank)</em>}
+                        {/* Label first (user-given name, the whole point
+                            of naming a bookmark); line preview only
+                            shows on hover via the title above. */}
+                        {b.bookmark || b.line_preview || <em>(blank)</em>}
                       </span>
                       <ArrowUpRight size={11} strokeWidth={2} className="proto-bookmarks-jump-icon" aria-hidden />
                     </button>

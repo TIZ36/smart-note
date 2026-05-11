@@ -163,6 +163,5 @@ export type ChannelId =
   | "library:docs"
   | "library:memories"
   | "library:skills"
-  | "rag"
   | "settings"
   | `source:${string}`;

@@ -157,6 +157,33 @@ export type DocumentKnEnrichJob = {
   finished_at: string | null;
   tokens_total: number;
 };
+export type DocumentKnProcessingRun = {
+  id: string;
+  run_id?: string;
+  /** chunk_embed | chunk_enrich | graph_topology | wiki_abstract | note_classify */
+  kind: string;
+  /** queued | running | done | failed | partial | skipped_dedup | skipped_quota */
+  status: string;
+  executor: string | null;
+  error: string | Record<string, unknown> | null;
+  revision: number;
+  attempts?: number;
+  created_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  result: Record<string, unknown> | null;
+};
+export type ProcessingStageState = {
+  stage: string;
+  available: boolean;
+  status: string;
+  run_id: string | null;
+  revision: number;
+  stale: boolean;
+  error: string | Record<string, unknown> | null;
+  result: Record<string, unknown> | null;
+  updated_at: string | null;
+};
 export type DocumentKnChapter = {
   id: string;
   ord: number;
@@ -168,38 +195,160 @@ export type DocumentKnChapter = {
   summary: string;
   keywords: string[];
   summarized: boolean;
+  last_error?: string | null;
   updated_at: string | null;
 };
+/** note_classify output — one row per (doc, tag). The /kn payload
+ *  returns ALL statuses (pending/accepted/dismissed) ordered by
+ *  proposed_at. The dedicated /v1/notes/{id}/suggestions endpoint
+ *  returns only pending ones, ordered by confidence — used by the
+ *  Library Tag suggestions review queue. */
+export type NoteTagSuggestion = {
+  id?: string;          // present in /kn payload, absent in /suggestions
+  run_id?: string;      // same
+  tag: string;
+  confidence: number;
+  reasoning: string;
+  status: "pending" | "accepted" | "dismissed";
+  proposed_at: string;
+  reviewed_at: string | null;
+};
+
+/** Back-compat alias — older callers spell it `NoteSuggestion`. */
+export type NoteSuggestion = NoteTagSuggestion;
+
+/** graph_topology output — one row per (this_doc, target_doc, relation).
+ *  Score is 0..1; evidence is relation-specific JSON (shared entities,
+ *  shared tags, cosine, …). Read via /kn under document_links. */
+export type DocumentLink = {
+  target_document_id: string;
+  target_name: string;
+  relation_type:
+    | "semantic_similarity"
+    | "shared_entity"
+    | "shared_tag"
+    | "same_topic"
+    | "references"
+    | string;            // forward-compat
+  score: number;
+  evidence: Record<string, unknown> | null;
+  run_id: string | null;
+  created_at: string | null;
+};
+
 export type DocumentKn = {
   document_id: string;
   kind: string;
+  content_sha?: string | null;
+  entity_count?: number;
+  chunk_total?: number;
+  embedded_chunk_count?: number;
+  stages?: Record<string, ProcessingStageState>;
+  runs?: DocumentKnProcessingRun[];
   chunks: DocumentKnChunk[];
   tag_segments: DocumentKnTagSegment[];
   wiki_chapters: DocumentKnChapter[];
-  enrich_jobs: DocumentKnEnrichJob[];
+  note_tag_suggestions?: NoteTagSuggestion[];
+  document_links?: DocumentLink[];
+  processing_runs?: DocumentKnProcessingRun[];
+  /** Legacy server compatibility. Prefer processing_runs. */
+  enrich_jobs?: DocumentKnEnrichJob[];
 };
 export const getDocumentKn = (id: string) =>
   call<DocumentKn>("GET", `/v1/documents/${id}/kn`);
 
 export const patchDocument = (
   id: string,
-  patch: { name?: string; kind?: string; metadata?: Record<string, unknown> },
+  patch: {
+    name?: string;
+    kind?: string;
+    metadata?: Record<string, unknown>;
+    /** Replace the document's full text. Cloud will clear ingested_at
+     *  and schedule re-ingest when present, since old chunks no
+     *  longer reflect the new content. */
+    content?: string;
+  },
 ) => call<CloudDocument>("PATCH", `/v1/documents/${id}`, patch);
 
 // Wiki abstract — chapter summarization. Hits the canonical
 // /v1/processing/{id}/run endpoint with kind=wiki_abstract; the
 // result lands in wiki_chapters.summary and is read back through
 // the /kn endpoint along with everything else.
+export type ProcessingKind = "chunk_embed" | "chunk_enrich" | "graph_topology" | "wiki_abstract" | "note_classify";
+
 export type ProcessingRunResult = {
   run_id: string;
+  document_id: string;
+  kind: ProcessingKind;
   status: string;
   dedup_skipped?: boolean;
   revision?: number;
+  result?: Record<string, unknown> | null;
+  error?: string | Record<string, unknown> | null;
 };
+export const runStage = (id: string, kind: ProcessingKind, force = false, options: Record<string, unknown> = {}) =>
+  call<ProcessingRunResult>("POST", `/v1/processing/${id}/run`, { kind, force, options });
+
+/** Per-doc + workspace-wide processing run history.
+ *  Backed by cloud `/v1/processing/runs?document_id=…&kind=…&limit=…`.
+ *  Used by useDocPipelineStates to roll up tree-row bit dots. */
+export type ProcessingRunRow = {
+  id: string;                       // run_id
+  workspace_id?: string;
+  document_id: string;
+  document_name?: string | null;
+  kind: ProcessingKind;
+  status: string;                   // queued · running · done · failed · partial · skipped · skipped_dedup
+  revision?: number;
+  attempts?: number;
+  executor?: string | null;
+  result?: Record<string, unknown> | null;
+  error?: string | Record<string, unknown> | null;
+  created_at?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+};
+
+export const listRuns = (opts: {
+  documentId?: string;
+  kind?: ProcessingKind;
+  status?: string;
+  limit?: number;
+} = {}) => {
+  const q = new URLSearchParams();
+  if (opts.documentId) q.set("document_id", opts.documentId);
+  if (opts.kind)       q.set("kind", opts.kind);
+  if (opts.status)     q.set("status", opts.status);
+  if (opts.limit)      q.set("limit", String(opts.limit));
+  const qs = q.toString();
+  return call<{ runs: ProcessingRunRow[] }>(
+    "GET",
+    `/v1/processing/runs${qs ? "?" + qs : ""}`,
+  );
+};
+
+/** Convenience: workspace-wide recent runs across all docs/kinds.
+ *  Used by tree bits + ProcessingPanel feed. */
+export const listRecentRuns = (limit = 100) =>
+  listRuns({ limit }).then((r) => r.runs);
+
+/** Back-compat alias — older callers spell it `RecentRun`. */
+export type RecentRun = ProcessingRunRow;
+/** Back-compat alias — older callers expect `NoteSuggestionsList`. */
+export type NoteSuggestionsList = { suggestions: NoteTagSuggestion[] };
+
+export const getRun = (runId: string) =>
+  call<ProcessingRunRow & { events?: Record<string, unknown>[] }>(
+    "GET",
+    `/v1/processing/runs/${runId}`,
+  );
+
+/** Cancel a queued/running run. 204 on success, idempotent. */
+export const cancelProcessingRun = (runId: string) =>
+  call<null>("DELETE", `/v1/processing/runs/${runId}`);
+
 export const buildWikiAbstract = (id: string, force = true) =>
-  call<ProcessingRunResult>("POST", `/v1/processing/${id}/run`, {
-    kind: "wiki_abstract", force,
-  });
+  runStage(id, "wiki_abstract", force);
 // Back-compat alias — same call. Older callers say "smartsheet".
 export const buildWikiSmartsheet = buildWikiAbstract;
 
@@ -254,10 +403,57 @@ export async function claimDevice(
   return r.json() as Promise<ClaimResponse>;
 }
 
+// ── Note tag-suggestion review queue ────────────────────────────
+//
+// Backed by note_classify output. The /v1/notes/{id}/suggestions
+// endpoint scopes to pending only (the review queue); /kn includes
+// all statuses for history. Accept/dismiss are per (doc, tag) —
+// the same tag can be re-suggested in a later run, so tag is
+// effectively the key for review actions.
+
+// classifyNote — kicks off note_classify (LLM tag suggestion run) for
+// one doc. Background-executed; returns immediately with the run_id.
+// Distinct from runStage(...,"note_classify") which goes through
+// /v1/processing/{id}/run — this endpoint is the legacy
+// /v1/notes/{id}/classify shorthand kept for the Notes-pane bulk-
+// classify UI. Both ultimately hit `_run_note_classify`.
+export const classifyNote = (documentId: string) =>
+  call<{ run_id: string; status: string; suggested_count: number }>(
+    "POST", `/v1/notes/${documentId}/classify`, {},
+  );
+
+export const listNoteSuggestions = (documentId: string) =>
+  call<{ suggestions: NoteTagSuggestion[] }>(
+    "GET",
+    `/v1/notes/${documentId}/suggestions`,
+  );
+
+// addNoteUserTag — manually attach a user_tag to a note doc without
+// going through the suggestion / accept flow. Used by the
+// LibraryNotesPane inline tag input. Returns the updated tag list.
+export const addNoteUserTag = (documentId: string, tag: string) =>
+  call<{ tag: string; user_tags: string[] }>(
+    "POST", `/v1/notes/${documentId}/user_tags`, { tag },
+  );
+
+export const acceptNoteSuggestion = (documentId: string, tag: string) =>
+  call<{ tag: string; user_tags: string[] }>(
+    "POST",
+    `/v1/notes/${documentId}/suggestions/${encodeURIComponent(tag)}/accept`,
+    {},
+  );
+
+export const dismissNoteSuggestion = (documentId: string, tag: string) =>
+  call<{ ok: true }>(
+    "POST",
+    `/v1/notes/${documentId}/suggestions/${encodeURIComponent(tag)}/dismiss`,
+    {},
+  );
+
 export const listEnrichJobs = (status?: string) =>
   call<EnrichJob[]>("GET", `/v1/enrich/jobs${status ? `?status_filter=${status}` : ""}`);
 export const runEnrich = (documentId: string) =>
-  call<EnrichJob>("POST", "/v1/enrich/run", { document_id: documentId });
+  runStage(documentId, "chunk_enrich");
 export const deleteEnrichJob = (id: string) =>
   call<{ ok: boolean; deleted: number }>("DELETE", `/v1/enrich/jobs/${id}`);
 export const bulkDeleteEnrichJobs = (status?: string) =>
@@ -319,7 +515,7 @@ export type ChunkSearchHit = {
 };
 
 export const ingestDocument = (documentId: string) =>
-  call<IngestRunResult>("POST", "/v1/ingest/document", { document_id: documentId });
+  runStage(documentId, "chunk_embed");
 
 export const bulkIngest = (opts: {
   document_ids?: string[];
@@ -478,6 +674,38 @@ export type ProposalsList = { proposals: Proposal[]; total: number };
 
 export const listProposals = (limit = 20) =>
   call<ProposalsList>("GET", `/v1/memories/proposals?limit=${limit}`);
+
+// Committed memories — the canonical `memories` table. Distinct
+// from proposals (which require user accept) and from add_memory's
+// direct-commit (which bypasses proposals entirely). Library's
+// "Saved" tab uses this so memories added via MCP add_memory or
+// set_preference actually appear in the UI.
+export type Memory = {
+  id: string;
+  workspace_id: string;
+  author_agent: string;
+  kind: string;
+  scope: string;
+  content: string;
+  structured: Record<string, unknown> | null;
+  tags: string[];
+  source_refs: Record<string, unknown>[];
+  confidence: number;
+  pinned: boolean;
+  supersedes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+export type MemoriesList = { memories: Memory[] };
+
+export const listMemories = (opts: { kind?: string; scope?: string; limit?: number } = {}) => {
+  const params = new URLSearchParams();
+  if (opts.kind) params.set("kind", opts.kind);
+  if (opts.scope) params.set("scope", opts.scope);
+  if (opts.limit) params.set("limit", String(opts.limit));
+  const qs = params.toString();
+  return call<MemoriesList>("GET", `/v1/memories${qs ? "?" + qs : ""}`);
+};
 
 export const acceptProposal = (id: string) =>
   call<{ ok: boolean; id: string }>(

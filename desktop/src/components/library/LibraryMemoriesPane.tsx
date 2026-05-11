@@ -11,9 +11,17 @@ import * as cloudApi from "@/lib/cloud-api";
  */
 
 type GroupMode = "source" | "kind";
+type ViewMode = "pending" | "saved";
 
 export function LibraryMemoriesPane() {
   const [proposals, setProposals] = useState<cloudApi.Proposal[] | null>(null);
+  // Committed memories — populated only when the user is on the
+  // Saved tab. Memories added via MCP `add_memory` / `set_preference`
+  // skip proposals entirely; without this view, the user thinks
+  // "I added it but it didn't show up". The two views share filter /
+  // groupMode so the left tree behaves the same.
+  const [memories, setMemories] = useState<cloudApi.Memory[] | null>(null);
+  const [view, setView] = useState<ViewMode>("pending");
   const [active, setActive] = useState<string>("pending"); // bucket key
   const [groupMode, setGroupMode] = useState<GroupMode>("source");
   const [filter, setFilter] = useState("");
@@ -21,7 +29,7 @@ export function LibraryMemoriesPane() {
 
   useEffect(() => {
     let alive = true;
-    async function load() {
+    async function loadProposals() {
       try {
         if (!(await cloudApi.isCloudConfigured())) {
           if (alive) setProposals([]);
@@ -33,10 +41,34 @@ export function LibraryMemoriesPane() {
         if (alive) setProposals([]);
       }
     }
-    load();
-    const id = setInterval(load, 30_000);
-    return () => { clearInterval(id); };
+    loadProposals();
+    const id = setInterval(loadProposals, 30_000);
+    return () => { alive = false; clearInterval(id); };
   }, []);
+
+  // Saved memories load lazily — only when the user flips to that
+  // tab. Keeps the initial pane render cheap when the user just
+  // wants to triage proposals. Refresh on a 30s tick too so MCP
+  // writes show up without needing a manual reload.
+  useEffect(() => {
+    if (view !== "saved") return;
+    let alive = true;
+    async function loadMemories() {
+      try {
+        if (!(await cloudApi.isCloudConfigured())) {
+          if (alive) setMemories([]);
+          return;
+        }
+        const res = await cloudApi.listMemories({ limit: 500 });
+        if (alive) setMemories(res.memories);
+      } catch {
+        if (alive) setMemories([]);
+      }
+    }
+    loadMemories();
+    const id = setInterval(loadMemories, 30_000);
+    return () => { alive = false; clearInterval(id); };
+  }, [view]);
 
   // Buckets for the left tree.
   const buckets = useMemo(() => {
@@ -80,7 +112,51 @@ export function LibraryMemoriesPane() {
     return result;
   }, [proposals, groupMode, filter]);
 
+  // Saved-view buckets — same shape as proposals buckets so the
+  // existing tree + content rendering can switch on `view` without
+  // a fork. Discriminator on the item type means cards can render
+  // pending vs saved differently below.
+  const savedBuckets = useMemo(() => {
+    if (!memories) return [];
+    const q = filter.trim().toLowerCase();
+    const filtered = q
+      ? memories.filter((m) => m.content.toLowerCase().includes(q))
+      : memories;
+    type SBucket = { key: string; label: string; group: string; items: cloudApi.Memory[] };
+    const result: SBucket[] = [];
+    result.push({ key: "pending", label: "All saved", group: "Saved memories", items: filtered });
+    if (groupMode === "source") {
+      const m = new Map<string, cloudApi.Memory[]>();
+      for (const x of filtered) {
+        const a = x.author_agent || "unknown";
+        const arr = m.get(a) || [];
+        arr.push(x); m.set(a, arr);
+      }
+      for (const [src, items] of m) {
+        result.push({ key: `src:${src}`, label: src, group: `From ${src}`, items });
+      }
+    } else {
+      const m = new Map<string, cloudApi.Memory[]>();
+      for (const x of filtered) {
+        const arr = m.get(x.kind) || [];
+        arr.push(x); m.set(x.kind, arr);
+      }
+      for (const [k, items] of m) {
+        result.push({ key: `kind:${k}`, label: k, group: `By kind: ${k}`, items });
+      }
+    }
+    return result;
+  }, [memories, groupMode, filter]);
+
+  // Active view's bucket list — proposals shape vs memories shape
+  // are isomorphic enough at this level (key/label/group/items
+  // count) that the tree renders both.
+  const treeBuckets = view === "pending"
+    ? buckets.map((b) => ({ key: b.key, label: b.label, group: b.group, count: b.items.length }))
+    : savedBuckets.map((b) => ({ key: b.key, label: b.label, group: b.group, count: b.items.length }));
+
   const activeBucket = buckets.find((b) => b.key === active) || buckets[0];
+  const activeSavedBucket = savedBuckets.find((b) => b.key === active) || savedBuckets[0];
 
   async function handleAccept(p: cloudApi.Proposal) {
     setBusyId(p.id);
@@ -111,9 +187,35 @@ export function LibraryMemoriesPane() {
       {/* Left tree */}
       <aside className="proto-library-tree">
         <div className="proto-library-tree-bar">
+          {/* View switcher — Pending review (proposals queue) vs
+              Saved (committed memories table). MCP add_memory /
+              set_preference land in Saved, propose_memory lands
+              in Pending. */}
+          <div className="proto-library-tree-view-switch" role="tablist" aria-label="Memory view">
+            <button
+              type="button"
+              aria-pressed={view === "pending"}
+              onClick={() => { setView("pending"); setActive("pending"); }}
+            >
+              Pending
+              <span className="proto-library-tree-view-switch-count">
+                {proposals?.length ?? 0}
+              </span>
+            </button>
+            <button
+              type="button"
+              aria-pressed={view === "saved"}
+              onClick={() => { setView("saved"); setActive("pending"); }}
+            >
+              Saved
+              {memories !== null && (
+                <span className="proto-library-tree-view-switch-count">{memories.length}</span>
+              )}
+            </button>
+          </div>
           <input
             className="proto-library-tree-search"
-            placeholder="Filter memories…"
+            placeholder={view === "pending" ? "Filter proposals…" : "Filter memories…"}
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
           />
@@ -137,25 +239,37 @@ export function LibraryMemoriesPane() {
           </span>
         </div>
         <div className="proto-library-tree-scroll">
-          {proposals === null && (
+          {view === "pending" && proposals === null && (
             <div style={{ padding: 12, fontSize: 11, color: "var(--color-text-muted)" }}>
               loading…
             </div>
           )}
-          {proposals !== null && proposals.length === 0 && (
+          {view === "pending" && proposals !== null && proposals.length === 0 && (
             <div style={{ padding: 12, fontSize: 11, color: "var(--color-text-muted)" }}>
               No pending memories. Cursor and Claude Code will surface drafts here as they work.
             </div>
           )}
+          {view === "saved" && memories === null && (
+            <div style={{ padding: 12, fontSize: 11, color: "var(--color-text-muted)" }}>
+              loading…
+            </div>
+          )}
+          {view === "saved" && memories !== null && memories.length === 0 && (
+            <div style={{ padding: 12, fontSize: 11, color: "var(--color-text-muted)" }}>
+              No saved memories yet. Use MCP <code>add_memory</code> or <code>set_preference</code>.
+            </div>
+          )}
 
-          {/* Pending review group at top */}
-          {buckets.length > 0 && (
+          {/* "All" bucket at top — pending or saved depending on view */}
+          {treeBuckets.length > 0 && (
             <>
               <div className="proto-library-group">
-                <span>Pending review</span>
-                <span className="proto-library-group-count">{proposals?.length ?? 0}</span>
+                <span>{view === "pending" ? "Pending review" : "Saved memories"}</span>
+                <span className="proto-library-group-count">
+                  {view === "pending" ? (proposals?.length ?? 0) : (memories?.length ?? 0)}
+                </span>
               </div>
-              {buckets
+              {treeBuckets
                 .filter((b) => b.key === "pending")
                 .map((b) => (
                   <button
@@ -166,7 +280,7 @@ export function LibraryMemoriesPane() {
                     onClick={() => setActive(b.key)}
                   >
                     <span className="proto-library-tree-item-name">{b.label}</span>
-                    <span className="proto-library-tree-item-count">{b.items.length}</span>
+                    <span className="proto-library-tree-item-count">{b.count}</span>
                   </button>
                 ))}
             </>
@@ -174,8 +288,8 @@ export function LibraryMemoriesPane() {
 
           {/* By-source / by-kind buckets */}
           {(() => {
-            const groups = new Map<string, typeof buckets>();
-            for (const b of buckets.filter((x) => x.key !== "pending")) {
+            const groups = new Map<string, typeof treeBuckets>();
+            for (const b of treeBuckets.filter((x) => x.key !== "pending")) {
               const arr = groups.get(b.group) || [];
               arr.push(b);
               groups.set(b.group, arr);
@@ -185,7 +299,7 @@ export function LibraryMemoriesPane() {
                 <div className="proto-library-group">
                   <span>{groupName}</span>
                   <span className="proto-library-group-count">
-                    {items.reduce((n, i) => n + i.items.length, 0)}
+                    {items.reduce((n, i) => n + i.count, 0)}
                   </span>
                 </div>
                 {items.map((b) => (
@@ -197,7 +311,7 @@ export function LibraryMemoriesPane() {
                     onClick={() => setActive(b.key)}
                   >
                     <span className="proto-library-tree-item-name">{b.label}</span>
-                    <span className="proto-library-tree-item-count">{b.items.length}</span>
+                    <span className="proto-library-tree-item-count">{b.count}</span>
                   </button>
                 ))}
               </div>
@@ -206,79 +320,129 @@ export function LibraryMemoriesPane() {
         </div>
       </aside>
 
-      {/* Right content */}
+      {/* Right content — split into Pending vs Saved render paths
+          because the action affordances differ (Accept/Reject for
+          proposals, plain display for committed memories). */}
       <div className="proto-library-content">
-        <div className="proto-library-content-bar">
-          <div className="proto-library-content-title">
-            {activeBucket?.label || "Memories"}
-          </div>
-          <div className="proto-library-content-meta">
-            {activeBucket?.items.length ?? 0} item
-            {(activeBucket?.items.length ?? 0) === 1 ? "" : "s"}
-          </div>
-          <div className="proto-library-content-actions">
-            <button type="button" className="proto-library-btn" title="Run today's digest">
-              Run digest now
-            </button>
-            <button type="button" className="proto-library-btn">Accept all</button>
-          </div>
-        </div>
-
-        <div className="proto-library-content-scroll">
-          {!activeBucket || activeBucket.items.length === 0 ? (
-            <div style={{ fontSize: 12, color: "var(--color-text-muted)", padding: 24 }}>
-              No memories in this bucket yet.
+        {view === "pending" ? (
+          <>
+            <div className="proto-library-content-bar">
+              <div className="proto-library-content-title">
+                {activeBucket?.label || "Memories"}
+              </div>
+              <div className="proto-library-content-meta">
+                {activeBucket?.items.length ?? 0} item
+                {(activeBucket?.items.length ?? 0) === 1 ? "" : "s"}
+              </div>
+              <div className="proto-library-content-actions">
+                <button type="button" className="proto-library-btn" title="Run today's digest">
+                  Run digest now
+                </button>
+                <button type="button" className="proto-library-btn">Accept all</button>
+              </div>
             </div>
-          ) : (
-            <div className="proto-library-card-list">
-              {activeBucket.items.map((p) => (
-                <div
-                  key={p.id}
-                  className="proto-memory-card"
-                  data-pending="true"
-                >
-                  <div className="proto-memory-quote">{p.content}</div>
-                  <div className="proto-memory-source">
-                    <span className="proto-memory-source-agent">{sourceLabel(p)}</span>
-                    {p.proposal_reason && (
-                      <>
-                        <span>·</span>
-                        <span className="proto-memory-source-conv">{p.proposal_reason}</span>
-                      </>
-                    )}
-                    {typeof p.confidence === "number" && (
-                      <>
-                        <span>·</span>
-                        <span>{p.confidence.toFixed(2)} confidence</span>
-                      </>
-                    )}
-                    <span>·</span>
-                    <span>{relTime(p.created_at)}</span>
-                  </div>
-                  <div className="proto-memory-card-actions">
-                    <button
-                      type="button"
-                      className="proto-row-action proto-row-action-accept"
-                      disabled={busyId === p.id}
-                      onClick={() => handleAccept(p)}
-                    >
-                      Accept
-                    </button>
-                    <button type="button" className="proto-row-action">Edit</button>
-                    <button
-                      type="button"
-                      className="proto-row-action"
-                      disabled={busyId === p.id}
-                      onClick={() => handleReject(p)}
-                    >
-                      Reject
-                    </button>
-                  </div>
+            <div className="proto-library-content-scroll">
+              {!activeBucket || activeBucket.items.length === 0 ? (
+                <div style={{ fontSize: 12, color: "var(--color-text-muted)", padding: 24 }}>
+                  No memories in this bucket yet.
                 </div>
-              ))}
+              ) : (
+                <div className="proto-library-card-list">
+                  {activeBucket.items.map((p) => (
+                    <div key={p.id} className="proto-memory-card" data-pending="true">
+                      <div className="proto-memory-quote">{p.content}</div>
+                      <div className="proto-memory-source">
+                        <span className="proto-memory-source-agent">{sourceLabel(p)}</span>
+                        {p.proposal_reason && (
+                          <>
+                            <span>·</span>
+                            <span className="proto-memory-source-conv">{p.proposal_reason}</span>
+                          </>
+                        )}
+                        {typeof p.confidence === "number" && (
+                          <>
+                            <span>·</span>
+                            <span>{p.confidence.toFixed(2)} confidence</span>
+                          </>
+                        )}
+                        <span>·</span>
+                        <span>{relTime(p.created_at)}</span>
+                      </div>
+                      <div className="proto-memory-card-actions">
+                        <button
+                          type="button"
+                          className="proto-row-action proto-row-action-accept"
+                          disabled={busyId === p.id}
+                          onClick={() => handleAccept(p)}
+                        >
+                          Accept
+                        </button>
+                        <button type="button" className="proto-row-action">Edit</button>
+                        <button
+                          type="button"
+                          className="proto-row-action"
+                          disabled={busyId === p.id}
+                          onClick={() => handleReject(p)}
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          </>
+        ) : (
+          <>
+            <div className="proto-library-content-bar">
+              <div className="proto-library-content-title">
+                {activeSavedBucket?.label || "Saved memories"}
+              </div>
+              <div className="proto-library-content-meta">
+                {activeSavedBucket?.items.length ?? 0} item
+                {(activeSavedBucket?.items.length ?? 0) === 1 ? "" : "s"}
+              </div>
+            </div>
+            <div className="proto-library-content-scroll">
+              {!activeSavedBucket || activeSavedBucket.items.length === 0 ? (
+                <div style={{ fontSize: 12, color: "var(--color-text-muted)", padding: 24 }}>
+                  No memories in this bucket yet.
+                </div>
+              ) : (
+                <div className="proto-library-card-list">
+                  {activeSavedBucket.items.map((m) => (
+                    <div key={m.id} className="proto-memory-card">
+                      <div className="proto-memory-quote">
+                        {m.pinned && <span className="proto-memory-pin" title="Pinned">★</span>}
+                        {m.content}
+                      </div>
+                      <div className="proto-memory-source">
+                        <span className="proto-memory-source-agent">{m.author_agent || "unknown"}</span>
+                        <span>·</span>
+                        <span>{m.kind}</span>
+                        {m.scope && m.scope !== "global" && (
+                          <>
+                            <span>·</span>
+                            <span>{m.scope}</span>
+                          </>
+                        )}
+                        {m.tags && m.tags.length > 0 && (
+                          <>
+                            <span>·</span>
+                            <span>{m.tags.join(", ")}</span>
+                          </>
+                        )}
+                        <span>·</span>
+                        <span>{relTime(m.created_at)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

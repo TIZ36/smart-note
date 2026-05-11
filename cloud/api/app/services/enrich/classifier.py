@@ -33,7 +33,13 @@ logger = logging.getLogger(__name__)
 
 LINES_PER_BATCH = 150
 OVERLAP = 10
-DEFAULT_MAX_CONCURRENCY = 16  # cloud pods are smaller than a dev laptop
+# Provider gateways like DeepSeek tolerate aggressive parallelism;
+# the previous 16 was sized for OpenAI tier-1 RPM and left most of
+# our throughput on the table. 500 matches the explicit per-user
+# preference. Hard ceiling so a typo doesn't oversubscribe and
+# trigger 429s.
+DEFAULT_MAX_CONCURRENCY = 500
+MAX_CONCURRENCY_CEILING = 500
 
 DEFAULT_TAGS = [
     "learn", "work", "life", "todo", "idea",
@@ -49,12 +55,12 @@ class ProviderConfig:
     model: str
     timeout_sec: float = 60.0
     max_tokens: int = 4000
-    # How many batch calls to fire in parallel. Old default was 16
-    # (sized for OpenAI tier-1 RPM); deepseek + most self-hosted
-    # gateways tolerate ~256 comfortably and the user reports good
-    # results at 500 with deepseek. Keep an explicit ceiling here so
-    # a typo doesn't DDoS the provider.
-    max_concurrency: int = 64
+    # How many batch calls to fire in parallel against the provider.
+    # 500 matches the user-set ceiling — DeepSeek and other
+    # OpenAI-compat gateways handle this comfortably. Capped at
+    # `MAX_CONCURRENCY_CEILING` at call time so a stray config
+    # write can't oversubscribe.
+    max_concurrency: int = 500
     # Workspace-level toggle: when True, /v1/ingest/bulk fires LLM
     # tagging automatically after chunking. Defaults to False so a
     # stray click doesn't burn tokens.
@@ -107,30 +113,36 @@ RULES:
 - Reply with ONLY the JSON array, no markdown fences, no explanation"""
 
 
-def _call_llm(cfg: ProviderConfig, system: str, user: str) -> tuple[str | None, dict]:
+def _call_llm(cfg: ProviderConfig, system: str, user: str, client: httpx.Client | None = None) -> tuple[str | None, dict]:
+    """Issue one chat-completion call. Pass `client` to reuse a single
+    pooled HTTP client across many concurrent batches — at 500-way
+    parallelism a fresh client per call ate ~30% of wall time on TLS
+    handshakes alone. Falls back to a one-shot client when called
+    without one (smaller call sites)."""
     if not cfg.api_key:
         return None, {}
     base = cfg.base_url.rstrip("/")
+    payload = {
+        "model": cfg.model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "temperature": 0.0,
+        "max_tokens": cfg.max_tokens,
+    }
+    headers = {
+        "Authorization": f"Bearer {cfg.api_key}",
+        "Content-Type": "application/json",
+    }
     try:
-        with httpx.Client(timeout=cfg.timeout_sec) as client:
-            resp = client.post(
-                f"{base}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {cfg.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": cfg.model,
-                    "messages": [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
-                    "temperature": 0.0,
-                    "max_tokens": cfg.max_tokens,
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        if client is not None:
+            resp = client.post(f"{base}/chat/completions", headers=headers, json=payload)
+        else:
+            with httpx.Client(timeout=cfg.timeout_sec) as one_shot:
+                resp = one_shot.post(f"{base}/chat/completions", headers=headers, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
         return data["choices"][0]["message"]["content"], data.get("usage", {}) or {}
     except Exception as e:
         logger.warning("AI classify call failed: %s", e)
@@ -168,17 +180,30 @@ def run_classify(
     all_segments: list[tuple[int, list[dict]]] = []
     done_count = 0
 
-    def _process_batch(batch_idx: int, start: int, end: int) -> tuple[int, list[dict], dict]:
+    # Cap concurrency at the global ceiling regardless of caller — the
+    # provider's RPM is the real limit, not anything we'd unlock by
+    # going higher. Also cap workers at len(batches) so small docs
+    # don't pre-allocate a 500-thread pool for a single call.
+    workers = min(max_concurrency, MAX_CONCURRENCY_CEILING, len(batches)) or 1
+    # Shared pooled client — keep-alive connections cut TLS handshake
+    # overhead substantially when the pool fans out 100s of calls.
+    # `max_keepalive_connections` matches workers so each in-flight
+    # request can hold its own kept-alive socket; httpx limits total
+    # connections via `max_connections`.
+    limits = httpx.Limits(max_keepalive_connections=workers, max_connections=workers + 50)
+
+    def _process_batch(batch_idx: int, start: int, end: int, client: httpx.Client) -> tuple[int, list[dict], dict]:
         numbered = [f"L{ln}: {lines[ln - 1]}" for ln in range(start, end + 1) if ln - 1 < len(lines)]
         user_msg = f"Classify lines {start}-{end}:\n\n" + "\n".join(numbered)
-        raw, usage = _call_llm(provider, system_prompt, user_msg)
+        raw, usage = _call_llm(provider, system_prompt, user_msg, client=client)
         if not raw:
             return batch_idx, [{"tag": "others", "line_start": start, "line_end": end, "summary": "", "keywords": [], "entities": [], "is_credential": False}], usage
         return batch_idx, _parse_segments(raw, start, end), usage
 
-    with ThreadPoolExecutor(max_workers=min(max_concurrency, len(batches))) as executor:
+    with httpx.Client(timeout=provider.timeout_sec, limits=limits) as shared_client, \
+            ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
-            executor.submit(_process_batch, idx, s, e): idx
+            executor.submit(_process_batch, idx, s, e, shared_client): idx
             for idx, (s, e) in enumerate(batches)
         }
         for future in as_completed(futures):

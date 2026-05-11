@@ -51,10 +51,16 @@ _JWT_REFRESH_MARGIN = 30
 mcp = FastMCP(
     "SmartNote Cloud",
     instructions=(
-        "SmartNote Cloud is a cross-agent memory service. Tools scope to the "
-        "workspace the Authorization-header API key is bound to. Use "
-        "search_memory for recall, add_memory / set_preference for writes, "
-        "add_document to ingest longer text."
+        "SmartNote Cloud is a cross-agent memory + notes service. Tools "
+        "scope to the workspace the Authorization-header API key is "
+        "bound to.\n\n"
+        "For lookups, default to `search` — it hits both memories AND "
+        "document chunks in parallel and merges results. `search_memory` "
+        "and `search_documents` are narrower variants for when you "
+        "specifically want to scope to one source; using them alone "
+        "will miss content that lives in the other.\n\n"
+        "For writes: add_memory / set_preference for structured facts, "
+        "add_document to ingest longer notes / wiki content."
     ),
     stateless_http=True,
     streamable_http_path="/",
@@ -157,20 +163,102 @@ def _truncate(text: str, limit: int = 60) -> str:
 # ── Tools ──────────────────────────────────────────────────────
 
 @mcp.tool()
+async def search(
+    query: str,
+    topk: int = 8,
+    kinds: Optional[list[str]] = None,
+) -> str:
+    """**Default search tool — use this first for any lookup.** Hits both
+    memories AND document chunks in parallel and merges the results
+    into a single ranked list.
+
+    Background — past failure: agents that called only `search_memory`
+    missed answers that lived in note bodies (e.g. an API key written
+    inside a markdown note). Memories are structured records
+    (preferences / facts / rules), documents are the user's raw
+    notes + wiki — both can contain the answer to a given question
+    and the agent usually doesn't know in advance which one. This
+    tool removes that guess.
+
+    Each hit is labeled with its source ("[mem]" or "[doc]") + a
+    short id you can use with `get_memory(id)` or `get_document(id)`
+    for full content.
+
+    Args:
+        query: Natural-language description of what you're looking for.
+        topk: Max results per source (default 8 each → up to 16 total).
+        kinds: Optional memory kinds filter — applies only to the
+               memories leg (e.g. ["preference"]). Documents leg
+               always returns notes + wiki regardless.
+
+    Prefer this over `search_memory` / `search_documents` unless you
+    have a specific reason to limit to one source."""
+    import asyncio
+    mem_body: dict[str, Any] = {"query": query, "topk": topk}
+    if kinds:
+        mem_body["kinds"] = kinds
+    doc_body: dict[str, Any] = {"query": query, "topk": topk}
+
+    mem_task = _call("POST", "/v1/retrieve", json=mem_body)
+    doc_task = _call("POST", "/v1/chunks/search", json=doc_body)
+    mem_r, doc_r = await asyncio.gather(mem_task, doc_task, return_exceptions=True)
+
+    out_lines: list[str] = []
+    mem_hits: list[dict[str, Any]] = []
+    doc_hits: list[dict[str, Any]] = []
+    if not isinstance(mem_r, Exception) and mem_r.status_code == 200:
+        mem_hits = mem_r.json().get("results") or []
+    if not isinstance(doc_r, Exception) and doc_r.status_code == 200:
+        doc_hits = doc_r.json().get("results") or []
+
+    # Interleave by score — show the highest-confidence match across
+    # sources first regardless of which backend it came from. Ties
+    # broken by preferring document hits (usually more substantive).
+    rows: list[tuple[float, str]] = []
+    for h in mem_hits:
+        preview = _truncate((h.get("content") or "").replace("\n", " "), 80)
+        rows.append((
+            float(h.get("score", 0)),
+            f"[mem · {h.get('kind','?')} · {h.get('score', 0):.2f}] {preview} · id={h.get('id','')[:8]}",
+        ))
+    for h in doc_hits:
+        text = (h.get("text") or "").replace("\n", " ").strip()
+        preview = _truncate(text, 80)
+        rows.append((
+            float(h.get("score", 0)) + 0.0001,  # nudge doc above mem at tie
+            f"[doc · {h.get('document_name','?')} · L{h.get('line_start',0)}–{h.get('line_end',0)} · {h.get('score', 0):.2f}] "
+            f"{preview} · doc={h.get('document_id','')[:8]}",
+        ))
+    rows.sort(key=lambda x: x[0], reverse=True)
+
+    if not rows:
+        return f"No matches for: {query}"
+
+    out_lines.append(f"{len(rows)} match(es) for \"{query}\" (mem={len(mem_hits)}, doc={len(doc_hits)}):")
+    out_lines.extend("- " + r[1] for r in rows)
+    out_lines.append("")
+    out_lines.append("→ get_memory(id) or get_document(id) for full content.")
+    return "\n".join(out_lines)
+
+
+@mcp.tool()
 async def search_memory(
     query: str,
     kinds: Optional[list[str]] = None,
     topk: int = 8,
     verbose: bool = False,
 ) -> str:
-    """Search memories by meaning + keyword.
+    """Search ONLY the memories table (preferences / facts / rules /
+    episodes / document_refs). Skip if you're not sure where the
+    answer lives — call `search` instead, which fans out to both
+    memories AND document chunks in parallel.
+
+    Use this only when you specifically need to scope to memories
+    (e.g. listing all preferences for a key, finding a saved fact
+    without document noise).
 
     DEFAULT OUTPUT IS COMPACT: one chip per hit (short-id · kind · score
-    · 60-char preview). Full content is NOT inlined because tool output
-    is rendered under the user's message bubble in most agent UIs — long
-    dumps clutter the conversation. For full content, call
-    `get_memory(id)` with the short id shown here (8 hex chars prefix
-    is enough to disambiguate).
+    · 60-char preview). For full content call `get_memory(id)`.
 
     Args:
         query: Natural-language description of what you're looking for.
@@ -461,14 +549,16 @@ async def search_documents(
     topk: int = 8,
     dimension: Optional[str] = None,
 ) -> str:
-    """Search across embedded document chunks (notes + wiki) — the
-    "search the actual content" tool. Distinct from `search_memory`
-    which queries the memories table (preferences / facts / rules).
+    """Search ONLY document chunks (notes + wiki bodies). Skip if
+    you're not sure where the answer lives — call `search` instead,
+    which fans out to both documents AND memories in parallel.
 
-    Use search_documents when you want to find sections of a note or
-    wiki topic that match a query. Hits include line ranges + the
-    parent document id, so you can follow up with `get_document(id)`
-    for full context.
+    Use this only when you specifically want to scope to note / wiki
+    content (e.g. dimension-filtered to "wiki_topic", or want extra
+    chunks without competing against memory hits).
+
+    Hits include line ranges + parent doc id; follow up with
+    `get_document(id)` for full content.
 
     Args:
         query: Natural-language search.

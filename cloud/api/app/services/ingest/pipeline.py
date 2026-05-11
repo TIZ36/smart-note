@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 from collections import Counter
 from dataclasses import dataclass
@@ -28,9 +29,45 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from app.common.db import pool
+from app.services.enrich.progress import set_ingest_progress
 from app.services.embedding.client import embed_texts, format_vector_literal
+from app.services.realtime_protocol import broadcast, event_payload
 
 log = logging.getLogger(__name__)
+
+
+def _emit_embed_progress(
+    workspace_id: str,
+    document_id: str,
+    run_id: str,
+    *,
+    status: str,
+    message: str,
+    current: int | None = None,
+    total: int | None = None,
+    data: dict[str, Any] | None = None,
+) -> None:
+    """Phase event for the note ingest path. Same canonical envelope
+    as wiki_processor (and as docs/library-client-integration.md §3.1).
+    Legacy `chunk_embed_*` event names were dropped because the
+    desktop only listens to `processing_progress` / `processing_done`."""
+    event = "processing_done" if status in {"done", "failed"} else "processing_progress"
+    broadcast(
+        workspace_id,
+        event_payload(
+            event=event,
+            workspace_id=workspace_id,
+            document_id=document_id,
+            run_id=run_id,
+            stage="chunk_embed",
+            status=status,
+            progress_current=current,
+            progress_total=total,
+            message=message,
+            data=data,
+        ),
+    )
+
 
 # ── Tunables ──────────────────────────────────────────────────
 MIN_CHUNK_CHARS = 200
@@ -39,13 +76,59 @@ TOP_KEYWORDS = 12
 KEYWORD_MIN_LEN = 2
 EMBED_BATCH = 32
 
+# Label written into chunk_blobs.embedding_model so we can identify
+# which sentence-transformer model produced a vector. Read from the
+# same env var the embed pod uses (cloud/infra/.env :: EMBED_MODEL),
+# defaulting to MiniLM. Wiki processor + future re-embed paths share
+# this label so old + new chunk_blobs rows can be reconciled.
+EMBEDDING_MODEL = os.environ.get(
+    "EMBED_MODEL", "sentence-transformers/all-MiniLM-L6-v2",
+)
+
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[一-鿿]+")
 _STOP_EN = {
-    "the", "and", "for", "with", "that", "this", "from", "are", "was",
-    "but", "not", "you", "your", "have", "has", "had", "can", "all",
-    "any", "one", "out", "how", "use", "also", "into", "more", "than",
-    "they", "them", "then", "there", "their", "these", "those", "will",
-    "would", "could", "should", "about", "which", "where", "when",
+    "the",
+    "and",
+    "for",
+    "with",
+    "that",
+    "this",
+    "from",
+    "are",
+    "was",
+    "but",
+    "not",
+    "you",
+    "your",
+    "have",
+    "has",
+    "had",
+    "can",
+    "all",
+    "any",
+    "one",
+    "out",
+    "how",
+    "use",
+    "also",
+    "into",
+    "more",
+    "than",
+    "they",
+    "them",
+    "then",
+    "there",
+    "their",
+    "these",
+    "those",
+    "will",
+    "would",
+    "could",
+    "should",
+    "about",
+    "which",
+    "where",
+    "when",
 }
 
 
@@ -74,12 +157,14 @@ def _chunkify(content: str) -> list[Chunk]:
         if not text:
             buf = []
             return
-        out.append(Chunk(
-            text=text,
-            line_start=buf_start,
-            line_end=max(buf_start, cur_line - 1),
-            keywords=_keywords(text),
-        ))
+        out.append(
+            Chunk(
+                text=text,
+                line_start=buf_start,
+                line_end=max(buf_start, cur_line - 1),
+                keywords=_keywords(text),
+            )
+        )
         buf = []
 
     for para in re.split(r"\n\s*\n", content):
@@ -108,12 +193,14 @@ def _chunkify(content: str) -> list[Chunk]:
     flush()
     if not out and content.strip():
         # Tiny document — one chunk for the whole thing.
-        out.append(Chunk(
-            text=content.strip(),
-            line_start=1,
-            line_end=max(1, content.count("\n") + 1),
-            keywords=_keywords(content),
-        ))
+        out.append(
+            Chunk(
+                text=content.strip(),
+                line_start=1,
+                line_end=max(1, content.count("\n") + 1),
+                keywords=_keywords(content),
+            )
+        )
     return out
 
 
@@ -137,8 +224,10 @@ def _dimension_for(doc: dict) -> str:
         rel = md.get("relative_path") or md.get("local_path") or ""
         # Top-level dir (or filename stem when at root) becomes the topic.
         parts = [p for p in rel.replace("\\", "/").split("/") if p]
-        topic = parts[0] if len(parts) > 1 else (
-            parts[0].rsplit(".", 1)[0] if parts else "general"
+        topic = (
+            parts[0]
+            if len(parts) > 1
+            else (parts[0].rsplit(".", 1)[0] if parts else "general")
         )
         return f"wiki:{topic}"
     return "note"
@@ -159,7 +248,8 @@ async def ingest_document(workspace_id: str, document_id: str) -> dict:
         doc = await conn.fetchrow(
             "SELECT id, name, content, metadata FROM documents "
             "WHERE id = $1 AND workspace_id = $2",
-            doc_uuid, ws,
+            doc_uuid,
+            ws,
         )
         if not doc:
             return {"status": "error", "error": "document not found"}
@@ -176,9 +266,36 @@ async def ingest_document(workspace_id: str, document_id: str) -> dict:
         run_row = await conn.fetchrow(
             "INSERT INTO ingest_runs (id, workspace_id, document_id, status, started_at) "
             "VALUES ($1, $2, $3, 'running', now()) RETURNING id",
-            run_id, ws, doc_uuid,
+            run_id,
+            ws,
+            doc_uuid,
         )
 
+    run_id_s = str(run_id)
+    doc_id_s = str(doc_uuid)
+    await set_ingest_progress(run_id_s, phase="reading")
+    _emit_embed_progress(
+        workspace_id,
+        doc_id_s,
+        run_id_s,
+        status="running",
+        message="Reading document",
+        current=0,
+        total=3,
+        data={"phase": "reading"},
+    )
+
+    await set_ingest_progress(run_id_s, phase="chunking")
+    _emit_embed_progress(
+        workspace_id,
+        doc_id_s,
+        run_id_s,
+        status="running",
+        message="Splitting text into searchable chunks",
+        current=1,
+        total=3,
+        data={"phase": "chunking"},
+    )
     chunks = _chunkify(content)
     if not chunks:
         async with pool().acquire() as conn:
@@ -187,23 +304,80 @@ async def ingest_document(workspace_id: str, document_id: str) -> dict:
                 "WHERE id=$1",
                 run_id,
             )
-        return {"ingest_run_id": str(run_id), "chunk_count": 0,
-                "dimension": dimension, "status": "done"}
+        await set_ingest_progress(run_id_s, phase="done", chunk_count=0)
+        _emit_embed_progress(
+            workspace_id,
+            doc_id_s,
+            run_id_s,
+            status="done",
+            message="No chunkable text found",
+            current=3,
+            total=3,
+            data={"phase": "done", "chunk_count": 0},
+        )
+        return {
+            "ingest_run_id": str(run_id),
+            "chunk_count": 0,
+            "dimension": dimension,
+            "status": "done",
+        }
 
     # Embed in batches; don't block the whole pipeline if a single
     # batch fails — store NULL embeddings so chunks are at least
     # text-searchable, and a follow-up pass can re-embed later.
     embeddings: list[list[float] | None] = []
+    total_batches = (len(chunks) + EMBED_BATCH - 1) // EMBED_BATCH
+    await set_ingest_progress(
+        run_id_s,
+        phase="embedding",
+        embed={"done": 0, "total": len(chunks), "batches_total": total_batches},
+    )
+    _emit_embed_progress(
+        workspace_id,
+        doc_id_s,
+        run_id_s,
+        status="running",
+        message=f"Embedding {len(chunks)} chunks",
+        current=0,
+        total=len(chunks),
+        data={"phase": "embedding", "batches_total": total_batches},
+    )
     for i in range(0, len(chunks), EMBED_BATCH):
-        batch_texts = [c.text for c in chunks[i:i + EMBED_BATCH]]
+        batch_texts = [c.text for c in chunks[i : i + EMBED_BATCH]]
         try:
             vecs = await embed_texts(batch_texts)
         except Exception as e:
             log.warning("ingest embedding batch failed (offset %d): %s", i, e)
             vecs = [None] * len(batch_texts)
         embeddings.extend(vecs)
+        done = min(i + EMBED_BATCH, len(chunks))
+        await set_ingest_progress(
+            run_id_s,
+            embed={"done": done, "total": len(chunks), "batches_total": total_batches},
+        )
+        _emit_embed_progress(
+            workspace_id,
+            doc_id_s,
+            run_id_s,
+            status="running",
+            message=f"Embedded {done}/{len(chunks)} chunks",
+            current=done,
+            total=len(chunks),
+            data={"phase": "embedding", "batches_total": total_batches},
+        )
 
     inserted = 0
+    await set_ingest_progress(run_id_s, phase="writing")
+    _emit_embed_progress(
+        workspace_id,
+        doc_id_s,
+        run_id_s,
+        status="running",
+        message="Writing chunks to the knowledge index",
+        current=2,
+        total=3,
+        data={"phase": "writing", "chunk_count": len(chunks)},
+    )
     async with pool().acquire() as conn:
         async with conn.transaction():
             # Replace prior chunks for this document — re-ingest
@@ -211,7 +385,8 @@ async def ingest_document(workspace_id: str, document_id: str) -> dict:
             # local side keys on document_id, not run_id.
             await conn.execute(
                 "DELETE FROM chunks WHERE document_id = $1 AND workspace_id = $2",
-                doc_uuid, ws,
+                doc_uuid,
+                ws,
             )
             for c, vec in zip(chunks, embeddings):
                 vec_lit = format_vector_literal(vec) if vec is not None else None
@@ -224,16 +399,24 @@ async def ingest_document(workspace_id: str, document_id: str) -> dict:
                         keywords, content_hash, ingest_run_id)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::vector, $9::jsonb, $10, $11)
                     """,
-                    ws, doc_uuid, dimension, source_ref,
-                    c.line_start, c.line_end, c.text,
-                    vec_lit, json.dumps(c.keywords, ensure_ascii=False),
-                    content_hash, run_id,
+                    ws,
+                    doc_uuid,
+                    dimension,
+                    source_ref,
+                    c.line_start,
+                    c.line_end,
+                    c.text,
+                    vec_lit,
+                    json.dumps(c.keywords, ensure_ascii=False),
+                    content_hash,
+                    run_id,
                 )
                 inserted += 1
             await conn.execute(
                 "UPDATE ingest_runs SET status='done', chunk_count=$2, "
                 "finished_at=now() WHERE id=$1",
-                run_id, inserted,
+                run_id,
+                inserted,
             )
             # Mark the document as ingested so list_documents /
             # console_overview reflect post-embed state. Without this
@@ -244,6 +427,17 @@ async def ingest_document(workspace_id: str, document_id: str) -> dict:
                 "UPDATE documents SET ingested_at = now() WHERE id = $1",
                 doc_uuid,
             )
+    await set_ingest_progress(run_id_s, phase="done", chunk_count=inserted)
+    _emit_embed_progress(
+        workspace_id,
+        doc_id_s,
+        run_id_s,
+        status="done",
+        message=f"Indexed {inserted} chunks",
+        current=3,
+        total=3,
+        data={"phase": "done", "chunk_count": inserted, "dimension": dimension},
+    )
     return {
         "ingest_run_id": str(run_id),
         "chunk_count": inserted,
@@ -258,7 +452,8 @@ async def ingest_run_status(workspace_id: str, run_id: str) -> dict | None:
             "SELECT id, document_id, status, chunk_count, error, "
             "started_at, finished_at, created_at FROM ingest_runs "
             "WHERE id = $1 AND workspace_id = $2",
-            UUID(run_id), UUID(workspace_id),
+            UUID(run_id),
+            UUID(workspace_id),
         )
     if not row:
         return None

@@ -407,7 +407,10 @@ app.whenReady().then(() => {
   createSpotlightWindow();
   loadHotkeyConfig();
   registerHotkey();
-  connectIngestSse();
+  // connectIngestSse() removed — the SSE producer lived in the
+  // retired :8787 Python gateway. Calling it now just churns
+  // reconnect timers forever. Ingest events flow through the
+  // electron-internal "smartnote:ws-event" channel.
   // Start cloud heartbeat (no-op if cloud not configured). Pings
   // /v1/devices/heartbeat every 30s so the workspace registry can
   // honestly reflect this device as online while the desktop runs.
@@ -861,36 +864,21 @@ ipcMain.handle("get_mvp_status", async () => ({
 }));
 
 /**
- * Read settings with DB-over-.env precedence.
+ * Settings live in two places now:
+ *   - userData/cloud-creds.json — credentials (cloud_sync_*, provider_*, embed_*)
+ *   - server/.env — feature-flag prefs (EMBEDDING_MODE, AI_FEATURES_ENABLED, ...)
  *
- * The backend owns an `app_settings` table that's the authoritative store
- * (edits made via the inline "Save credentials" button, MCP tools, or any
- * POST /settings call land there directly — never touch .env). The .env
- * file is just the bootstrap fallback for when the backend isn't running.
+ * The old local Python gateway on :8787 used to be the authoritative
+ * store, but that whole `server/` tree was retired (see commit
+ * `feat: rm server`). Probing it here was bad: if the user happened
+ * to still have that process running, it would 500 on POST /settings
+ * (its own DB.connect path was broken) and surface as a failed save
+ * in the UI even though the file writes succeeded.
  *
- * So on read we try GET /settings first, only fall back to .env parsing
- * if the backend is unreachable. This fixes the "I saved Cloud Sync creds
- * but they're gone next launch" bug, which used to happen because the
- * old read path never consulted the DB.
+ * Returning null skips straight to the .env fallback below.
  */
 async function fetchLiveSettings() {
-  return new Promise((resolve) => {
-    const req = http.request(
-      { host: "127.0.0.1", port: 8787, path: "/settings", method: "GET", timeout: 1000 },
-      (res) => {
-        let buf = "";
-        res.setEncoding("utf8");
-        res.on("data", (c) => { buf += c; });
-        res.on("end", () => {
-          if (res.statusCode !== 200) return resolve(null);
-          try { resolve(JSON.parse(buf)); } catch { resolve(null); }
-        });
-      },
-    );
-    req.on("error", () => resolve(null));
-    req.on("timeout", () => { req.destroy(); resolve(null); });
-    req.end();
-  });
+  return null;
 }
 
 // Per-user credential file. Contains BOTH the SmartNote Cloud
@@ -1009,6 +997,12 @@ ipcMain.handle("write_settings", async (_, { newSettings }) => {
     console.warn("Failed to persist user creds:", e);
   }
 
+  // Cloud sync URL / API key may have just changed. Bounce the
+  // realtime WS so the new creds take effect immediately, instead
+  // of users wondering why "No devices online" persists until they
+  // restart Electron.
+  import("./services/ws-presence.mjs").then((m) => m.restart()).catch(() => {});
+
   // .env now only carries non-cred prefs — feature flags, model
   // selection. Sensitive values (provider keys, cloud sync key)
   // never touch .env any more.
@@ -1041,55 +1035,11 @@ ipcMain.handle("write_settings", async (_, { newSettings }) => {
   }
   fs.writeFileSync(envPath, lines.join("\n") + "\n", "utf8");
 
-  // Hot-apply to the running backend via /settings. Backend persists values in
-  // the `app_settings` DB table and updates the Settings singleton in place,
-  // so changes take effect without restart. If the gateway is offline, the
-  // .env write above will be picked up on next backend start.
-  let applied = false;
-  try {
-    const body = JSON.stringify({
-      embedding_mode: newSettings.embedding_mode,
-      ai_features_enabled: newSettings.ai_features_enabled !== false,
-      provider_base_url: newSettings.provider_base_url,
-      provider_api_key: newSettings.provider_api_key,
-      provider_chat_model: newSettings.provider_chat_model,
-      embed_base_url: newSettings.embed_base_url ?? "",
-      embed_api_key: newSettings.embed_api_key ?? "",
-      provider_embed_model: newSettings.provider_embed_model,
-      ingest_ai_enabled: !!newSettings.ingest_ai_enabled,
-      ingest_ai_model: newSettings.ingest_ai_model,
-      cloud_sync_enabled: !!newSettings.cloud_sync_enabled,
-      cloud_sync_url: newSettings.cloud_sync_url ?? "",
-      cloud_sync_api_key: newSettings.cloud_sync_api_key ?? "",
-    });
-    applied = await new Promise((resolve) => {
-      const req = http.request(
-        {
-          host: "127.0.0.1",
-          port: 8787,
-          path: "/settings",
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
-          timeout: 1500,
-        },
-        (res) => {
-          res.on("data", () => {});
-          res.on("end", () => resolve(res.statusCode === 200));
-        }
-      );
-      req.on("error", () => resolve(false));
-      req.on("timeout", () => { req.destroy(); resolve(false); });
-      req.write(body);
-      req.end();
-    });
-  } catch { /* ignore */ }
-
-  return {
-    ok: true,
-    output: applied
-      ? "Settings saved and applied live."
-      : "Settings saved. Backend is offline — changes will apply on next start.",
-  };
+  // Old hot-apply POST to :8787/settings was removed alongside the
+  // retired Python gateway. Credentials persist via cloud-creds.json
+  // (written above) and feature-flag prefs land in server/.env (also
+  // written above). Both take effect on next read — no live RPC step.
+  return { ok: true, output: "Settings saved." };
 });
 
 ipcMain.handle("dialog_open_raw", async () => {
@@ -1120,6 +1070,54 @@ ipcMain.handle("get_ingest_status", async () => ({
 ipcMain.handle("write_file", async (_, { path: filePath, content }) => {
   fs.writeFileSync(filePath, content, "utf8");
   return { ok: true };
+});
+
+/* Lightweight notes-workspace helpers — used by the multi-tab Note
+ * page. The notes path is whatever the user is currently editing;
+ * for the file tree we just list .md/.txt siblings in the same dir.
+ * No symlink chase / recursion / FS watcher — keep it cheap. */
+ipcMain.handle("note:list_dir", async (_, { dir }) => {
+  if (!dir || typeof dir !== "string") return { ok: false, files: [] };
+  try {
+    const stat = fs.statSync(dir);
+    const root = stat.isFile() ? path.dirname(dir) : dir;
+    const entries = fs.readdirSync(root, { withFileTypes: true });
+    const files = entries
+      .filter((e) => e.isFile() && /\.(md|txt|markdown)$/i.test(e.name))
+      .map((e) => ({
+        name: e.name,
+        path: path.join(root, e.name),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return { ok: true, root, files };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e), files: [] };
+  }
+});
+
+ipcMain.handle("note:create_new", async (_, { dir, name }) => {
+  if (!dir || !name) return { ok: false, error: "dir and name required" };
+  let filename = String(name).trim();
+  if (!filename) return { ok: false, error: "name required" };
+  if (!/\.(md|txt|markdown)$/i.test(filename)) filename += ".md";
+  // Prevent path traversal — accept basename only.
+  filename = path.basename(filename);
+  const full = path.join(dir, filename);
+  if (fs.existsSync(full)) return { ok: false, error: "file already exists", path: full };
+  try {
+    fs.writeFileSync(full, "", "utf8");
+    return { ok: true, path: full };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+});
+
+ipcMain.handle("note:pick_dir", async () => {
+  const r = await dialog.showOpenDialog(mainWindow ?? undefined, {
+    properties: ["openDirectory", "createDirectory"],
+  });
+  if (r.canceled || !r.filePaths[0]) return null;
+  return r.filePaths[0];
 });
 
 ipcMain.handle("shell_open_path", async (_, { path: target }) => {

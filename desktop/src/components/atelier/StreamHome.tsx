@@ -15,7 +15,14 @@ type RetrievalSettings = {
   topk: number;
   minScore: number;
 };
-const DEFAULT_RETRIEVAL: RetrievalSettings = { topk: 8, minScore: 0 };
+// Tunables: topk default raised from 8 → 24 after a real-world miss
+// where the user asked "what's my deepseek apikey?" and retrieval
+// brought back 8 chunks of MCP protocol docs (which lexically match
+// "api/key" lots of times) while the actual `- DeepSeek: \`sk-...\``
+// line ranked ~12. Bigger top-k → relevant chunks reliably make it
+// into the AI synth's 12-block window. Cost is negligible (one DB
+// query returning a handful of extra rows).
+const DEFAULT_RETRIEVAL: RetrievalSettings = { topk: 24, minScore: 0 };
 const RETRIEVAL_KEY = "smartnote-stream-retrieval";
 
 function loadRetrieval(): RetrievalSettings {
@@ -23,8 +30,13 @@ function loadRetrieval(): RetrievalSettings {
     const raw = localStorage.getItem(RETRIEVAL_KEY);
     if (!raw) return DEFAULT_RETRIEVAL;
     const parsed = JSON.parse(raw);
+    // Migrate any stored topk < 16 up to the new default — the old
+    // 8 was clearly too narrow once the knowledge base has more
+    // than a few docs; users who tuned it down can re-lower it via
+    // the retrieval settings popover.
+    const rawTopk = parsed.topk ?? DEFAULT_RETRIEVAL.topk;
     return {
-      topk: Math.max(1, Math.min(50, parsed.topk ?? DEFAULT_RETRIEVAL.topk)),
+      topk: Math.max(1, Math.min(50, rawTopk < 16 ? DEFAULT_RETRIEVAL.topk : rawTopk)),
       minScore: Math.max(0, Math.min(1, parsed.minScore ?? DEFAULT_RETRIEVAL.minScore)),
     };
   } catch {
@@ -349,14 +361,22 @@ export function StreamHome({ onSelect, onOpenPalette }: Props) {
       const filtered = retrieval.minScore > 0
         ? res.results.filter((h) => h.score >= retrieval.minScore)
         : res.results;
-      // Show retrieval immediately, then layer the LLM synthesis on
-      // top once it lands. If the local provider isn't configured we
-      // skip synthesis entirely and surface a small notice — the
-      // chunk list alone is still useful.
-      // Default = retrieval only. AI answer composition is opt-in
-      // via the Compose answer button below — burning LLM tokens on
-      // every search (and waiting for it to finish) was bad UX.
+      // Show retrieval immediately, then auto-fire AI synthesis on
+      // top of it. Earlier this was opt-in via "Compose answer", but
+      // users (correctly) read the panel as "ask my knowledge base"
+      // and the manual button felt like the AI was ignoring their
+      // notes. Auto-synthesize whenever we have hits — Compose
+      // button below is still there for manual re-runs after edits
+      // to settings / retrieval scope.
       setAnswer({ status: "ready", query: q, hits: filtered, synth: { status: "idle" } });
+      if (filtered.length > 0) {
+        // setTimeout 0 — let React commit the "ready" state before
+        // synth flips us to "streaming", so users see the chunk list
+        // appear (instant) followed by the answer streaming in
+        // (a few hundred ms later) instead of the empty-then-everything
+        // jump.
+        setTimeout(() => synthesizeAnswer(q, filtered), 0);
+      }
     } catch (e) {
       setAnswer({
         status: "error",
@@ -376,16 +396,34 @@ export function StreamHome({ onSelect, onOpenPalette }: Props) {
       setAnswer((a) => a && { ...a, synth: { status: "idle" } });
       return;
     }
-    const ctxBlocks = hits.slice(0, 8).map((h, i) => (
-      `[${i + 1}] ${h.document_name}${h.line_start > 0 ? ` (L${h.line_start}–${h.line_end})` : ""}\n${h.text.slice(0, 700)}`
+    // Bumped from 8×700 to 12×2000 — short snippets were the main
+    // reason the model kept saying "context doesn't contain the
+    // answer" even when retrieval clearly had it (the relevant
+    // sentence sat past char 700 in a chunk). At ~24k chars of
+    // context we comfortably fit inside any 32k+ context window.
+    const ctxBlocks = hits.slice(0, 12).map((h, i) => (
+      `[${i + 1}] ${h.document_name}${h.line_start > 0 ? ` (L${h.line_start}–${h.line_end})` : ""}\n${h.text.slice(0, 2000)}`
     )).join("\n\n");
     const system = (
-      "You are SmartNote's answer composer. Answer the user's question using ONLY " +
-      "the numbered context excerpts. Cite each claim with [N] markers matching " +
-      "the excerpt numbers. If the context doesn't contain the answer, say so " +
-      "plainly. Match the user's language. Be concise — 1 to 4 short paragraphs."
+      "You are SmartNote's answer composer. The user has retrieved relevant " +
+      "excerpts from their personal notes. Prefer answering from the numbered " +
+      "context excerpts and cite each claim with [N] markers; if a passage is " +
+      "only partially relevant, synthesize across excerpts before falling back. " +
+      "Only state that the notes don't contain the answer when you've genuinely " +
+      "looked and none of the excerpts speak to the question. Match the user's " +
+      "language. Be concise — 1 to 4 short paragraphs."
     );
     const user = `Question: ${q}\n\nContext:\n${ctxBlocks}`;
+    // Diagnostic — flat string so the values are visible in DevTools
+    // without expanding an object. If chunks=0 or ctx_chars=0 then
+    // retrieval was empty; if those are non-zero but the LLM says
+    // "no answer", the model is being too conservative.
+    // eslint-disable-next-line no-console
+    console.log(
+      `[ai-synth] chunks=${hits.length} ctx_chars=${ctxBlocks.length} query="${q}"`,
+    );
+    // eslint-disable-next-line no-console
+    console.log("[ai-synth] first-200-chars-of-context:", ctxBlocks.slice(0, 200));
 
     let reasoning = "";
     let text = "";

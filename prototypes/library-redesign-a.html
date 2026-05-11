@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Library · Redesign A — Editorial Calm</title>
+<style>
+  /* ──────────────────────────────────────────────────────────
+   * Variant A — Editorial Calm
+   * Inspiration: Notion / iA Writer / Things 3
+   * - Type hierarchy carries the layout (no aggressive borders)
+   * - Single muted accent (sage)
+   * - Vertical timeline for runs
+   * - Big readable rows, breathing space
+   * ────────────────────────────────────────────────────────── */
+  :root {
+    --bg: #fafaf7;
+    --bg-soft: #f3f2ec;
+    --bg-card: #ffffff;
+    --ink: #1d2020;
+    --ink-muted: #6e6e6a;
+    --ink-faint: #9a9a93;
+    --rule: #e7e6df;
+    --rule-strong: #d6d4ca;
+    --accent: #5d8267;        /* muted sage */
+    --accent-soft: #e7eee7;
+    --warn: #b86a2c;
+    --danger: #b04545;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+    --sans: -apple-system, "SF Pro Text", "Inter", system-ui, sans-serif;
+    --serif: "New York", "Charter", Georgia, serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 14px; line-height: 1.55; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+
+  .shell {
+    display: grid;
+    grid-template-columns: 56px 280px 1fr;
+    height: 100vh;
+  }
+
+  /* Left rail */
+  .rail {
+    border-right: 1px solid var(--rule);
+    padding: 14px 0;
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    background: var(--bg);
+  }
+  .rail .logo { width: 28px; height: 28px; border-radius: 8px; background: var(--ink); color: var(--bg); display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 12px; letter-spacing: 0.04em; margin-bottom: 12px; }
+  .rail-btn { width: 36px; height: 36px; border-radius: 8px; border: none; background: transparent; color: var(--ink-muted); display: flex; align-items: center; justify-content: center; }
+  .rail-btn:hover { background: var(--bg-soft); color: var(--ink); }
+  .rail-btn.active { background: var(--accent-soft); color: var(--accent); }
+
+  /* Tree */
+  .tree {
+    border-right: 1px solid var(--rule);
+    overflow: auto;
+    background: var(--bg);
+    padding: 18px 14px;
+  }
+  .tree h2 { font-family: var(--serif); font-size: 18px; margin: 0 0 14px 4px; font-weight: 500; }
+  .tree-search { width: 100%; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 8px; background: var(--bg-card); font-size: 13px; outline: none; }
+  .tree-search:focus { border-color: var(--accent); }
+
+  .tree-group { margin-top: 18px; }
+  .tree-group-name { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-faint); padding: 0 4px 6px; }
+  .tree-row {
+    display: flex; align-items: center; gap: 10px; padding: 7px 8px;
+    border-radius: 8px; cursor: pointer; color: var(--ink-muted);
+    transition: background 120ms ease;
+  }
+  .tree-row:hover { background: var(--bg-soft); color: var(--ink); }
+  .tree-row.active { background: var(--accent-soft); color: var(--ink); }
+  .tree-row .check { opacity: 0; transition: opacity 120ms; }
+  .tree-row:hover .check, .tree-row.checked .check { opacity: 1; }
+  .tree-row .check input { accent-color: var(--accent); }
+  .tree-row .name { flex: 1; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tree-row .size { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); }
+
+  /* Content */
+  .content { display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
+  .header {
+    padding: 22px 36px 14px;
+    display: flex; align-items: baseline; gap: 16px;
+  }
+  .header h1 { font-family: var(--serif); font-size: 28px; font-weight: 500; margin: 0; letter-spacing: -0.01em; }
+  .header .meta { color: var(--ink-faint); font-size: 12px; flex: 1; }
+  .header .actions { display: flex; gap: 6px; }
+  .btn-ghost {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 12px; border-radius: 8px; border: 1px solid transparent;
+    background: transparent; color: var(--ink-muted); font-size: 12.5px;
+  }
+  .btn-ghost:hover { background: var(--bg-soft); color: var(--ink); }
+  .btn-ghost.danger:hover { color: var(--danger); }
+
+  /* View toggle — segmented, soft */
+  .view-toggle {
+    display: inline-flex; padding: 3px; border-radius: 8px; background: var(--bg-soft); margin: 0 36px;
+  }
+  .view-toggle button {
+    border: none; background: transparent; padding: 6px 14px; border-radius: 6px;
+    font-size: 12.5px; color: var(--ink-muted);
+  }
+  .view-toggle button.active { background: var(--bg-card); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+
+  /* KN tabs — text-only, underlined active, generous spacing */
+  .kn-tabs {
+    display: flex; gap: 28px; padding: 18px 36px 0; border-bottom: 1px solid var(--rule); margin-top: 12px;
+  }
+  .kn-tabs button {
+    border: none; background: transparent; padding: 10px 0;
+    font-size: 13px; color: var(--ink-muted); position: relative;
+  }
+  .kn-tabs button .count { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); margin-left: 6px; }
+  .kn-tabs button.active { color: var(--ink); }
+  .kn-tabs button.active::after {
+    content: ""; position: absolute; left: 0; right: 0; bottom: -1px;
+    height: 2px; background: var(--accent); border-radius: 2px 2px 0 0;
+  }
+
+  /* Pipeline body */
+  .pipeline { padding: 28px 36px; max-width: 760px; }
+
+  .stages { display: flex; flex-direction: column; gap: 8px; margin-bottom: 28px; }
+  .stage {
+    display: grid; grid-template-columns: 36px 1fr auto; align-items: center;
+    padding: 14px 16px; border-radius: 10px; background: var(--bg-card);
+    border: 1px solid var(--rule);
+    transition: border-color 160ms;
+  }
+  .stage:hover { border-color: var(--rule-strong); }
+  .stage .letter {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--bg-soft); color: var(--ink-faint);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 600;
+  }
+  .stage.done .letter { background: var(--accent-soft); color: var(--accent); }
+  .stage .body .label { font-size: 14px; color: var(--ink); }
+  .stage .body .detail { font-size: 12px; color: var(--ink-faint); margin-top: 2px; }
+  .stage.done .body .detail { color: var(--accent); }
+  .stage .action button {
+    border: 1px solid var(--rule); background: transparent; padding: 6px 12px;
+    border-radius: 7px; font-size: 12px; color: var(--ink-muted);
+  }
+  .stage .action button:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* Recent runs — vertical timeline */
+  .runs { padding-left: 18px; position: relative; }
+  .runs::before {
+    content: ""; position: absolute; left: 7px; top: 18px; bottom: 6px;
+    width: 1px; background: var(--rule);
+  }
+  .runs h3 { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); margin: 0 0 14px; padding-left: 0; }
+  .run {
+    position: relative; padding: 10px 0 10px 22px; border-radius: 8px;
+    cursor: pointer;
+  }
+  .run::before {
+    content: ""; position: absolute; left: -19px; top: 14px;
+    width: 13px; height: 13px; border-radius: 50%;
+    background: var(--bg); border: 2px solid var(--rule-strong);
+  }
+  .run.done::before { background: var(--accent); border-color: var(--accent); }
+  .run.failed::before { background: var(--danger); border-color: var(--danger); }
+  .run.running::before { background: var(--bg); border-color: var(--accent); animation: pulse 1.6s ease-out infinite; }
+  @keyframes pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(93,130,103,0.4); }
+    100% { box-shadow: 0 0 0 10px rgba(93,130,103,0); }
+  }
+  .run-row { display: flex; align-items: center; gap: 12px; }
+  .run-kind { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); letter-spacing: 0.06em; min-width: 60px; }
+  .run-status { font-size: 12.5px; color: var(--ink-muted); flex: 1; }
+  .run-status .summary { color: var(--ink); }
+  .run.done .run-status .summary { color: var(--accent); }
+  .run.failed .run-status .summary { color: var(--danger); }
+  .run-time { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); }
+  .run-detail { font-size: 12.5px; color: var(--ink-muted); padding: 8px 0 0 72px; max-height: 0; overflow: hidden; transition: max-height 220ms ease, padding 220ms ease; }
+  .run.expanded .run-detail { max-height: 200px; padding: 8px 0 4px 72px; }
+  .run-detail .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; }
+  .run-detail .kv dt { color: var(--ink-faint); font-size: 11px; }
+  .run-detail .kv dd { margin: 0; font-family: var(--mono); font-size: 11.5px; }
+
+  /* Cloud-not-set hint */
+  .hint {
+    margin: -16px 0 24px; padding: 10px 14px; background: var(--bg-soft);
+    border-radius: 8px; font-size: 12.5px; color: var(--ink-muted);
+  }
+  .hint .dot { color: var(--warn); margin-right: 6px; }
+
+  /* Tag segments mockup (other tab) */
+  .tabbody.hidden { display: none; }
+  .segment-list { padding: 24px 36px; max-width: 760px; display: flex; flex-direction: column; gap: 8px; }
+  .segment {
+    padding: 14px 16px; border-radius: 10px; background: var(--bg-card);
+    border: 1px solid var(--rule); cursor: pointer;
+    transition: border-color 160ms, transform 100ms;
+  }
+  .segment:hover { border-color: var(--accent); transform: translateX(2px); }
+  .segment-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .chip {
+    display: inline-flex; padding: 2px 9px; border-radius: 999px;
+    font-size: 11px; background: var(--bg-soft); color: var(--ink-muted);
+  }
+  .chip-accent { background: var(--accent-soft); color: var(--accent); }
+  .seg-lines { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); margin-left: auto; }
+  .seg-summary { font-size: 13px; color: var(--ink-muted); line-height: 1.6; }
+  .seg-kw { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
+  .kw { font-size: 10.5px; color: var(--ink-faint); padding: 1px 7px; border-radius: 999px; background: var(--bg-soft); }
+
+  /* Footer notes */
+  .legend {
+    padding: 16px 36px; color: var(--ink-faint); font-size: 11.5px; border-top: 1px solid var(--rule);
+    display: flex; gap: 18px;
+  }
+  .legend strong { color: var(--ink); font-weight: 500; }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <aside class="rail">
+    <div class="logo">SN</div>
+    <button class="rail-btn" title="Note">✎</button>
+    <button class="rail-btn active" title="Library">☰</button>
+    <div style="flex:1"></div>
+    <button class="rail-btn" title="Cloud">☁</button>
+    <button class="rail-btn" title="Settings">⚙</button>
+  </aside>
+
+  <aside class="tree">
+    <h2>Library</h2>
+    <input class="tree-search" placeholder="Search documents…" />
+
+    <div class="tree-group">
+      <div class="tree-group-name">Notes · 6</div>
+      <div class="tree-row active checked">
+        <span class="check"><input type="checkbox" checked /></span>
+        <span class="name">2026-04 reading log</span>
+        <span class="size">12k</span>
+      </div>
+      <div class="tree-row">
+        <span class="check"><input type="checkbox" /></span>
+        <span class="name">stand-up notes</span>
+        <span class="size">4k</span>
+      </div>
+      <div class="tree-row">
+        <span class="check"><input type="checkbox" /></span>
+        <span class="name">research scratchpad</span>
+        <span class="size">22k</span>
+      </div>
+    </div>
+
+    <div class="tree-group">
+      <div class="tree-group-name">Wiki topics · 12</div>
+      <div class="tree-row">
+        <span class="check"><input type="checkbox" /></span>
+        <span class="name">attention is all you need</span>
+        <span class="size">38k</span>
+      </div>
+      <div class="tree-row">
+        <span class="check"><input type="checkbox" /></span>
+        <span class="name">postgres pgvector</span>
+        <span class="size">14k</span>
+      </div>
+    </div>
+  </aside>
+
+  <main class="content">
+
+    <div class="header">
+      <h1>2026-04 reading log</h1>
+      <div class="meta">Note · 12 KB · created Apr 2 · updated 2h ago</div>
+      <div class="actions">
+        <button class="btn-ghost">Copy ref</button>
+        <button class="btn-ghost danger">Delete</button>
+      </div>
+    </div>
+
+    <div class="view-toggle" role="tablist">
+      <button class="active" data-view="kn">Knowledge view</button>
+      <button data-view="raw">Raw markdown</button>
+    </div>
+
+    <nav class="kn-tabs">
+      <button class="active" data-tab="pipeline">Pipeline</button>
+      <button data-tab="chunks">Chunks <span class="count">12</span></button>
+      <button data-tab="tags">Tag segments <span class="count">8</span></button>
+      <button data-tab="graph">Graph</button>
+      <button data-tab="enrich">Enrich <span class="count">3</span></button>
+    </nav>
+
+    <section class="tabbody pipeline" id="tab-pipeline">
+
+      <div class="stages">
+        <div class="stage done">
+          <div class="letter">E</div>
+          <div class="body">
+            <div class="label">Embed</div>
+            <div class="detail">12 chunks · indexed Apr 2</div>
+          </div>
+          <div class="action"><button>Re-embed</button></div>
+        </div>
+        <div class="stage done">
+          <div class="letter">R</div>
+          <div class="body">
+            <div class="label">AI segments</div>
+            <div class="detail">8 segments · 1,243 tokens</div>
+          </div>
+          <div class="action"><button>Re-enrich</button></div>
+        </div>
+        <div class="stage">
+          <div class="letter">G</div>
+          <div class="body">
+            <div class="label">Info-graph</div>
+            <div class="detail">rides the R pass · refreshed when enrich completes</div>
+          </div>
+          <div class="action"></div>
+        </div>
+      </div>
+
+      <div class="runs">
+        <h3>Recent runs</h3>
+
+        <div class="run done expanded">
+          <div class="run-row">
+            <span class="run-kind">ENRICH</span>
+            <span class="run-status"><span class="summary">Complete</span> · 1,243 tokens · cloud_pool</span>
+            <span class="run-time">2h ago · 8.3s</span>
+          </div>
+          <div class="run-detail">
+            <dl class="kv">
+              <dt>Started</dt><dd>2026-05-08 14:23:01</dd>
+              <dt>Executor</dt><dd>cloud_pool</dd>
+              <dt>Tokens</dt><dd>1,243</dd>
+              <dt>Job</dt><dd>job_a8f3c1</dd>
+            </dl>
+          </div>
+        </div>
+
+        <div class="run done">
+          <div class="run-row">
+            <span class="run-kind">EMBED</span>
+            <span class="run-status">Complete · 12 chunks</span>
+            <span class="run-time">1d ago · 1.2s</span>
+          </div>
+        </div>
+
+        <div class="run failed">
+          <div class="run-row">
+            <span class="run-kind">ENRICH</span>
+            <span class="run-status"><span class="summary">Provider timeout</span></span>
+            <span class="run-time">2d ago · 60s</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="tabbody segment-list hidden" id="tab-tags">
+      <div class="segment">
+        <div class="segment-head">
+          <span class="chip chip-accent">work</span>
+          <span class="chip">meeting</span>
+          <span class="seg-lines">L1–L18</span>
+        </div>
+        <div class="seg-summary">Daily stand-up from Apr 2 — backlog grooming, then quick syncs on the auth migration. Three blockers raised, two assigned.</div>
+        <div class="seg-kw">
+          <span class="kw">stand-up</span><span class="kw">auth</span><span class="kw">backlog</span>
+        </div>
+      </div>
+      <div class="segment">
+        <div class="segment-head">
+          <span class="chip chip-accent">learn</span>
+          <span class="seg-lines">L19–L42</span>
+        </div>
+        <div class="seg-summary">Notes from the pgvector deep-dive — IVF vs HNSW trade-offs, the cosine vs L2 distance choice for sparse text.</div>
+        <div class="seg-kw">
+          <span class="kw">pgvector</span><span class="kw">HNSW</span><span class="kw">embedding</span>
+        </div>
+      </div>
+    </section>
+
+    <div class="legend">
+      <span><strong>Click a segment</strong> to jump to its lines in raw view</span>
+      <span><strong>Click a stage</strong> to trigger / re-run</span>
+      <span><strong>Recent runs</strong> auto-expand the latest</span>
+    </div>
+
+  </main>
+</div>
+
+<script>
+  // KN tab switching
+  document.querySelectorAll('.kn-tabs button').forEach((b) => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('.kn-tabs button').forEach((x) => x.classList.remove('active'));
+      b.classList.add('active');
+      const t = b.dataset.tab;
+      document.querySelectorAll('.tabbody').forEach((x) => x.classList.add('hidden'));
+      const active = document.getElementById('tab-' + t);
+      if (active) active.classList.remove('hidden');
+    });
+  });
+  // Run expand/collapse
+  document.querySelectorAll('.run').forEach((r) => {
+    r.addEventListener('click', () => r.classList.toggle('expanded'));
+  });
+  // Tree row click
+  document.querySelectorAll('.tree-row').forEach((r) => {
+    r.addEventListener('click', (e) => {
+      if (e.target.closest('.check')) return;
+      document.querySelectorAll('.tree-row').forEach((x) => x.classList.remove('active'));
+      r.classList.add('active');
+    });
+  });
+</script>
+</body>
+</html>

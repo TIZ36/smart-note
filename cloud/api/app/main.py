@@ -18,8 +18,9 @@ from app.db import close_pool, init_pool, run_migrations
 from app.mcp_http import build_mcp_asgi, mcp as mcp_server
 from app.routers import (
     auth, console, dev, devices, documents, enrich, enrich_config, graph,
-    health, ingest, memories, preferences, processing, proposals, retrieve,
-    search_history, tags as tags_router, usage_route, wiki, workspaces,
+    health, ingest, memories, notes, preferences, processing, proposals,
+    retrieve, search_history, tags as tags_router, usage_route, wiki,
+    workspaces,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -70,6 +71,10 @@ app.include_router(documents.router)
 app.include_router(enrich.router)
 app.include_router(enrich_config.router)
 app.include_router(processing.router)
+# notes — /v1/notes/{id}/{classify,suggestions,user_tags}. Was
+# implemented but never wired in, so listNoteSuggestions and friends
+# 404'd against an otherwise-healthy cloud.
+app.include_router(notes.router)
 app.include_router(ingest.router)
 app.include_router(graph.router)
 app.include_router(search_history.router)

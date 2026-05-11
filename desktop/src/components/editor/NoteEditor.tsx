@@ -259,19 +259,19 @@ const highlightRangeField = StateField.define<DecorationSet>({
 /** Dark theme matching SmartNote's design tokens */
 const editorTheme = EditorView.theme({
   "&": {
-    fontSize: "14px",
+    fontSize: "12.5px",
     fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', sans-serif",
     height: "100%",
     backgroundColor: "var(--color-bg-primary)",
     color: "var(--color-text-primary)",
   },
   ".cm-content": {
-    padding: "24px 0 48px",
+    padding: "20px 0 40px",
     caretColor: "var(--color-accent)",
-    lineHeight: "1.7",
+    lineHeight: "1.6",
   },
   ".cm-line": {
-    padding: "0 32px",
+    padding: "0 28px",
   },
   ".cm-gutters": {
     backgroundColor: "var(--color-bg-primary)",

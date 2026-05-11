@@ -1,58 +1,68 @@
-"""POST /v1/processing/{document_id}/run — trigger / re-trigger a
-processing run.
+"""Unified Library processing endpoints.
 
-See docs/processing-pipeline.md §5.2.
-
-Today this router is the single entry-point for explicit run requests
-across all `kind` values. Routes that previously enqueued enrichment
-through `/v1/enrich/run` will alias through here in a follow-up; for
-now this lives alongside.
-
-Scope rules (§6.4):
-  - chunk_embed (Phase A)            → documents:write
-  - ai_enrich / wiki_abstract, force=False → documents:write
-  - ai_enrich / wiki_abstract, force=True  → documents:write + billing
+Every stage uses the same lifecycle and realtime protocol:
+create a processing_runs row, emit processing_progress events, write
+artefacts, then emit processing_done.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Literal
-from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from app.common.db import pool
 from app.deps import Identity, current_identity, require_billing_scope, require_scope
+from app.services import processing_runs as runs
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/processing", tags=["processing"])
 
-ProcessingKind = Literal["chunk_embed", "ai_enrich", "wiki_abstract"]
+ProcessingKind = Literal[
+    "chunk_embed",
+    "chunk_enrich",
+    "graph_topology",
+    "wiki_abstract",
+    "note_classify",
+]
 
 
 class RunRequest(BaseModel):
     kind: ProcessingKind
-    # When true, bumps `revision` on the resulting processing_runs row
-    # so dedup doesn't suppress a re-run. Always burns LLM tokens for
-    # ai_enrich / wiki_abstract; gated by the `billing` scope.
     force: bool = False
+    options: dict = Field(default_factory=dict)
 
 
 class RunResponse(BaseModel):
     run_id: str
+    document_id: str
+    kind: ProcessingKind
     status: str
-    dedup_skipped: bool = Field(
-        default=False,
-        description="True when an existing `done` row was returned "
-                    "instead of starting a new run.",
-    )
+    dedup_skipped: bool = False
     revision: int = 0
+    result: dict | None = None
+    error: dict | str | None = None
+
+
+class RunListResponse(BaseModel):
+    runs: list[dict]
 
 
 def _kind_costs_money(kind: ProcessingKind) -> bool:
-    return kind in ("ai_enrich", "wiki_abstract")
+    return kind in ("chunk_enrich", "wiki_abstract", "note_classify")
+
+
+async def _execute_background(run_id: str) -> None:
+    try:
+        await runs.execute(run_id)
+    except Exception:
+        log.exception("processing run failed: %s", run_id)
+
+
+def _background(run_id: str) -> None:
+    asyncio.create_task(_execute_background(run_id))
 
 
 @router.post(
@@ -65,86 +75,74 @@ async def run_processing(
     req: RunRequest,
     identity: Identity = Depends(current_identity),
 ) -> RunResponse:
-    """Single entry-point for triggering processing on a document.
-
-    The function below sketches the wiring; the actual queue insertion
-    and dispatcher hand-off lands in P2b-3 / P4-1 once
-    `processing_runs` is the canonical progress surface. Today we
-    short-circuit `wiki_abstract` to call summarize_document inline so
-    the Cloud Console "Generate wiki abstract" button can light up
-    without waiting for the full ledger refactor.
-    """
-    # Billing-scope check for paid kinds when forced. Inline rather
-    # than as a route-level Depends so the rule can read the body.
     if req.force and _kind_costs_money(req.kind):
         await require_billing_scope(identity)
 
-    ws = identity.workspace_id
-
-    # Resolve the document; 404 if unknown / cross-workspace.
-    async with pool().acquire() as conn:
-        doc = await conn.fetchrow(
-            "SELECT id, metadata FROM documents WHERE id=$1 AND workspace_id=$2",
-            UUID(document_id), UUID(ws),
-        )
-    if doc is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "document not found")
-
-    if req.kind == "wiki_abstract":
-        # Inline execution path — sufficient for v1.2 Phase B and the
-        # initial Cloud Console UI. Once `processing_runs` is the
-        # ledger of record, this becomes "INSERT a queued run, return
-        # immediately, dispatcher picks it up".
-        from app.contexts.knowledge.wiki_phase_b import summarize_document
-        result = await summarize_document(ws, document_id)
-        if result.get("error"):
-            raise HTTPException(
-                status.HTTP_412_PRECONDITION_FAILED,
-                result["error"],
-            )
-        # Synthesize a run_id from the document — until the ledger
-        # exists, callers don't have one to poll.
-        return RunResponse(
-            run_id=f"inline:wiki_abstract:{document_id}",
-            status="done" if result["failed"] == 0 else "partial",
-            dedup_skipped=result["summarized"] == 0 and result["skipped"] > 0,
-            revision=0,
-        )
-
-    if req.kind == "chunk_embed":
-        # Phase A — re-run the ingest pipeline for the doc. The pipeline
-        # is idempotent (DELETE-then-INSERT) so this is safe to call
-        # with or without `force`. Dispatch by smartnote_type so wikis
-        # go through the chapter splitter.
-        from app.contexts.knowledge import service as knowledge
-        meta = doc["metadata"] or {}
-        if isinstance(meta, str):
-            import json as _json
-            try: meta = _json.loads(meta)
-            except Exception: meta = {}
-        snt = meta.get("smartnote_type") if isinstance(meta, dict) else None
-        ran = await knowledge.ingest_document_for_kind(ws, document_id, snt)
-        return RunResponse(
-            run_id=f"inline:chunk_embed:{document_id}",
-            status="done" if ran else "skipped_dedup",
-            dedup_skipped=not ran,
-            revision=0,
-        )
-
-    if req.kind == "ai_enrich":
-        from app.contexts.enrichment import service as enrichment
-        queued = await enrichment.queue_enrich_if_eligible(
-            ws, document_id,
-            smartnote_type=(doc["metadata"] or {}).get("smartnote_type")
-                if isinstance(doc["metadata"], dict) else None,
+    try:
+        started = await runs.start(
+            workspace_id=identity.workspace_id,
+            document_id=document_id,
+            kind=req.kind,
             force=req.force,
+            options=req.options,
+            api_key_id=identity.api_key_id,
         )
-        return RunResponse(
-            run_id=f"inline:ai_enrich:{document_id}",
-            status="done" if queued else "skipped_dedup",
-            dedup_skipped=not queued,
-            revision=0,
-        )
+    except KeyError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "document not found")
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_412_PRECONDITION_FAILED, str(exc))
 
-    # Unreachable per the Literal type, but defensive.
-    raise HTTPException(status.HTTP_400_BAD_REQUEST, f"unknown kind: {req.kind}")
+    if started["dedup_skipped"] or started["status"] in runs.TERMINAL:
+        return RunResponse(**started)
+
+    _background(started["run_id"])
+    return RunResponse(**started)
+
+
+@router.get(
+    "/runs/{run_id}",
+    dependencies=[Depends(require_scope("documents:read"))],
+)
+async def get_processing_run(
+    run_id: str,
+    identity: Identity = Depends(current_identity),
+) -> dict:
+    run = await runs.get_run(run_id, identity.workspace_id)
+    if not run:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "run not found")
+    return run
+
+
+@router.get(
+    "/runs",
+    response_model=RunListResponse,
+    dependencies=[Depends(require_scope("documents:read"))],
+)
+async def list_processing_runs(
+    document_id: str | None = None,
+    kind: ProcessingKind | None = None,
+    status_filter: str | None = Query(default=None, alias="status"),
+    limit: int = Query(default=50, ge=1, le=200),
+    identity: Identity = Depends(current_identity),
+) -> RunListResponse:
+    return RunListResponse(
+        runs=await runs.list_runs(
+            identity.workspace_id,
+            document_id=document_id,
+            kind=kind,
+            status=status_filter,
+            limit=limit,
+        )
+    )
+
+
+@router.delete(
+    "/runs/{run_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_scope("documents:write"))],
+)
+async def cancel_processing_run(
+    run_id: str,
+    identity: Identity = Depends(current_identity),
+) -> None:
+    await runs.cancel(run_id, identity.workspace_id)
