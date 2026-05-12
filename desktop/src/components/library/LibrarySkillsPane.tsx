@@ -1,83 +1,126 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import * as cloudApi from "@/lib/cloud-api";
 
 /* Library · Skills pane.
  *
- * Phase 1+ stub-real: shows the canonical agent skills shipped with
- * SmartNote (claude-skill, cursor-skill, opencode-skill) plus a slot
- * for "Custom workflows". Phase 4 wires the real /v1/skills endpoint
- * that reads invocation counts + arbitrary user-defined skills.
+ * Reads real cloud documents where `metadata.smartnote_type === "skill"`
+ * — these are agent recipes / workflow specs uploaded via MCP
+ * `add_document(smartnote_type="skill")` or hand-classified.
+ *
+ * Previously this pane rendered a hardcoded fake list (claude-skill /
+ * cursor-skill / opencode-skill) which never reflected what the user
+ * actually uploaded — so a real skill landing in cloud was invisible.
+ *
+ * Phase-1 layout: left tree groups skills by inferred agent (parsed
+ * from the filename — `skill_claude-xxx.md` → "Claude Code"); right
+ * pane shows skill cards with a content preview. Click a card to
+ * open the doc via the Source channel for full read / edit.
  */
 
-type Agent = "Claude Code" | "Cursor" | "Opencode" | "Custom workflows";
+type Agent = "Claude Code" | "Cursor" | "Opencode" | "Other";
 
-type Skill = {
-  name: string;
-  agent: Agent;
-  trigger: string;
-  description: string;
-  tags: string[];
-  invocations?: number;
-  lastUsed?: string;
-};
+function inferAgent(name: string): Agent {
+  const lower = name.toLowerCase();
+  if (lower.includes("claude") || lower.includes("cc-")) return "Claude Code";
+  if (lower.includes("cursor")) return "Cursor";
+  if (lower.includes("opencode")) return "Opencode";
+  return "Other";
+}
 
-const CORE_SKILLS: Skill[] = [
-  {
-    name: "claude-skill",
-    agent: "Claude Code",
-    trigger: "on agent boot",
-    description:
-      "Loaded into Claude Code on session start. Tells the agent how to use SmartNote MCP — search_memory, propose_memory, queue_enrich_jobs — and when to read vs. write.",
-    tags: ["claude-code", "mcp", "core"],
-  },
-  {
-    name: "cursor-skill",
-    agent: "Cursor",
-    trigger: "on agent boot",
-    description:
-      "Cursor variant of SmartNote integration. Same MCP surface, slightly different prompt for Cursor's editor-agent context.",
-    tags: ["cursor", "mcp"],
-  },
-  {
-    name: "opencode-skill",
-    agent: "Opencode",
-    trigger: "on agent boot",
-    description:
-      "Opencode integration. Lower invocation rate — keep around for cross-agent compatibility.",
-    tags: ["opencode", "mcp"],
-  },
-];
+function prettyName(name: string): string {
+  // `skill_dap-callback-developer.md` → `dap-callback-developer`
+  let n = name.replace(/^skill[_-]?/i, "");
+  n = n.replace(/\.(md|markdown|txt)$/i, "");
+  return n || name;
+}
+
+function firstParagraph(content: string | undefined | null, maxLen = 240): string {
+  if (!content) return "";
+  // Trim leading blank lines, take until the first double-newline.
+  const trimmed = content.replace(/^\s+/, "");
+  const p = trimmed.split(/\n\s*\n/, 1)[0] || trimmed;
+  const cleaned = p.replace(/^#+\s+/, "").replace(/\s+/g, " ");
+  if (cleaned.length <= maxLen) return cleaned;
+  return cleaned.slice(0, maxLen - 1) + "…";
+}
 
 export function LibrarySkillsPane() {
+  const [skills, setSkills] = useState<cloudApi.CloudDocument[] | null>(null);
   const [filter, setFilter] = useState("");
   const [activeAgent, setActiveAgent] = useState<Agent | "all">("all");
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [body, setBody] = useState<string>("");
+  const [bodyLoading, setBodyLoading] = useState(false);
+
+  // Cloud fetch: list all docs with smartnote_type=skill. Refresh on
+  // a 30s cadence so MCP uploads (which don't ping the desktop) show
+  // up without manual reload.
+  useEffect(() => {
+    let alive = true;
+    async function load() {
+      try {
+        if (!(await cloudApi.isCloudConfigured())) {
+          if (alive) setSkills([]);
+          return;
+        }
+        const res = await cloudApi.listDocuments({ smartnote_type: "skill" });
+        if (alive) setSkills(res.documents);
+      } catch {
+        if (alive) setSkills([]);
+      }
+    }
+    load();
+    const id = setInterval(load, 30_000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+
+  // Auto-select first skill so the right pane isn't empty.
+  useEffect(() => {
+    if (!skills || skills.length === 0) { setActiveId(null); return; }
+    if (!activeId || !skills.find((s) => s.id === activeId)) {
+      setActiveId(skills[0].id);
+    }
+  }, [skills]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch full body of the active skill so the right pane previews
+  // the actual content, not just the listing-row preview.
+  useEffect(() => {
+    if (!activeId) { setBody(""); return; }
+    let alive = true;
+    setBodyLoading(true);
+    cloudApi.getDocument(activeId)
+      .then((d) => { if (alive) { setBody(d.content || ""); setBodyLoading(false); } })
+      .catch(() => { if (alive) { setBody(""); setBodyLoading(false); } });
+    return () => { alive = false; };
+  }, [activeId]);
 
   const filtered = useMemo(() => {
-    let s = CORE_SKILLS;
-    if (activeAgent !== "all") s = s.filter((x) => x.agent === activeAgent);
+    if (!skills) return [];
+    let s = skills;
+    if (activeAgent !== "all") s = s.filter((d) => inferAgent(d.name) === activeAgent);
     if (filter.trim()) {
       const q = filter.toLowerCase();
-      s = s.filter(
-        (x) =>
-          x.name.toLowerCase().includes(q) ||
-          x.description.toLowerCase().includes(q),
-      );
+      s = s.filter((d) => d.name.toLowerCase().includes(q));
     }
     return s;
-  }, [filter, activeAgent]);
+  }, [skills, filter, activeAgent]);
 
   const byAgent = useMemo(() => {
-    const map = new Map<Agent, Skill[]>();
-    for (const s of CORE_SKILLS) {
-      const arr = map.get(s.agent) || [];
-      arr.push(s);
-      map.set(s.agent, arr);
+    const map = new Map<Agent, cloudApi.CloudDocument[]>();
+    if (!skills) return map;
+    for (const d of skills) {
+      const a = inferAgent(d.name);
+      const arr = map.get(a) || [];
+      arr.push(d);
+      map.set(a, arr);
     }
     return map;
-  }, []);
+  }, [skills]);
+
+  const active = filtered.find((s) => s.id === activeId) || filtered[0] || null;
 
   return (
     <div className="proto-library-pane-cols">
-      {/* Left tree by agent */}
       <aside className="proto-library-tree">
         <div className="proto-library-tree-bar">
           <input
@@ -86,111 +129,117 @@ export function LibrarySkillsPane() {
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
           />
-          <span className="proto-library-tree-mode" role="tablist" aria-label="Group mode">
-            <button type="button" aria-pressed>Agent</button>
-            <button type="button" aria-pressed={false}>Use</button>
-          </span>
         </div>
         <div className="proto-library-tree-scroll">
-          <div className="proto-library-group">
-            <span>All skills</span>
-            <span className="proto-library-group-count">{CORE_SKILLS.length}</span>
-          </div>
-          <button
-            type="button"
-            className="proto-library-tree-item"
-            aria-current={activeAgent === "all"}
-            onClick={() => setActiveAgent("all")}
-          >
-            <span className="proto-library-tree-item-name">All</span>
-            <span className="proto-library-tree-item-count">{CORE_SKILLS.length}</span>
-          </button>
+          {skills === null && (
+            <div style={{ padding: 12, fontSize: 11, color: "var(--color-text-muted)" }}>
+              loading…
+            </div>
+          )}
+          {skills !== null && skills.length === 0 && (
+            <div style={{ padding: 12, fontSize: 11, color: "var(--color-text-muted)" }}>
+              No skills yet. Upload via MCP <code>add_document(name="skill_…", smartnote_type="skill")</code>.
+            </div>
+          )}
 
-          {Array.from(byAgent.entries()).map(([agent, skills]) => (
-            <div key={agent}>
+          {skills && skills.length > 0 && (
+            <>
               <div className="proto-library-group">
-                <span>{agent}</span>
+                <span>All skills</span>
                 <span className="proto-library-group-count">{skills.length}</span>
               </div>
-              {skills.map((s) => (
-                <button
-                  key={s.name}
-                  type="button"
-                  className="proto-library-tree-item"
-                  aria-current={activeAgent === agent}
-                  onClick={() => setActiveAgent(agent)}
-                >
-                  <span className="proto-library-tree-item-name">{s.name}</span>
-                  <span className="proto-library-tree-item-count">
-                    {s.invocations ?? "—"}
-                  </span>
-                </button>
-              ))}
-            </div>
-          ))}
+              <button
+                type="button"
+                className="proto-library-tree-item"
+                aria-current={activeAgent === "all"}
+                onClick={() => setActiveAgent("all")}
+              >
+                <span className="proto-library-tree-item-name">All</span>
+                <span className="proto-library-tree-item-count">{skills.length}</span>
+              </button>
 
-          <div className="proto-library-group">
-            <span>Custom workflows</span>
-            <span className="proto-library-group-count">0</span>
-          </div>
-          <div
-            style={{
-              padding: "5px 12px",
-              fontSize: 11,
-              color: "var(--color-text-muted)",
-              fontStyle: "italic",
-            }}
-          >
-            None yet — Phase 4 wires up workflow registration.
-          </div>
+              {Array.from(byAgent.entries()).map(([agent, list]) => (
+                <div key={agent}>
+                  <div className="proto-library-group">
+                    <span>{agent}</span>
+                    <span className="proto-library-group-count">{list.length}</span>
+                  </div>
+                  {list.map((d) => (
+                    <button
+                      key={d.id}
+                      type="button"
+                      className="proto-library-tree-item"
+                      aria-current={d.id === activeId}
+                      onClick={() => { setActiveId(d.id); setActiveAgent(agent); }}
+                      title={d.name}
+                    >
+                      <span className="proto-library-tree-item-name">{prettyName(d.name)}</span>
+                      <span className="proto-library-tree-item-count">
+                        {Math.round((d.byte_size ?? 0) / 1024)}k
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </>
+          )}
         </div>
       </aside>
 
-      {/* Right cards */}
       <div className="proto-library-content">
         <div className="proto-library-content-bar">
           <div className="proto-library-content-title">
-            {activeAgent === "all"
-              ? "All skills · invoked by AI CLIs through MCP"
-              : `${activeAgent} · skills`}
+            {active ? prettyName(active.name) : "Skills"}
           </div>
           <div className="proto-library-content-meta">
-            {filtered.length} skill{filtered.length === 1 ? "" : "s"}
-          </div>
-          <div className="proto-library-content-actions">
-            <button type="button" className="proto-library-btn">+ New skill</button>
-            <button type="button" className="proto-library-btn">Open in editor</button>
+            {active
+              ? `${inferAgent(active.name)} · ${Math.round((active.byte_size ?? 0) / 1024)}k`
+              : `${filtered.length} skill${filtered.length === 1 ? "" : "s"}`}
           </div>
         </div>
 
         <div className="proto-library-content-scroll">
-          <div className="proto-library-card-list">
-            {filtered.map((s) => (
-              <div key={s.name} className="proto-skill-card">
+          {!active && (
+            <div style={{ fontSize: 12, color: "var(--color-text-muted)", padding: 24 }}>
+              {skills === null ? "loading…" : "No skill selected. Upload one via MCP or pick one from the left."}
+            </div>
+          )}
+          {active && (
+            <div className="proto-library-card-list">
+              <div className="proto-skill-card">
                 <div className="proto-skill-card-head">
-                  <div className="proto-skill-card-name">{s.name}</div>
-                  <span className="proto-skill-card-trigger">{s.trigger}</span>
+                  <div className="proto-skill-card-name">{prettyName(active.name)}</div>
+                  <span className="proto-skill-card-trigger">{inferAgent(active.name)}</span>
                   <span className="proto-skill-card-meta">
-                    {s.invocations !== undefined
-                      ? `${s.invocations} calls`
-                      : "no telemetry yet"}
-                    {s.lastUsed && ` · ${s.lastUsed}`}
+                    {Math.round((active.byte_size ?? 0) / 1024)}k · added {new Date(active.created_at).toLocaleDateString()}
                   </span>
                 </div>
-                <div className="proto-skill-card-desc">{s.description}</div>
-                <div className="proto-skill-card-tags">
-                  {s.tags.map((t, i) => (
-                    <span
-                      key={i}
-                      className={i === 0 ? "proto-tag proto-tag-accent" : "proto-tag"}
-                    >
-                      {t}
-                    </span>
-                  ))}
+                <div className="proto-skill-card-desc">
+                  {bodyLoading ? "loading…" : firstParagraph(body, 360)}
                 </div>
+                {/* Full content preview — monospace, scrollable.
+                    Caps at 2k chars so the pane stays browsable; click
+                    "Open in editor" for the full file. */}
+                <pre style={{
+                  fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                  fontSize: 11.5,
+                  lineHeight: 1.55,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  padding: "12px 14px",
+                  marginTop: 10,
+                  border: "1px solid var(--color-border)",
+                  borderRadius: 4,
+                  background: "var(--color-bg-soft, var(--color-bg-elevated))",
+                  color: "var(--color-text-secondary)",
+                  maxHeight: 480,
+                  overflow: "auto",
+                }}>
+                  {bodyLoading ? "loading…" : (body.slice(0, 4000) + (body.length > 4000 ? "\n\n…truncated" : ""))}
+                </pre>
               </div>
-            ))}
-          </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

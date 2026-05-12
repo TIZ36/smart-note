@@ -464,11 +464,37 @@ async def add_document(
     name: str,
     content: str,
     ingest: bool = True,
+    smartnote_type: Optional[str] = None,
 ) -> str:
     """Upload a document and chunk + embed it so its content becomes
-    retrievable via search_memory."""
-    r = await _call("POST", "/v1/documents",
-                    json={"name": name, "content": content, "kind": "text"})
+    retrievable via search_memory.
+
+    Args:
+        name:   filename. Naming convention: `skill_<slug>.md` for an
+                agent skill, `<topic>.md` for a wiki topic.
+        content: full markdown body.
+        ingest: whether to immediately chunk + embed (default True).
+        smartnote_type: one of `note` · `wiki_topic` · `skill`. Drives
+                where the doc surfaces in the desktop Library:
+                  - `skill`      → Library · Skills tab (agent recipes)
+                  - `wiki_topic` → Library · Docs · Wiki topics
+                  - `note`       → Library · Docs · Notes
+                  - omitted      → Docs · uncategorized bucket
+                Auto-detected from the filename when omitted:
+                a name starting `skill_` defaults to `skill`.
+    """
+    # Auto-detect skill from filename so older callers that don't pass
+    # smartnote_type still land in the right Library bucket.
+    snt = smartnote_type
+    if not snt and isinstance(name, str) and name.lower().startswith("skill_"):
+        snt = "skill"
+    metadata: dict[str, Any] = {}
+    if snt:
+        metadata["smartnote_type"] = snt
+    body: dict[str, Any] = {"name": name, "content": content, "kind": "text"}
+    if metadata:
+        body["metadata"] = metadata
+    r = await _call("POST", "/v1/documents", json=body)
     if r.status_code != 200:
         return _fail(r, "add_document")
     doc = r.json()
@@ -478,7 +504,8 @@ async def add_document(
         if ri.status_code == 200:
             chunks = ri.json().get("chunks", 0)
     tail = f" — ingested {chunks} chunk(s)" if ingest else " — not ingested"
-    return f"Added document id={doc['id']} ({doc['byte_size']} bytes){tail}"
+    type_tail = f" · type={snt}" if snt else ""
+    return f"Added document id={doc['id']} ({doc['byte_size']} bytes){type_tail}{tail}"
 
 
 @mcp.tool()
