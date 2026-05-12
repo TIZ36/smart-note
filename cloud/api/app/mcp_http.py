@@ -459,12 +459,62 @@ async def delete_preference(key: str) -> str:
     return f"Deleted preference: {key}"
 
 
+async def _resolve_document(handle: str) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+    """Look up a document by either UUID (full or 8-char prefix) or
+    exact name. Returns (doc_dict, None) on success or
+    (None, error_message_for_user) on miss/ambiguity. Centralised so
+    update / append / delete all behave identically.
+
+    Lookup order:
+      1. If handle looks like a full UUID → direct GET /v1/documents/{id}
+      2. Else list-and-match: prefer exact name match, fall back to
+         id-prefix match. Ambiguous → return a disambig hint.
+    """
+    target = handle.strip()
+    if not target:
+        return None, "empty document handle"
+    # Fast path: full UUID
+    if len(target) == 36 and target.count("-") == 4:
+        r = await _call("GET", f"/v1/documents/{target}")
+        if r.status_code == 200:
+            return r.json(), None
+        if r.status_code == 404:
+            return None, f"No document with id={target}"
+        return None, f"lookup failed: HTTP {r.status_code}"
+    # Slow path: list + match
+    rl = await _call("GET", "/v1/documents")
+    if rl.status_code != 200:
+        return None, f"list_documents failed: HTTP {rl.status_code}"
+    docs = rl.json().get("documents") or []
+    by_name = [d for d in docs if str(d.get("name", "")) == target]
+    if len(by_name) == 1:
+        # Fetch full body so callers that need .content get it.
+        r = await _call("GET", f"/v1/documents/{by_name[0]['id']}")
+        if r.status_code == 200:
+            return r.json(), None
+        return None, f"lookup failed: HTTP {r.status_code}"
+    if len(by_name) > 1:
+        preview = "\n".join(f"  {d['id']}  {d['name']}" for d in by_name[:6])
+        return None, f"Ambiguous name '{target}' — {len(by_name)} matches:\n{preview}\nUse the id directly."
+    by_prefix = [d for d in docs if str(d.get("id", "")).startswith(target)]
+    if len(by_prefix) == 1:
+        r = await _call("GET", f"/v1/documents/{by_prefix[0]['id']}")
+        if r.status_code == 200:
+            return r.json(), None
+        return None, f"lookup failed: HTTP {r.status_code}"
+    if len(by_prefix) > 1:
+        preview = "\n".join(f"  {d['id']}  {d['name']}" for d in by_prefix[:6])
+        return None, f"Ambiguous prefix '{target}' — {len(by_prefix)} matches:\n{preview}"
+    return None, f"No document matches '{target}' (tried name + id-prefix)."
+
+
 @mcp.tool()
 async def add_document(
     name: str,
     content: str,
     ingest: bool = True,
     smartnote_type: Optional[str] = None,
+    upsert: bool = False,
 ) -> str:
     """Upload a document and chunk + embed it so its content becomes
     retrievable via search_memory.
@@ -482,12 +532,65 @@ async def add_document(
                   - omitted      → Docs · uncategorized bucket
                 Auto-detected from the filename when omitted:
                 a name starting `skill_` defaults to `skill`.
+        upsert: when True and a doc with exactly this `name` already
+                exists, REPLACE its content + metadata instead of
+                creating a duplicate. Pass True if the agent is
+                "updating my notes on X" — otherwise you'd accumulate
+                stale parallel versions. Ambiguity (>1 same-name doc)
+                falls back to creating a new one and warns in the
+                response so the user can clean up by id.
     """
     # Auto-detect skill from filename so older callers that don't pass
     # smartnote_type still land in the right Library bucket.
     snt = smartnote_type
     if not snt and isinstance(name, str) and name.lower().startswith("skill_"):
         snt = "skill"
+
+    # Upsert path: look for existing doc by exact name. Update-in-place
+    # if exactly one match; fall through to create otherwise.
+    if upsert:
+        rl = await _call("GET", "/v1/documents")
+        if rl.status_code == 200:
+            same_name = [d for d in (rl.json().get("documents") or []) if str(d.get("name", "")) == name]
+            if len(same_name) == 1:
+                existing = same_name[0]
+                # Merge metadata: preserve sibling keys (local_path,
+                # imported_at, ...) and only overwrite smartnote_type
+                # when caller provided one.
+                merged_meta = dict(existing.get("metadata") or {})
+                if snt:
+                    merged_meta["smartnote_type"] = snt
+                patch_body: dict[str, Any] = {"content": content}
+                if merged_meta:
+                    patch_body["metadata"] = merged_meta
+                rp = await _call("PATCH", f"/v1/documents/{existing['id']}", json=patch_body)
+                if rp.status_code != 200:
+                    return _fail(rp, "add_document(upsert)")
+                doc = rp.json()
+                chunks = 0
+                if ingest:
+                    ri = await _call("POST", f"/v1/documents/{doc['id']}/ingest")
+                    if ri.status_code == 200:
+                        chunks = ri.json().get("chunks", 0)
+                tail = f" — re-ingested {chunks} chunk(s)" if ingest else " — not re-ingested"
+                type_tail = f" · type={snt}" if snt else ""
+                return f"Updated document id={doc['id']} ({doc['byte_size']} bytes){type_tail}{tail}"
+            if len(same_name) > 1:
+                preview = "\n".join(f"  {d['id']}" for d in same_name[:4])
+                # Don't silently overwrite when ambiguous — better to
+                # create + warn than touch the wrong doc.
+                # (Falls through to create below.)
+                ambig_warn = (
+                    f"\n[note] {len(same_name)} existing docs share this name:\n"
+                    f"{preview}\nupsert created a NEW one; consider delete_document on stale copies."
+                )
+            else:
+                ambig_warn = ""
+        else:
+            ambig_warn = ""
+    else:
+        ambig_warn = ""
+
     metadata: dict[str, Any] = {}
     if snt:
         metadata["smartnote_type"] = snt
@@ -505,7 +608,116 @@ async def add_document(
             chunks = ri.json().get("chunks", 0)
     tail = f" — ingested {chunks} chunk(s)" if ingest else " — not ingested"
     type_tail = f" · type={snt}" if snt else ""
-    return f"Added document id={doc['id']} ({doc['byte_size']} bytes){type_tail}{tail}"
+    return f"Added document id={doc['id']} ({doc['byte_size']} bytes){type_tail}{tail}{ambig_warn}"
+
+
+@mcp.tool()
+async def update_document(
+    handle: str,
+    content: str,
+    ingest: bool = True,
+    smartnote_type: Optional[str] = None,
+) -> str:
+    """Replace a document's content. Use this when the agent has
+    rewritten / regenerated a note and wants the cloud version to
+    match — preferred over `add_document` for "edit existing" flows
+    because it doesn't create a duplicate.
+
+    Args:
+        handle: full UUID, 8-char id prefix, OR exact `name`. Names
+                must be unambiguous (one match) — otherwise use the id.
+        content: the new full body. The old body is replaced wholesale;
+                see `append_to_document` for additive edits.
+        ingest: re-run chunk + embed after the update (default True).
+                Cloud already clears ingested_at on PATCH, so leaving
+                this off marks the doc stale rather than re-embedding.
+        smartnote_type: pass to change the Library bucket; omit to
+                preserve the existing classification.
+    """
+    doc, err = await _resolve_document(handle)
+    if err or not doc:
+        return f"update_document: {err}"
+    merged_meta = dict(doc.get("metadata") or {})
+    if smartnote_type:
+        merged_meta["smartnote_type"] = smartnote_type
+    body: dict[str, Any] = {"content": content}
+    if merged_meta:
+        body["metadata"] = merged_meta
+    rp = await _call("PATCH", f"/v1/documents/{doc['id']}", json=body)
+    if rp.status_code != 200:
+        return _fail(rp, "update_document")
+    new_doc = rp.json()
+    chunks = 0
+    if ingest:
+        ri = await _call("POST", f"/v1/documents/{new_doc['id']}/ingest")
+        if ri.status_code == 200:
+            chunks = ri.json().get("chunks", 0)
+    tail = f" — re-ingested {chunks} chunk(s)" if ingest else " — not re-ingested (run /ingest to refresh)"
+    return f"Updated document id={new_doc['id']} ({new_doc['byte_size']} bytes){tail}"
+
+
+@mcp.tool()
+async def append_to_document(
+    handle: str,
+    content: str,
+    separator: str = "\n\n",
+    ingest: bool = True,
+) -> str:
+    """Append text to the END of an existing document. The previous
+    body is read, `separator` + `content` are tacked on, the full
+    new body is written back via PATCH.
+
+    Use when the agent has new material to add (a daily-log entry,
+    a new section, captured chat turns) without rewriting the whole
+    doc. For full rewrites use `update_document`.
+
+    Args:
+        handle: full UUID, 8-char id prefix, OR exact `name`.
+        content: the text to append (already formatted markdown).
+        separator: glue between old + new. Default is one blank line.
+                   Pass empty string to concatenate without a gap.
+        ingest: re-chunk + embed after the append (default True).
+    """
+    doc, err = await _resolve_document(handle)
+    if err or not doc:
+        return f"append_to_document: {err}"
+    old = doc.get("content") or ""
+    new_body = old + (separator if old else "") + content
+    rp = await _call("PATCH", f"/v1/documents/{doc['id']}", json={"content": new_body})
+    if rp.status_code != 200:
+        return _fail(rp, "append_to_document")
+    new_doc = rp.json()
+    chunks = 0
+    if ingest:
+        ri = await _call("POST", f"/v1/documents/{new_doc['id']}/ingest")
+        if ri.status_code == 200:
+            chunks = ri.json().get("chunks", 0)
+    added = len(content)
+    tail = f" — re-ingested {chunks} chunk(s)" if ingest else " — not re-ingested"
+    return f"Appended {added}B to id={new_doc['id']} (now {new_doc['byte_size']}B){tail}"
+
+
+@mcp.tool()
+async def delete_document(handle: str) -> str:
+    """Permanently delete a document and its derived data (chunks,
+    embeddings, tag segments, wiki chapters, document_links).
+    Irreversible. The MEMORIES table is NOT touched — memories that
+    reference this doc keep their pointer but `get_document` will
+    return 404 on the dead id.
+
+    Args:
+        handle: full UUID, 8-char id prefix, OR exact `name`.
+                Names must be unambiguous (one match) — otherwise use
+                the id (delete_document is destructive enough that
+                we refuse to guess on ambiguity).
+    """
+    doc, err = await _resolve_document(handle)
+    if err or not doc:
+        return f"delete_document: {err}"
+    rd = await _call("DELETE", f"/v1/documents/{doc['id']}")
+    if rd.status_code != 200:
+        return _fail(rd, "delete_document")
+    return f"Deleted document id={doc['id']} (name={doc.get('name')})"
 
 
 @mcp.tool()
