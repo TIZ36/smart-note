@@ -14,9 +14,10 @@ import { NoteViewDialog } from "./NoteViewDialog";
 import { type SidebarViewItem } from "./NoteViewSidebar";
 import { NoteViewStrip } from "./NoteViewStrip";
 import { cn } from "@/lib/cn";
-import { pickRawFile, saveRawPathForHotkey, installSampleNote, readFileFull } from "@/lib/electron";
+import { onWsEvent, onCloudConflict, clearSyncConflict, pickRawFile, saveRawPathForHotkey, installSampleNote, readFileFull, writeFile } from "@/lib/electron";
 import * as api from "@/lib/api";
 import type { IngestStep } from "@/App";
+import type { NoteEditorHandle } from "../editor/NoteEditor";
 
 type Props = {
   rawPath: string;
@@ -46,6 +47,39 @@ function buildAutoViewLabel(seg: api.NoteSegment): string {
   return `(segment${spanSuffix})`;
 }
 
+function threeWayMerge(base: string, local: string, remote: string): string {
+  if (local === remote) return local;
+  if (local === base) return remote;
+  if (remote === base) return local;
+  const b = base.split("\n");
+  const l = local.split("\n");
+  const r = remote.split("\n");
+  const max = Math.max(b.length, l.length, r.length);
+  const out: string[] = [];
+  for (let i = 0; i < max; i++) {
+    const bv = b[i] ?? "";
+    const lv = l[i] ?? "";
+    const rv = r[i] ?? "";
+    if (lv === rv) out.push(lv);
+    else if (lv === bv) out.push(rv);
+    else out.push(lv); // Conflict on the same timestamp/line: user edit wins.
+  }
+  return out.join("\n").replace(/\n+$/, (m) => (local.endsWith("\n") || remote.endsWith("\n") ? "\n" : m.length ? "" : ""));
+}
+
+async function contentHash(content: string): Promise<string> {
+  const buf = new TextEncoder().encode(content);
+  const digest = await crypto.subtle.digest("SHA-256", buf);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+const requestIdle =
+  typeof window !== "undefined" && "requestIdleCallback" in window
+    ? window.requestIdleCallback.bind(window)
+    : (cb: IdleRequestCallback) => window.setTimeout(() => cb({ didTimeout: false, timeRemaining: () => 0 } as IdleDeadline), 1);
+
 export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIngestComplete, ingestBusy, ingestSteps, ingestResult, buildVersion, tags, onTagsChanged }: Props) {
   const [showIngest, setShowIngest] = useState(false);
   const [showReorganize, setShowReorganize] = useState(false);
@@ -53,6 +87,16 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
   // v3: views + AI tags live inline as a chip strip below the
   // breadcrumb (no foldable sidebar). One coherent surface.
   const [syncState, setSyncState] = useState<"idle" | "syncing" | "ok" | "err">("idle");
+  const [mergeState, setMergeState] = useState<"idle" | "needed" | "merging" | "ok" | "err">("idle");
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
+  const editorRef = useRef<NoteEditorHandle | null>(null);
+  const cloudNoteRef = useRef<{
+    id: string | null;
+    baseContent: string;
+    lastSyncedHash: string | null;
+    localSavedAtMs: number;
+    cloudUpdatedAtMs: number;
+  }>({ id: null, baseContent: "", lastSyncedHash: null, localSavedAtMs: 0, cloudUpdatedAtMs: 0 });
 
   // ── View state ──
   // `views` is the list of persisted custom lenses for the current file.
@@ -160,27 +204,32 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
         } catch { stored = []; }
       }
 
-      // Re-anchor against current file content.
-      const r = await readFileFull(rawPath).catch(() => null);
-      const content = (r && r.ok && typeof r.output === "string") ? r.output : "";
-      const lines = content.split("\n");
-      const hashToLine = new Map<string, { line_no: number; text: string }>();
-      for (let i = 0; i < lines.length; i++) {
-        const h = await api.lineHash(lines[i]);
-        if (!hashToLine.has(h)) hashToLine.set(h, { line_no: i + 1, text: lines[i] });
-      }
-      const rebuilt: LocalBookmark[] = stored.map((b) => {
-        const hit = hashToLine.get(b.line_hash);
-        return hit
-          ? { ...b, line_no_last: hit.line_no, line_preview: hit.text.trim().slice(0, 80) }
-          : b; // orphaned — keep stale line_no_last so the user can still rename/remove
-      });
-
       if (!cancelled) {
         setBookmarksCloudDocId(cloudDocId);
-        setBookmarks(rebuilt);
+        setBookmarks(stored);
         setBookmarksLoaded(true);
       }
+
+      // Re-anchor after first paint. This does a full-file read + per-line
+      // hash and is noticeably slow for cold iCloud files; bookmark line
+      // numbers can lag briefly, the editor should not.
+      requestIdle(async () => {
+        const r = await readFileFull(rawPath).catch(() => null);
+        const content = (r && r.ok && typeof r.output === "string") ? r.output : "";
+        const lines = content.split("\n");
+        const hashToLine = new Map<string, { line_no: number; text: string }>();
+        for (let i = 0; i < lines.length; i++) {
+          const h = await api.lineHash(lines[i]);
+          if (!hashToLine.has(h)) hashToLine.set(h, { line_no: i + 1, text: lines[i] });
+        }
+        const rebuilt: LocalBookmark[] = stored.map((b) => {
+          const hit = hashToLine.get(b.line_hash);
+          return hit
+            ? { ...b, line_no_last: hit.line_no, line_preview: hit.text.trim().slice(0, 80) }
+            : b;
+        });
+        if (!cancelled) setBookmarks(rebuilt);
+      });
     })();
     return () => { cancelled = true; };
   }, [rawPath, bookmarksKey, buildVersion]);
@@ -315,6 +364,116 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
   // queue. The gateway is gone; keeping the callback shape avoids
   // touching every caller site.
   const refreshNoteState = useCallback(async () => {}, []);
+
+  const findCloudNote = useCallback(async () => {
+    if (!rawPath) return null;
+    const list = await cloudApi.listDocuments({ smartnote_type: "note" });
+    const match = list.documents.find((d) => {
+      const md = (d.metadata && typeof d.metadata === "object" ? d.metadata : {}) as Record<string, unknown>;
+      return md.local_path === rawPath;
+    });
+    if (!match) return null;
+    const full = await cloudApi.getDocument(match.id);
+    return full;
+  }, [rawPath]);
+
+  const refreshCloudBase = useCallback(async () => {
+    try {
+      const doc = await findCloudNote();
+      if (!doc) {
+        cloudNoteRef.current = { id: null, baseContent: "", lastSyncedHash: null, localSavedAtMs: 0, cloudUpdatedAtMs: 0 };
+        return;
+      }
+      const content = doc.content || "";
+      const md = (doc.metadata && typeof doc.metadata === "object" ? doc.metadata : {}) as Record<string, unknown>;
+      cloudNoteRef.current = {
+        id: doc.id,
+        baseContent: content,
+        lastSyncedHash: await contentHash(content),
+        localSavedAtMs: Date.now(),
+        cloudUpdatedAtMs: typeof md.cloud_content_updated_at_ms === "number" ? md.cloud_content_updated_at_ms : Date.parse(doc.updated_at || doc.created_at || "") || 0,
+      };
+      // The local file may be out-of-date relative to cloud — e.g.
+      // MCP/another desktop wrote while we were closed. If the cloud
+      // body differs from disk AND the last cloud author wasn't this
+      // device, flag merge so the user is asked before any push.
+      if (rawPath) {
+        try {
+          const onDisk = (await readFileFull(rawPath)).output ?? "";
+          const cloudHash = await contentHash(content);
+          const diskHash  = await contentHash(onDisk);
+          const src = typeof md.source === "string" ? md.source : "";
+          const isSelf = src === "auto-sync" || src === "note-editor";
+          if (cloudHash !== diskHash && !isSelf) {
+            setMergeState("needed");
+            setSyncNotice(`Cloud changed${src ? ` by ${src}` : ""}. Merge before syncing.`);
+          }
+        } catch { /* unreadable disk → skip */ }
+      }
+    } catch {
+      /* offline: keep previous base */
+    }
+  }, [findCloudNote, rawPath]);
+
+  useEffect(() => {
+    refreshCloudBase();
+  }, [refreshCloudBase, buildVersion]);
+
+  const mergeCloudSnapshot = useCallback(async (): Promise<string | null> => {
+    if (!rawPath) return null;
+    setMergeState("merging");
+    try {
+      const doc = await findCloudNote();
+      if (!doc) return null;
+      const remote = doc.content || "";
+      const base = cloudNoteRef.current.id === doc.id ? cloudNoteRef.current.baseContent : "";
+      const local = editorRef.current?.getContent() ?? (await readFileFull(rawPath)).output ?? "";
+      const merged = threeWayMerge(base, local, remote);
+      if (merged !== local) {
+        editorRef.current?.replaceContent(merged, true);
+        await writeFile(rawPath, merged);
+      }
+      const md = (doc.metadata && typeof doc.metadata === "object" ? doc.metadata : {}) as Record<string, unknown>;
+      cloudNoteRef.current = {
+        id: doc.id,
+        baseContent: merged,
+        lastSyncedHash: null,
+        localSavedAtMs: Date.now(),
+        cloudUpdatedAtMs: typeof md.cloud_content_updated_at_ms === "number" ? md.cloud_content_updated_at_ms : Date.parse(doc.updated_at || doc.created_at || "") || 0,
+      };
+      setMergeState("ok");
+      return merged;
+    } catch (e) {
+      setMergeState("err");
+      window.alert(`Merge failed: ${e instanceof Error ? e.message : String(e)}`);
+      throw e;
+    }
+  }, [findCloudNote, rawPath]);
+
+  useEffect(() => {
+    return onWsEvent((e) => {
+      if (e.type !== "document_content_changed") return;
+      const docId = typeof e.document_id === "string" ? e.document_id : "";
+      if (!docId || docId !== cloudNoteRef.current.id) return;
+      const data = (e as { data?: Record<string, unknown> }).data || {};
+      const remoteMs = typeof data.cloud_content_updated_at_ms === "number" ? data.cloud_content_updated_at_ms : Date.now();
+      if (remoteMs <= cloudNoteRef.current.cloudUpdatedAtMs) return;
+      setMergeState("needed");
+      setSyncNotice("Cloud snapshot changed. Merge before uploading local edits.");
+    });
+  }, []);
+
+  // The file watcher refused to push because cloud has a foreign edit
+  // (MCP, console, another desktop). If the conflict is for the file
+  // we're viewing, hoist the merge banner — covers the case where the
+  // WS event arrived before NotePage mounted / before we knew the doc id.
+  useEffect(() => {
+    return onCloudConflict((c) => {
+      if (!rawPath || c.relPath !== rawPath) return;
+      setMergeState("needed");
+      setSyncNotice(`Cloud changed by ${c.by}. Merge before syncing.`);
+    });
+  }, [rawPath]);
 
   // ── Views: load list whenever the file changes ──
   const refreshViews = useCallback(async () => {
@@ -618,6 +777,7 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
     // longer go through Electron's writeFile here.
     try {
       await api.saveNote(rawPath, content);
+      cloudNoteRef.current.localSavedAtMs = Date.now();
       refreshNoteState();
     } catch {
       /* silent — dirty flag stays true if the backend is unreachable */
@@ -697,16 +857,47 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
   async function handleSyncToKp() {
     if (!rawPath) return;
     setSyncState("syncing");
+    setSyncNotice(null);
     try {
-      // Save first if dirty so the on-disk content reflects the
-      // user's latest edits — Sync = "build a snapshot of what's
-      // saved", as the user put it.
+      let contentOverride: string | null = null;
+      // Pre-flight freshness check. WS events can be missed (offline at
+      // the moment of the foreign edit, app just started, etc.) so we
+      // always re-ask the cloud right before pushing. If cloud is ahead
+      // of what we last observed, treat it like a known-pending merge.
+      let pendingMerge = mergeState === "needed";
+      if (!pendingMerge) {
+        try {
+          const fresh = await findCloudNote();
+          if (fresh) {
+            const md = (fresh.metadata && typeof fresh.metadata === "object" ? fresh.metadata : {}) as Record<string, unknown>;
+            const freshMs = typeof md.cloud_content_updated_at_ms === "number"
+              ? md.cloud_content_updated_at_ms
+              : Date.parse(fresh.updated_at || fresh.created_at || "") || 0;
+            if (freshMs > cloudNoteRef.current.cloudUpdatedAtMs) {
+              pendingMerge = true;
+              setMergeState("needed");
+            }
+          }
+        } catch { /* offline → skip pre-flight, fall through */ }
+      }
+      if (pendingMerge) {
+        contentOverride = await mergeCloudSnapshot();
+        setSyncNotice("Merged cloud changes locally. Uploading merged note…");
+      }
+      const hadPendingMerge = pendingMerge;
       if (dirty) {
-        handleSaveClick();
-        await new Promise((r) => setTimeout(r, 250));
+        await handleSave(contentOverride ?? editorRef.current?.getContent() ?? "");
       }
       const result = await readFileFull(rawPath);
       const content = result.output || "";
+      const hash = await contentHash(content);
+      if (!hadPendingMerge && cloudNoteRef.current.lastSyncedHash === hash) {
+        setSyncState("ok");
+        setSyncNotice("Local note unchanged. Cloud already has this snapshot.");
+        setTimeout(() => setSyncState("idle"), 1200);
+        setTimeout(() => setSyncNotice(null), 2400);
+        return;
+      }
       const filename = rawPath.split("/").pop() || "note.md";
       const nowIso = new Date().toISOString();
       const baseMeta: Record<string, unknown> = {
@@ -714,6 +905,10 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
         local_path: rawPath,
         original_name: filename,
         synced_at: nowIso,
+        // Marker the sync watcher recognizes as a same-device push, so
+        // its WS listener bumps the baseline forward (instead of
+        // flagging this round-trip as a foreign conflict).
+        source: "note-editor",
         line_count: content.split("\n").length,
         byte_size: new Blob([content]).size,
       };
@@ -721,35 +916,66 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
       // Look up existing doc with the same local_path so re-syncs
       // update content in place.
       let existingId: string | null = null;
+      let existingMeta: Record<string, unknown> = {};
       try {
         const list = await cloudApi.listDocuments({ smartnote_type: "note" });
         const match = list.documents.find((d) => {
           const md = (d.metadata && typeof d.metadata === "object" ? d.metadata : {}) as Record<string, unknown>;
           return md.local_path === rawPath;
         });
-        if (match) existingId = match.id;
+        if (match) {
+          existingId = match.id;
+          existingMeta = (match.metadata && typeof match.metadata === "object" ? match.metadata : {}) as Record<string, unknown>;
+        }
       } catch {
         // List failure isn't fatal — fall through to create.
       }
 
+      let newCloudMs = Date.now();
       if (existingId) {
         // Re-sync · update content + bump synced_at. Cloud clears
         // ingested_at + queues re-ingest so chunks/embeddings refresh.
-        await cloudApi.patchDocument(existingId, {
+        const patched = await cloudApi.patchDocument(existingId, {
           name: filename,
           content,
-          metadata: baseMeta,
+          metadata: { ...existingMeta, ...baseMeta, local_content_updated_at_ms: cloudNoteRef.current.localSavedAtMs || Date.now() },
         });
+        const pmd = (patched?.metadata && typeof patched.metadata === "object" ? patched.metadata : {}) as Record<string, unknown>;
+        if (typeof pmd.cloud_content_updated_at_ms === "number") newCloudMs = pmd.cloud_content_updated_at_ms;
+        cloudNoteRef.current = {
+          id: existingId,
+          baseContent: content,
+          lastSyncedHash: hash,
+          localSavedAtMs: cloudNoteRef.current.localSavedAtMs || Date.now(),
+          cloudUpdatedAtMs: newCloudMs,
+        };
       } else {
-        await cloudApi.createDocument({
+        const created = await cloudApi.createDocument({
           name: filename,
           content,
           kind: "markdown",
-          metadata: baseMeta,
+          metadata: { ...baseMeta, local_content_updated_at_ms: cloudNoteRef.current.localSavedAtMs || Date.now() },
         });
+        const cmd = (created?.metadata && typeof created.metadata === "object" ? created.metadata : {}) as Record<string, unknown>;
+        if (typeof cmd.cloud_content_updated_at_ms === "number") newCloudMs = cmd.cloud_content_updated_at_ms;
+        cloudNoteRef.current = {
+          id: created.id,
+          baseContent: content,
+          lastSyncedHash: hash,
+          localSavedAtMs: cloudNoteRef.current.localSavedAtMs || Date.now(),
+          cloudUpdatedAtMs: newCloudMs,
+        };
       }
+      // Tell the file watcher this conflict (if any) is resolved and
+      // bump its baseline to the version we just pushed — otherwise
+      // the next file save would re-fetch, see the same cloud_ms, and
+      // false-conflict against an out-of-date baseline.
+      try { await clearSyncConflict(rawPath, newCloudMs); } catch { /* watcher may be off */ }
       setSyncState("ok");
+      setMergeState("idle");
+      setSyncNotice(contentOverride !== null ? "Merged cloud changes, then synced local note." : "Synced local note to cloud.");
       setTimeout(() => setSyncState("idle"), 1800);
+      setTimeout(() => setSyncNotice(null), 2600);
     } catch (e) {
       setSyncState("err");
       window.alert(`Sync failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -817,16 +1043,22 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
           <button
             type="button"
             onClick={handleSyncToKp}
-            className="proto-note-v3-btn"
-            disabled={syncState === "syncing"}
-            title="Push this note to SmartNote Cloud so it appears in KP (RAG) for embedding / enrich processing"
+            className={cn("proto-note-v3-btn", mergeState === "needed" && "proto-note-v3-btn-warning")}
+            disabled={syncState === "syncing" || mergeState === "merging"}
+            title={mergeState === "needed"
+              ? "Cloud changed this note. Click to merge cloud changes first, then upload your local note."
+              : "Push this note to SmartNote Cloud so it appears in KP (RAG) for embedding / enrich processing"}
           >
+            {mergeState === "needed" && <span className="proto-note-v3-btn-dot" />}
             <CloudUpload size={12} strokeWidth={2} />
-            {syncState === "syncing" ? "Syncing…"
+            {mergeState === "needed" ? "Merge"
+              : mergeState === "merging" ? "Merging…"
+              : syncState === "syncing" ? "Syncing…"
               : syncState === "ok"   ? "Synced ✓"
               : syncState === "err"  ? "Sync failed"
-              : "Sync to KP"}
+              : "Sync to Cloud"}
           </button>
+          {syncNotice && <span className="proto-note-v3-sync-notice">{syncNotice}</span>}
           <button
             type="button"
             onClick={handleSaveClick}
@@ -876,6 +1108,7 @@ export function NotePage({ rawPath, notePath, onSetRawPath, onSetNotePath, onIng
         <div className="proto-note-v3-canvas">
         <div className="proto-note-v3-canvas-inner">
           <NoteEditor
+            ref={editorRef}
             filePath={rawPath}
             onSave={handleSave}
             onDirty={setDirty}

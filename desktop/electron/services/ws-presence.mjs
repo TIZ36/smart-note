@@ -38,8 +38,14 @@ let _zombieTimer = null;
 let _jwtCache = null;              // { jwt, expiresAt, key }
 let _deviceId = null;              // resolved on first connect
 let _emit = null;                  // renderer-bound emit function
+const _inboundListeners = new Set();  // main-process consumers (e.g. sync.mjs baseline tracker)
 
 export function setEmit(fn) { _emit = fn; }
+// Additional in-process subscribers for inbound payloads. Used by
+// sync.mjs to keep its "last-seen cloud version per file" baseline
+// fresh so it can detect MCP-side overwrites before the file watcher
+// would otherwise clobber them.
+export function addInboundListener(fn) { _inboundListeners.add(fn); return () => _inboundListeners.delete(fn); }
 
 async function _jwtFor(cloudUrl, apiKey) {
   const now = Math.floor(Date.now() / 1000);
@@ -182,6 +188,11 @@ async function _connectOnceInner() {
       // Forward every typed message to renderer. Renderer filters by type.
       if (typeof _emit === "function") {
         try { _emit(payload); } catch {}
+      }
+      // Tee to in-process subscribers — never let one bad listener
+      // break the rest or stop the WS event loop.
+      for (const fn of _inboundListeners) {
+        try { fn(payload); } catch {}
       }
     });
     ws.on("pong", () => { _lastInboundAt = Date.now(); });

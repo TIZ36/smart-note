@@ -209,6 +209,30 @@ export function onWsEvent(
   });
 }
 
+/* File-watcher refused to clobber a foreign cloud edit. Fires for any
+ * note whose cloud version was changed by MCP / console / another
+ * desktop while the sync watcher had pending local content. NotePage
+ * subscribes to this and flips its merge banner on. */
+export type CloudConflict = {
+  relPath: string;
+  docId: string | null;
+  cloudMs: number;
+  by: string;
+};
+export function onCloudConflict(handler: (c: CloudConflict) => void): () => void {
+  const d = window.desktop as unknown as {
+    onCloudConflict?: (cb: (data: CloudConflict) => void) => () => void;
+  };
+  if (!d?.onCloudConflict) return () => {};
+  return d.onCloudConflict(handler);
+}
+
+/* After a successful merge-then-push from NotePage, tell the watcher
+ * to clear the conflict and resume auto-syncing this file. */
+export async function clearSyncConflict(relPath: string, newCloudMs?: number): Promise<void> {
+  await getDesktop().invoke("native:sync:clear-conflict", { relPath, newCloudMs });
+}
+
 export async function getIngestStatus(): Promise<{ noteIngestRunning: boolean; wikiIngestRunning: boolean }> {
   return getDesktop().invoke("get_ingest_status") as Promise<{ noteIngestRunning: boolean; wikiIngestRunning: boolean }>;
 }

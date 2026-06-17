@@ -14,16 +14,39 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
+from app.contexts.enrichment import wiring as enrichment_wiring
+from app.contexts.knowledge import wiring as knowledge_wiring
+from app.contexts.knowledge.wiring import reconcile_missing_ingest
 from app.db import close_pool, init_pool, run_migrations
 from app.mcp_http import build_mcp_asgi, mcp as mcp_server
 from app.routers import (
-    auth, console, dev, devices, documents, enrich, enrich_config, graph,
-    health, ingest, memories, notes, preferences, processing, proposals,
-    retrieve, search_history, tags as tags_router, usage_route, wiki,
+    auth,
+    console,
+    dev,
+    devices,
+    documents,
+    enrich,
+    enrich_config,
+    graph,
+    health,
+    ingest,
+    logs,
+    memories,
+    notes,
+    preferences,
+    processing,
+    proposals,
+    retrieve,
+    search_history,
+    tags as tags_router,
+    usage_route,
+    wiki,
     workspaces,
 )
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+)
 log = logging.getLogger("smartnote-cloud")
 
 
@@ -32,6 +55,13 @@ async def lifespan(_: FastAPI):
     log.info("starting up; connecting to Postgres")
     await init_pool()
     await run_migrations()
+    knowledge_wiring.register()
+    enrichment_wiring.register()
+    queued = await reconcile_missing_ingest()
+    if queued:
+        log.info(
+            "queued %d missing chunk_embed run(s) during startup reconciliation", queued
+        )
     # FastMCP's session manager owns its own anyio task group — it
     # must be entered as part of the app's lifespan or `/mcp` requests
     # explode with "Task group is not initialized".
@@ -79,11 +109,13 @@ app.include_router(ingest.router)
 app.include_router(graph.router)
 app.include_router(search_history.router)
 app.include_router(tags_router.router)
+app.include_router(logs.router)
 app.include_router(wiki.router)
 app.include_router(devices.router)
 app.include_router(console.router)
 
 from app import ws_relay  # noqa: E402
+
 app.include_router(ws_relay.router)
 app.include_router(workspaces.router)
 app.include_router(usage_route.router)

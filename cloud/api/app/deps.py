@@ -68,6 +68,25 @@ def require_scope(scope: str):
     return _check
 
 
+def require_any_scope(*scopes: str):
+    """Route dependency: allow if the token has any listed scope.
+
+    Useful during scope migrations where older workspace tokens still
+    carry a broader read scope but newer clients request a narrower one.
+    """
+
+    def _check(identity: Identity = Depends(current_identity)) -> Identity:
+        if not scopes or any(identity.has_scope(scope) for scope in scopes):
+            return identity
+        needed = " or ".join(scopes)
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            f"token is missing required scope: {needed}",
+        )
+
+    return _check
+
+
 async def require_billing_scope(identity: Identity) -> None:
     """Gate for paid (LLM-burning) operations triggered with `force=True`.
 

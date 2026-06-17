@@ -1,0 +1,43 @@
+# SmartNote Cloud — Caddy reverse proxy
+#
+# Two virtual hosts, both with automatic Let's Encrypt TLS.
+# DNS for both domains must point at this server's public IP, and
+# ports 80/443 must be reachable (Let's Encrypt does an HTTP-01 / TLS-
+# ALPN challenge during the first cert issuance).
+#
+# Edit Caddyfile only if you need to tune timeouts or add new routes;
+# the three domain/email values come from the compose env (.env).
+
+{
+    email {$ACME_EMAIL}
+    # Comment the next line for the production ACME endpoint; uncomment
+    # while testing DNS to avoid burning the Let's Encrypt rate limit.
+    # acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+# ─── Cloud API (REST + MCP streamable-HTTP at /mcp) ────────────────
+{$API_DOMAIN} {
+    encode zstd gzip
+
+    # CORS is already permissive on the FastAPI side; no need to set
+    # additional headers here. SSE/MCP streams need long timeouts.
+    @mcp path /mcp /mcp/*
+    handle @mcp {
+        reverse_proxy api:8000 {
+            flush_interval -1
+            transport http {
+                read_timeout 24h
+            }
+        }
+    }
+
+    handle {
+        reverse_proxy api:8000
+    }
+}
+
+# ─── Console (Next.js standalone) ──────────────────────────────────
+{$CONSOLE_DOMAIN} {
+    encode zstd gzip
+    reverse_proxy console:3000
+}

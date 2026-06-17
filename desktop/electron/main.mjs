@@ -484,7 +484,27 @@ app.whenReady().then(() => {
         try { w.webContents.send("smartnote:ws-event", payload); } catch {}
       }
     });
+    // Tee WS events to the file-sync service so its per-file "last
+    // observed cloud version" baseline stays current. Without this,
+    // an MCP edit landing during a session goes unnoticed until the
+    // next watcher pre-flight refetch — and the watcher would push
+    // first, clobbering.
+    m.addInboundListener((payload) => {
+      import("./services/sync.mjs").then((s) => s.consumeWsEvent?.(payload)).catch(() => {});
+    });
     m.start();
+  }).catch(() => {});
+
+  // Sync conflict → renderer. NotePage subscribes to this and shows
+  // its merge banner even for closed-or-just-opened notes that
+  // haven't received a WS event during their lifetime.
+  import("./services/sync.mjs").then((m) => {
+    m.setOnConflict?.((info) => {
+      const allWindows = BrowserWindow.getAllWindows();
+      for (const w of allWindows) {
+        try { w.webContents.send("smartnote:cloud-conflict", info); } catch {}
+      }
+    });
   }).catch(() => {});
 
   app.on("activate", () => {
@@ -656,7 +676,7 @@ ipcMain.handle("list_views", async (_, { notePath }) => {
 
 /** Full read for Note editor; search/tag previews use gateway line-range APIs. */
 ipcMain.handle("read_file_full", async (_, { path: filePath }) => {
-  const content = fs.readFileSync(filePath, "utf8");
+  const content = await fs.promises.readFile(filePath, "utf8");
   return { ok: true, output: content };
 });
 
@@ -690,6 +710,12 @@ ipcMain.handle("native:search:reindex", _wrap((_, p) => nativeSearch.indexFile(p
 ipcMain.handle("native:sync:start",  _wrap(() => nativeSync.start()));
 ipcMain.handle("native:sync:stop",   _wrap(() => nativeSync.stop()));
 ipcMain.handle("native:sync:status", _wrap(() => nativeSync.status()));
+// Called by NotePage after a successful merge-then-push so the file
+// watcher knows the conflict is resolved and can resume auto-syncing.
+ipcMain.handle("native:sync:clear-conflict", _wrap(({ relPath, newCloudMs }) => {
+  nativeSync.clearConflict(relPath, newCloudMs);
+  return { ok: true };
+}));
 
 /* AI chat completion via the user's local provider (Settings → Chat
  * provider). OpenAI-compatible /chat/completions only. Returns the

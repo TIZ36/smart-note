@@ -358,12 +358,10 @@ export function useBulkRuns(opts: {
   const runGraphTopology = useCallback((ids: string[]) =>
     runStage("graph_topology", ids), [runStage]);
 
-  /** Cancel an in-flight run by its run_id. Currently routes via
-   *  the legacy /v1/enrich/jobs/{id} delete; switches to the new
-   *  /v1/processing/runs/{id} when cloud exposes it (doc §2.5). */
+  /** Cancel an in-flight processing run by its run_id. */
   const cancelRun = useCallback(async (runId: string) => {
     try {
-      await cloudApi.deleteEnrichJob(runId);
+      await cloudApi.cancelProcessingRun(runId);
       flashSet(`Run ${runId.slice(0, 8)} cancelled`);
       // Patch any tracked rows whose runId matches; collapse to "done"
       // so the spinner stops. The next /kn refetch will reconcile.

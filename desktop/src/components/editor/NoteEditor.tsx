@@ -1,10 +1,18 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState, useCallback } from "react";
 import { EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection, Decoration, WidgetType, gutter, GutterMarker, type DecorationSet } from "@codemirror/view";
 import { EditorState, StateField, StateEffect, RangeSetBuilder, RangeSet } from "@codemirror/state";
-import { markdown } from "@codemirror/lang-markdown";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { readFileFull } from "@/lib/electron";
+
+const requestIdle =
+  typeof window !== "undefined" && "requestIdleCallback" in window
+    ? window.requestIdleCallback.bind(window)
+    : (cb: IdleRequestCallback) => window.setTimeout(() => cb({ didTimeout: false, timeRemaining: () => 0 } as IdleDeadline), 1);
+const cancelIdle =
+  typeof window !== "undefined" && "cancelIdleCallback" in window
+    ? window.cancelIdleCallback.bind(window)
+    : (id: number) => window.clearTimeout(id);
 
 type LineRange = { start: number; end: number };
 
@@ -34,6 +42,11 @@ type Props = {
    *  selection touches (1-based) and their current text, so callers can
    *  hash them for membership actions. */
   onSelectionChange?: (info: { lines: number[]; texts: string[] }) => void;
+};
+
+export type NoteEditorHandle = {
+  getContent: () => string;
+  replaceContent: (content: string, markSaved?: boolean) => void;
 };
 
 /* Right-aligned inline widget that surfaces per-line metadata — ts label
@@ -316,11 +329,11 @@ const editorTheme = EditorView.theme({
   },
 });
 
-export function NoteEditor({
+export const NoteEditor = forwardRef<NoteEditorHandle, Props>(function NoteEditor({
   filePath, onSave, onDirty, scrollToRange, lineMeta, onToggleBookmark,
   memberLines, dimMode = "opacity", dimLevel = "medium",
   onSelectionChange,
-}: Props) {
+}: Props, ref) {
   const onToggleBookmarkRef = useRef(onToggleBookmark);
   onToggleBookmarkRef.current = onToggleBookmark;
   const onSelectionChangeRef = useRef(onSelectionChange);
@@ -340,6 +353,20 @@ export function NoteEditor({
     setDirty(false);
     onDirty?.(false);
   }, [onSave, onDirty]);
+
+  useImperativeHandle(ref, () => ({
+    getContent: () => viewRef.current?.state.doc.toString() ?? "",
+    replaceContent: (content: string, markSaved = false) => {
+      const view = viewRef.current;
+      if (!view) return;
+      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: content } });
+      if (markSaved) {
+        lastSavedRef.current = content;
+        setDirty(false);
+        onDirty?.(false);
+      }
+    },
+  }), [onDirty]);
 
   // Auto-save after 2s of no edits
   const scheduleAutoSave = useCallback(() => {
@@ -476,7 +503,6 @@ export function NoteEditor({
           drawSelection(),
           highlightSelectionMatches(),
           history(),
-          markdown(),
           keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
           saveKeymap,
           updateListener,
@@ -493,20 +519,19 @@ export function NoteEditor({
         parent: containerRef.current!,
       });
 
-      // Auto-scroll to bottom — newest content is at the end
-      const lastLine = state.doc.lines;
-      if (lastLine > 1) {
-        const line = state.doc.line(lastLine);
-        viewRef.current.dispatch({
-          effects: EditorView.scrollIntoView(line.from, { y: "end" }),
-        });
-      }
-
       setLoading(false);
     }
 
+    const idleId = requestIdle(async () => {
+      if (!alive || !viewRef.current) return;
+      const { markdown } = await import("@codemirror/lang-markdown");
+      if (!alive || !viewRef.current) return;
+      viewRef.current.dispatch({ effects: StateEffect.appendConfig.of(markdown()) });
+    });
+
     return () => {
       alive = false;
+      cancelIdle(idleId);
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
       viewRef.current?.destroy();
       viewRef.current = null;
@@ -604,4 +629,4 @@ export function NoteEditor({
       </div>
     </div>
   );
-}
+});

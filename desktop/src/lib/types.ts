@@ -109,6 +109,8 @@ export type AppSettings = {
   cloud_sync_enabled?: boolean;
   cloud_sync_url?: string;
   cloud_sync_api_key?: string;
+  log_panel_url?: string;
+  local_mode?: boolean;
 };
 
 export type GraphNode = {

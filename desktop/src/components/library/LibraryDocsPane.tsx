@@ -4,7 +4,7 @@ import * as cloudApi from "@/lib/cloud-api";
 import { onWsEvent } from "@/lib/electron";
 import { cn } from "@/lib/cn";
 import type { ChannelId } from "@/lib/types";
-import { Database, Sparkles, Layers as LayersIcon, Network as NetworkIcon } from "lucide-react";
+import { Database, Sparkles, Network as NetworkIcon } from "lucide-react";
 import { useBulkRuns, type BulkRuns } from "./useBulkRuns";
 import { BulkActionBar } from "./BulkActionBar";
 import { WorkspacePanel } from "./WorkspacePanel";
@@ -387,7 +387,7 @@ export function LibraryDocsPane({ onOpenSource }: Props) {
         {/* Import — pick one or more .md / .txt files and upload as
             wiki_topic documents. Chapter splitter applies tag-meta
             on ingest so they're query-ready immediately. */}
-        <div style={{ padding: "6px 10px", borderBottom: "1px solid var(--color-border)" }}>
+        <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--color-border)" }}>
           <input
             ref={fileRef}
             type="file"
@@ -410,13 +410,13 @@ export function LibraryDocsPane({ onOpenSource }: Props) {
         </div>
         <div className="proto-library-tree-scroll">
           {docs === null && (
-            <div style={{ padding: 12, fontSize: 11, color: "var(--color-text-muted)" }}>
-              loading…
-            </div>
+            <div className="proto-library-tree-status">Loading documents…</div>
           )}
           {docs !== null && filtered.length === 0 && (
-            <div style={{ padding: 12, fontSize: 11, color: "var(--color-text-muted)" }}>
-              No documents yet. Ingest a note or sync a wiki folder.
+            <div className="proto-library-tree-status">
+              {filter.trim()
+                ? "No documents match this filter."
+                : "No documents yet. Import a file or sync a wiki folder."}
             </div>
           )}
           {grouped.map(([groupName, items]) => {
@@ -467,7 +467,7 @@ export function LibraryDocsPane({ onOpenSource }: Props) {
                   onClick={onSelectAllGroup}
                   data-active={allSelected ? "true" : undefined}
                 >
-                  {allSelected ? "Selected all" : `Select all (${items.length})`}
+                  {allSelected ? "All selected" : `Select all (${items.length})`}
                 </button>
                 <button
                   type="button"
@@ -487,57 +487,64 @@ export function LibraryDocsPane({ onOpenSource }: Props) {
                   : ageMs < 3_600_000 ? `${Math.round(ageMs / 60_000)}m`
                   : ageMs < 86_400_000 ? `${Math.round(ageMs / 3_600_000)}h`
                   : `${Math.round(ageMs / 86_400_000)}d`;
+                /* Row is a div with two nested controls — a checkbox
+                 * button for bulk-select and a select button for the
+                 * row body. Previously the whole row was a <button>
+                 * with another role="checkbox" inside, which is
+                 * invalid nested-interactive HTML and confused screen
+                 * readers (double tab-stop, ambiguous activation). */
                 return (
-                  <button
-                    type="button"
+                  <div
                     key={d.id}
-                    className="proto-library-tree-item"
-                    aria-current={d.id === (active?.id ?? "")}
-                    onClick={() => setActiveId(d.id)}
+                    className={cn(
+                      "proto-library-tree-item",
+                      d.id === (active?.id ?? "") && "is-current",
+                      isChecked && "is-checked",
+                    )}
                   >
-                    <span
+                    <button
+                      type="button"
                       className="proto-library-tree-item-check"
                       role="checkbox"
                       aria-checked={isChecked}
-                      tabIndex={0}
                       onClick={(e) => toggleSelect(d.id, e)}
-                      onKeyDown={(e) => {
-                        if (e.key === " " || e.key === "Enter") {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          toggleSelect(d.id, e as unknown as React.MouseEvent);
-                        }
-                      }}
                       title={isChecked ? "Uncheck for bulk actions" : "Check for bulk Embed / Enrich"}
-                      style={{ color: isChecked ? "var(--color-accent)" : "var(--color-text-muted)", cursor: "pointer" }}
+                      aria-label={isChecked ? `Deselect ${d.name}` : `Select ${d.name} for bulk actions`}
                     >
                       {isChecked
                         ? <CheckSquare size={12} strokeWidth={2} />
                         : <Square size={12} strokeWidth={1.6} />}
-                    </span>
-                    <span className="proto-library-tree-item-name">{d.name}</span>
-                    <span className="proto-library-tree-item-meta">
-                      <span>{Math.round(d.byte_size / 1024)}k</span>
-                      {ageStr && <span>{ageStr}</span>}
-                    </span>
-                    <span
-                      className="proto-library-tree-item-bits"
-                      title={`Stages: ${bits.map((b) => b || "·").join("")}  ·  ${bitsLabel.text}`}
+                    </button>
+                    <button
+                      type="button"
+                      className="proto-library-tree-item-select"
+                      aria-current={d.id === (active?.id ?? "")}
+                      onClick={() => setActiveId(d.id)}
                     >
-                      <span className="proto-library-tree-item-bits-dots">
-                        {bits.map((b, i) => (
-                          <span key={i} className={b || undefined} />
-                        ))}
+                      <span className="proto-library-tree-item-name">{d.name}</span>
+                      <span className="proto-library-tree-item-meta">
+                        <span>{Math.round(d.byte_size / 1024)}k</span>
+                        {ageStr && <span>{ageStr}</span>}
                       </span>
-                      <span className={cn(
-                        "proto-library-tree-item-bits-label",
-                        bitsLabel.tone === "fail" && "fail",
-                        bitsLabel.tone === "run" && "run",
-                      )}>
-                        {bitsLabel.text}
+                      <span
+                        className="proto-library-tree-item-bits"
+                        title={`Stages: ${bits.map((b) => b || "·").join("")}  ·  ${bitsLabel.text}`}
+                      >
+                        <span className="proto-library-tree-item-bits-dots">
+                          {bits.map((b, i) => (
+                            <span key={i} className={b || undefined} />
+                          ))}
+                        </span>
+                        <span className={cn(
+                          "proto-library-tree-item-bits-label",
+                          bitsLabel.tone === "fail" && "fail",
+                          bitsLabel.tone === "run" && "run",
+                        )}>
+                          {bitsLabel.text}
+                        </span>
                       </span>
-                    </span>
-                  </button>
+                    </button>
+                  </div>
                 );
               })}
             </div>
@@ -625,7 +632,7 @@ export function LibraryDocsPane({ onOpenSource }: Props) {
                   title="Copy a stable @smartnote URI — paste into Claude / Cursor prompts to reference this exact document"
                 >
                   <Copy size={11} strokeWidth={2} />
-                  {copiedRef ? "Copied" : "Copy direct-ref"}
+                  {copiedRef ? "Copied" : "Copy reference"}
                 </button>
 
                 {/* Re-classify dropdown */}
@@ -664,9 +671,7 @@ export function LibraryDocsPane({ onOpenSource }: Props) {
             )}>
               {viewMode === "raw" ? (
                 rawContent === null ? (
-                  <div style={{ padding: 24, fontSize: 12, color: "var(--color-text-muted)" }}>
-                    loading content…
-                  </div>
+                  <div className="proto-library-content-empty">Loading content…</div>
                 ) : (
                   <RawView
                     content={rawContent}
@@ -702,12 +707,14 @@ export function LibraryDocsPane({ onOpenSource }: Props) {
           // default-select effect catches this on tree load).
           // Show workspace-scope controls so the user has somewhere
           // to act while picking a doc.
-          <div style={{ overflow: "auto", padding: "16px 18px", display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ overflow: "auto", padding: "16px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
             <div className="proto-library-empty" style={{ padding: 0, marginBottom: 4 }}>
               Select a document on the left to inspect its pipeline, or use the workspace controls below.
             </div>
             <WorkspacePanel
               onRebuildGraph={bulk.runGraph}
+              onRunStage={bulk.runStage}
+              docs={docs ?? []}
               graphBusy={bulk.busyKinds.has("graph")}
               onFlash={bulk.flashSet}
             />
@@ -1020,7 +1027,7 @@ function PipelineStatus({
           <div className="proto-doc-card-meta">
             {fmtDate(doc.created_at)}
             {doc.updated_at && ` · updated ${fmtDate(doc.updated_at)}`}
-            {knLoading && " · loading…"}
+            {knLoading && " · loading"}
           </div>
         </div>
 
@@ -1106,7 +1113,7 @@ function PipelineStatus({
                 detail={errorText(latestRRun?.error) || rDetail}
                 action={
                   <RunBtn
-                    icon={<LayersIcon size={12} />}
+                    icon={<Layers size={12} />}
                     label={rStale && summarizedChapters > 0
                       ? "Update abstract"
                       : (summarizedChapters > 0 ? "Rebuild abstract" : "Build abstract")}
@@ -2254,14 +2261,14 @@ function GraphTab({ doc, knData, onRunEnrich, onRunTopology }: {
       )}
 
       {/* SECTION 2 · Workspace knowledge graph (entity-level rollup) */}
-      <div className="proto-pipeline-graph-head" style={{ marginTop: 18 }}>
+      <div className="proto-pipeline-graph-head" style={{ marginTop: 16 }}>
         <div>
           <div className="proto-pipeline-graph-title">Workspace knowledge graph</div>
           <div className="proto-pipeline-graph-stats">
             {loading
-              ? "loading…"
+              ? "Loading…"
               : error
-                ? `error: ${error}`
+                ? `Error: ${error}`
                 : data
                   ? `${data.stats.total_entities.toLocaleString()} entities · ${data.stats.total_chunks.toLocaleString()} chunks · ${data.edges.length.toLocaleString()} edges (top 150)`
                   : "—"}
@@ -2365,7 +2372,7 @@ function GraphSections({ topNodes, topEdges, maxMentions }: {
  *      (rendered from tag_segments for notes/docs, wiki_chapters for wikis)
  */
 function ChunksTab({ knData, knLoading }: { knData: cloudApi.DocumentKn | null; knLoading: boolean }) {
-  if (knLoading) return <KnEmpty msg="loading…" />;
+  if (knLoading) return <KnEmpty msg="Loading…" />;
   if (!knData || knData.chunks.length === 0) {
     return <KnEmpty msg="Not yet embedded. Run Embedding from KP." />;
   }
@@ -2480,7 +2487,7 @@ function ChaptersTab({
   knLoading: boolean;
   onJumpToLine: (start: number, end: number) => void;
 }) {
-  if (knLoading) return <KnEmpty msg="loading…" />;
+  if (knLoading) return <KnEmpty msg="Loading…" />;
   if (!knData || knData.wiki_chapters.length === 0) {
     return <KnEmpty msg="No chapters yet. Run Embed from the Pipeline tab — Phase A splits the doc by H2 headings." />;
   }
@@ -2533,7 +2540,7 @@ function TagSegmentsTab({
   knLoading: boolean;
   onJumpToLine: (start: number, end: number) => void;
 }) {
-  if (knLoading) return <KnEmpty msg="loading…" />;
+  if (knLoading) return <KnEmpty msg="Loading…" />;
   if (!knData || knData.tag_segments.length === 0) {
     return <KnEmpty msg="No tag segments yet. Run Enrich from the Pipeline tab." />;
   }
@@ -2633,11 +2640,11 @@ function NoUserTagsEmpty({ onCreated }: { onCreated: () => void }) {
   return (
     <div className="proto-pipeline-empty-state">
       <h3>No custom tags yet</h3>
-      <p style={{ marginBottom: 14 }}>
+      <p style={{ marginBottom: 16 }}>
         Tag-classify needs at least one custom tag to know what to look for in your notes.
         Add one below to enable note_classify on this doc.
       </p>
-      <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
         <input
           type="text"
           className="proto-form-input"
@@ -2658,7 +2665,7 @@ function NoUserTagsEmpty({ onCreated }: { onCreated: () => void }) {
           {busy ? "…" : "Create tag"}
         </button>
       </div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 10 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 12 }}>
         <span style={{ fontSize: 11, color: "var(--color-text-muted)", marginRight: 4 }}>
           Quick start:
         </span>
@@ -2676,7 +2683,7 @@ function NoUserTagsEmpty({ onCreated }: { onCreated: () => void }) {
         ))}
       </div>
       {err && <div style={{ fontSize: 11, color: "var(--color-danger)" }}>{err}</div>}
-      <p style={{ fontSize: 11, color: "var(--color-text-muted)", marginTop: 14 }}>
+      <p style={{ fontSize: 11, color: "var(--color-text-muted)", marginTop: 16 }}>
         Tip: open the Workspace panel (deselect this doc on the left) to manage all tags — rename, recolor, reorder.
       </p>
     </div>
@@ -2883,40 +2890,9 @@ function TagSuggestionsTab({
   );
 }
 
-function EnrichHistoryTab({ knData, knLoading }: { knData: cloudApi.DocumentKn | null; knLoading: boolean }) {
-  if (knLoading) return <KnEmpty msg="loading…" />;
-  const rows = knData?.processing_runs ?? [];
-  if (!rows.length) {
-    return <KnEmpty msg="No processing runs yet." />;
-  }
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11 }}>
-      {rows.map((j) => {
-        const tokens = typeof j.result?.total_tokens === "number" ? j.result.total_tokens : 0;
-        return (
-        <div key={j.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 4, background: "var(--color-bg-soft)" }}>
-          <span className={cn("proto-tag", j.status === "done" && "proto-tag-accent")}>{j.status}</span>
-          <span style={{ color: "var(--color-text-muted)", fontFamily: "ui-monospace, SFMono-Regular, monospace" }}>{j.kind}</span>
-          <span style={{ color: "var(--color-text-muted)" }}>{j.executor || "—"}</span>
-          {tokens > 0 && (
-            <span style={{ color: "var(--color-text-muted)" }}>· {tokens.toLocaleString()} tok</span>
-          )}
-          <span style={{ marginLeft: "auto", color: "var(--color-text-muted)", fontSize: 10 }}>
-            {fmtDate(j.finished_at || j.started_at || j.created_at || "")}
-          </span>
-          {j.error && <span title={errorText(j.error)} style={{ color: "var(--color-danger)" }}>!</span>}
-        </div>
-      );})}
-    </div>
-  );
-}
-
+/* KnEmpty — shared empty/loading row for KN sub-tabs. */
 function KnEmpty({ msg }: { msg: string }) {
-  return (
-    <div style={{ padding: 24, fontSize: 12, color: "var(--color-text-muted)", textAlign: "center" }}>
-      {msg}
-    </div>
-  );
+  return <div className="proto-library-content-empty">{msg}</div>;
 }
 
 /* RawView — line-anchored markdown viewer.

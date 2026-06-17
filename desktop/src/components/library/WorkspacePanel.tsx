@@ -50,15 +50,18 @@ type Props = {
   /** Runs the workspace-wide entity graph rebuild. Wired to
    *  useBulkRuns so the run shows up in the shared ProcessingPanel. */
   onRebuildGraph: () => void;
+  onRunStage: (kind: cloudApi.ProcessingKind, ids: string[], opts?: { force?: boolean; autoTail?: boolean }) => Promise<void>;
+  docs: cloudApi.CloudDocument[];
   graphBusy: boolean;
   onFlash: (msg: string, tone?: "ok" | "err") => void;
 };
 
-export function WorkspacePanel({ onRebuildGraph, graphBusy, onFlash }: Props) {
+export function WorkspacePanel({ onRebuildGraph, onRunStage, docs, graphBusy, onFlash }: Props) {
   const [tags, setTags] = useState<cloudApi.CloudTag[] | null>(null);
   const [tagDraft, setTagDraft] = useState("");
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const [editingTagDesc, setEditingTagDesc] = useState("");
+  const [rebuildBusy, setRebuildBusy] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -111,8 +114,23 @@ export function WorkspacePanel({ onRebuildGraph, graphBusy, onFlash }: Props) {
     }
   }
 
-  function rebuildPath(key: string) {
-    onFlash(`${key} rebuild — backend endpoint coming Phase 4`);
+  async function rebuildPath(key: string) {
+    if (rebuildBusy) return;
+    setRebuildBusy(key);
+    try {
+      if (key === "vec") {
+        await onRunStage("chunk_embed", docs.map((d) => d.id), { force: true, autoTail: false });
+      } else if (key === "kw" || key === "tagmeta") {
+        const ids = docs
+          .filter((d) => (d.metadata?.smartnote_type ?? "note") !== "wiki_topic")
+          .map((d) => d.id);
+        await onRunStage("chunk_enrich", ids, { force: true });
+      }
+    } catch (e) {
+      onFlash(e instanceof Error ? e.message : String(e), "err");
+    } finally {
+      setRebuildBusy(null);
+    }
   }
 
   return (
@@ -179,10 +197,11 @@ export function WorkspacePanel({ onRebuildGraph, graphBusy, onFlash }: Props) {
                   <button
                     type="button"
                     onClick={() => rebuildPath(p.key)}
+                    disabled={rebuildBusy !== null}
                     className="proto-atelier-rag-path-btn"
                     title={p.rebuild.rationale}
                   >
-                    <RotateCw size={11} strokeWidth={2} /> {p.rebuild.label}
+                    <RotateCw size={11} strokeWidth={2} /> {rebuildBusy === p.key ? "Dispatching…" : p.rebuild.label}
                   </button>
                 ) : (
                   <span

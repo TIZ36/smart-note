@@ -120,25 +120,8 @@ export function SettingsPanel() {
             </Field>
           </Card>
 
-          {/* Embedding */}
-          <Card title="Embedding">
-            <Field label="Mode">
-              <select value={settings.embedding_mode} onChange={(e) => update("embedding_mode", e.target.value)} className="proto-form-input">
-                <option value="sn-cloud">sn-cloud — via your SmartNote Cloud</option>
-                <option value="local">local — Docker service at :8009</option>
-                <option value="mock">mock — hash-based, dev only</option>
-              </select>
-              <p className="proto-form-hint">
-                {settings.embedding_mode === "sn-cloud" && "Vectors computed by SmartNote Cloud. No local GPU needed."}
-                {settings.embedding_mode === "local" && "Offline-friendly. Run ./restart-docker.sh to start the container."}
-                {settings.embedding_mode === "mock" && "Keyword-only fallback. Not for real use."}
-                {!["sn-cloud", "local", "mock"].includes(settings.embedding_mode) && "Legacy mode — switch to sn-cloud."}
-              </p>
-            </Field>
-          </Card>
-
           {/* AI features */}
-          <Card title="AI" sub="Master switch for every LLM call. Embedding still works when off.">
+          <Card title="AI" sub="Master switch for every LLM call. Embeddings run via Cloud regardless.">
             <div className="proto-toggle-row">
               <div>
                 <div className="proto-toggle-label">Enable AI features</div>

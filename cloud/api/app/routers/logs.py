@@ -180,15 +180,11 @@ async def search(
         except ValueError:
             raise HTTPException(400, "invalid 'until'")
     if q:
-        # ILIKE on event/message/error — composite, but each is short
-        add("(event ILIKE ? OR message ILIKE ? OR error ILIKE ?)", f"%{q}%")
-        # The single ? above pulled one $N; we need two more for the same value
-        args.append(f"%{q}%")
-        args.append(f"%{q}%")
-        # Replace the single placeholder with three positional spans
-        where[-1] = (
-            f"(event ILIKE ${len(args)-2} OR "
-            f"message ILIKE ${len(args)-1} OR "
+        # ILIKE on event/message/error — composite, but each is short.
+        args.extend([f"%{q}%", f"%{q}%", f"%{q}%"])
+        where.append(
+            f"(event ILIKE ${len(args) - 2} OR "
+            f"message ILIKE ${len(args) - 1} OR "
             f"error ILIKE ${len(args)})"
         )
     if cursor is not None:
@@ -198,7 +194,7 @@ async def search(
         SELECT id, at, workspace_id, run_id, document_id, stage, event,
                status, message, error, schema_version, data
         FROM pipeline_events
-        WHERE {' AND '.join(where)}
+        WHERE {" AND ".join(where)}
         ORDER BY id DESC
         LIMIT {int(limit)}
     """
@@ -251,14 +247,54 @@ async def recent_runs(
         duration_ms = None
         if r["first_at"] and r["last_at"]:
             duration_ms = int((r["last_at"] - r["first_at"]).total_seconds() * 1000)
-        out.append({
-            "run_id": str(r["run_id"]),
-            "document_id": str(r["document_id"]) if r["document_id"] else None,
-            "stage": r["stage"],
-            "started_at": r["first_at"].astimezone(timezone.utc).isoformat() if r["first_at"] else None,
-            "finished_at": r["last_at"].astimezone(timezone.utc).isoformat() if r["last_at"] else None,
-            "duration_ms": duration_ms,
-            "event_count": int(r["event_count"]),
-            "status": r["terminal_status"] or "running",
-        })
+        out.append(
+            {
+                "run_id": str(r["run_id"]),
+                "document_id": str(r["document_id"]) if r["document_id"] else None,
+                "stage": r["stage"],
+                "started_at": r["first_at"].astimezone(timezone.utc).isoformat()
+                if r["first_at"]
+                else None,
+                "finished_at": r["last_at"].astimezone(timezone.utc).isoformat()
+                if r["last_at"]
+                else None,
+                "duration_ms": duration_ms,
+                "event_count": int(r["event_count"]),
+                "status": r["terminal_status"] or "running",
+            }
+        )
     return {"runs": out, "count": len(out)}
+
+
+@router.get("/stats")
+async def stats(
+    identity: Identity = Depends(require_any_scope("read:logs", "read:memories")),
+) -> dict[str, Any]:
+    """Workspace-scoped roll-up for the admin home dashboard."""
+    p = pool()
+    async with p.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT
+              COUNT(*) AS events_total,
+              COUNT(*) FILTER (WHERE at >= now() - interval '24 hours') AS events_24h,
+              COUNT(DISTINCT run_id) AS runs_total,
+              COUNT(DISTINCT run_id) FILTER (WHERE at >= now() - interval '24 hours') AS runs_24h,
+              COUNT(*) FILTER (WHERE status = 'failed' AND at >= now() - interval '24 hours') AS errors_24h,
+              COALESCE(SUM(((data->>'cost_usd')::float8))
+                       FILTER (WHERE at >= now() - interval '24 hours'
+                               AND data ? 'cost_usd'), 0) AS cost_24h_usd
+            FROM pipeline_events
+            WHERE workspace_id = $1
+            """,
+            UUID(identity.workspace_id),
+        )
+    return {
+        "events_total": int(row["events_total"] or 0),
+        "events_24h": int(row["events_24h"] or 0),
+        "runs_total": int(row["runs_total"] or 0),
+        "runs_24h": int(row["runs_24h"] or 0),
+        "errors_24h": int(row["errors_24h"] or 0),
+        "workspaces_24h": 1 if int(row["events_24h"] or 0) else 0,
+        "cost_24h_usd": float(row["cost_24h_usd"] or 0.0),
+    }

@@ -204,7 +204,7 @@ export function LibraryNotesPane({ onOpenSource }: Props) {
           {cloudOk && notes === null && <SkeletonRows rows={5} />}
           {cloudOk && notes !== null && filtered.length === 0 && (
             <div className="proto-library-empty">
-              No notes match.
+              {filter.trim() ? "No notes match this filter." : "No notes yet."}
             </div>
           )}
           {cloudOk && filtered.map((n) => (
@@ -229,7 +229,7 @@ export function LibraryNotesPane({ onOpenSource }: Props) {
       <div className="proto-library-main">
         {!active ? (
           <div className="proto-library-empty">
-            Pick a note on the left.
+            Pick a note on the left to inspect tags, source, and runs.
           </div>
         ) : (
           <>
@@ -238,14 +238,13 @@ export function LibraryNotesPane({ onOpenSource }: Props) {
               <div className="proto-library-doc-meta">
                 note · last edited {fmtAgo(active.updated_at || active.created_at || "")}
               </div>
-              <div style={{ flex: 1 }} />
               <button
                 type="button"
-                className="proto-library-action"
+                className="proto-library-action proto-library-doc-bar-action"
                 onClick={() => onOpenSource(`source:${active.id}` as ChannelId)}
                 title="Open in Note editor"
               >
-                Open in editor ↗
+                Open in editor
               </button>
             </div>
 
@@ -355,13 +354,13 @@ function NoteTagsView({
       <div className="proto-note-tag-row ai">
         <span className="proto-note-tag-label">
           <Sparkles size={11} /> AI suggests
-          {classifying && <Loader2 size={11} className="animate-spin" style={{ marginLeft: 6 }} />}
+          {classifying && <Loader2 size={11} className="animate-spin" style={{ marginLeft: 8 }} />}
         </span>
         {suggestions.length === 0 && !classifying && (
           <>
-            <span className="proto-note-tag-empty">No suggestions left.</span>
+            <span className="proto-note-tag-empty">No suggestions right now.</span>
             <button type="button" className="proto-stage-btn proto-stage-btn-ghost" onClick={onReclassify}>
-              Re-run classifier
+              Re-classify
             </button>
           </>
         )}
@@ -506,13 +505,13 @@ function NoteRunsBody({ documentId }: { documentId: string }) {
   if (!runs || !runs.length) {
     return (
       <div className="proto-library-empty">
-        No <code>note_classify</code> runs yet. Hit "Re-run classifier"
-        in the Tags tab to kick one off.
+        No <code>note_classify</code> runs yet. Use Re-classify in the
+        Tags tab to start one.
       </div>
     );
   }
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+    <div className="proto-note-runs-list">
       {runs.map((r) => <NoteRunRow key={r.id} run={r} />)}
     </div>
   );
@@ -525,16 +524,19 @@ function NoteRunRow({ run: r }: { run: cloudApi.RecentRun }) {
   const suggested = typeof result.suggested_count === "number" ? result.suggested_count : null;
   const dictSize = typeof result.dictionary_size === "number" ? result.dictionary_size : null;
   const dur = typeof result.duration_ms === "number" ? Math.round(result.duration_ms / 100) / 10 : null;
+  const errorText = typeof r.error === "string"
+    ? r.error
+    : r.error
+      ? JSON.stringify(r.error)
+      : "";
 
   return (
-    <div className={cn("proto-pipeline-row", `s-${r.status === "skipped_dedup" ? "skipped" : r.status}`)}>
+    <div className={cn("proto-pipeline-row", "proto-note-run-row", `s-${r.status === "skipped_dedup" ? "skipped" : r.status}`)}>
       <span className="proto-pipeline-row-stamp">N</span>
-      <div className="proto-pipeline-row-body" style={{ cursor: "default" }}>
-        <div className="proto-pipeline-row-name" style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
-          <span style={{ fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, monospace)", fontSize: 11 }}>
-            {r.id.slice(0, 8)}
-          </span>
-          <span style={{ fontSize: 11.5, color: "var(--color-text-secondary)" }}>{r.status}</span>
+      <div className="proto-pipeline-row-body">
+        <div className="proto-pipeline-row-name proto-note-run-row-head">
+          <span className="proto-note-run-row-id">{r.id.slice(0, 8)}</span>
+          <span className="proto-note-run-row-status">{r.status}</span>
         </div>
         <div className="proto-pipeline-row-detail">
           {fmtAgo(r.finished_at || r.started_at || r.created_at || "")}
@@ -543,8 +545,8 @@ function NoteRunRow({ run: r }: { run: cloudApi.RecentRun }) {
           {dur != null && ` · ${dur}s`}
           {cost != null && ` · $${cost.toFixed(4)}`}
           {model && ` · ${model}`}
-          {r.error && (
-            <span style={{ color: "var(--color-danger)", marginLeft: 8 }} title={r.error}>
+          {errorText && (
+            <span className="proto-note-run-row-error" title={errorText}>
               · failed
             </span>
           )}

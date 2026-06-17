@@ -34,15 +34,19 @@ services:
       retries: 10
 
   embed:
-    # Reuses the OSS embedding service unchanged. Override MODEL_NAME at
-    # build time if a different sentence-transformer is desired:
-    #   docker compose build --build-arg MODEL_NAME=BAAI/bge-m3 embed
+    # Reuses the OSS embedding service unchanged. The model is NOT
+    # baked into the image — it downloads on first run into the named
+    # `smartnote_embed_models` volume, which is shared with the LAN
+    # and prod compose projects so switching modes doesn't re-pull
+    # 80 MB / 2 GB.
     build:
       context: ../../local_embedding
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:
       MODEL_NAME: ${EMBED_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+    volumes:
+      - embed_models:/models
     ports:
       - "${EMBED_PORT:-8009}:8009"
     healthcheck:
@@ -82,3 +86,7 @@ services:
 
 volumes:
   pgdata:
+  embed_models:
+    # Stable host-wide name so dev / LAN / prod compose projects all
+    # share the same downloaded model cache.
+    name: smartnote_embed_models

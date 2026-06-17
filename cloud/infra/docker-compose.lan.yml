@@ -1,0 +1,92 @@
+# SmartNote Cloud — LAN / single-host stack
+#
+# Same set of services as docker-compose.prod.yml but without Caddy /
+# TLS. Ports are bound to 0.0.0.0 so any device on the same network
+# can reach the API + Console + MCP using the host's LAN IP.
+#
+# Use this from your laptop or a workstation. Production deployments
+# behind a real domain should still use docker-compose.prod.yml.
+#
+#   ./bootstrap.sh --local
+# or
+#   docker compose -f docker-compose.lan.yml --env-file .env up -d --build
+
+name: smartnote-cloud-lan
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     ${POSTGRES_USER:-smartnote}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smartnote}
+      POSTGRES_DB:       ${POSTGRES_DB:-smartnote}
+    ports:
+      - "${POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-smartnote}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  embed:
+    build:
+      context: ../../local_embedding
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      MODEL_NAME: ${EMBED_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+    volumes:
+      - embed_models:/models   # shared with dev + prod compose; see volumes block
+    ports:
+      - "${EMBED_PORT:-58009}:8009"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8009/health').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ..
+      dockerfile: api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      embed:
+        condition: service_started
+    environment:
+      DATABASE_URL:        postgresql+asyncpg://${POSTGRES_USER:-smartnote}:${POSTGRES_PASSWORD:-smartnote}@postgres:5432/${POSTGRES_DB:-smartnote}
+      EMBED_URL:           http://embed:8009
+      JWT_SECRET:          ${JWT_SECRET:-dev-only-change-me}
+      ALLOW_DEV_BOOTSTRAP: ${ALLOW_DEV_BOOTSTRAP:-true}
+    ports:
+      - "${API_PORT:-58000}:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  console:
+    build:
+      context: ../console
+      dockerfile: Dockerfile
+      # No NEXT_PUBLIC_CLOUD_URL build-arg — the login page falls
+      # back to `${window.protocol}//${window.hostname}:58000`, which
+      # gives the right answer whether the browser hit localhost:3000
+      # or http://10.x.x.x:3000 (LAN access).
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${CONSOLE_PORT:-3000}:3000"
+
+volumes:
+  pgdata:
+  embed_models:
+    name: smartnote_embed_models

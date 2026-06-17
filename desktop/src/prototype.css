@@ -943,6 +943,25 @@
   margin: 8px 0;
 }
 
+.proto-form-toggle-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  user-select: none;
+  line-height: 1.4;
+}
+.proto-form-toggle-label input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--color-accent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.proto-form-toggle-label:hover { color: var(--color-text-primary); }
+
 /* Buttons */
 .proto-btn {
   display: inline-flex;

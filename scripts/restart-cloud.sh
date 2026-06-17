@@ -34,13 +34,24 @@ if ! docker info >/dev/null 2>&1; then
   exit 1
 fi
 
+# Use the shared-infra Postgres (~/docker-shared) when its network is up;
+# otherwise fall back to the self-contained bundled postgres (OSS clones).
+DC=(docker compose)
+if docker network inspect shared-net >/dev/null 2>&1; then
+  echo "→ shared-net detected: using shared-postgres (docker-compose.shared.yml)"
+  DC=(docker compose -f docker-compose.yml -f docker-compose.shared.yml)
+fi
+
 if [ "$FULL" -eq 1 ]; then
-  echo "→ recreating full stack (postgres + embed + api)"
-  docker compose down
-  docker compose up -d --build
+  echo "→ recreating full stack (embed + api)"
+  "${DC[@]}" down
+  "${DC[@]}" up -d --build
 else
-  echo "→ rebuilding + restarting api only (postgres/embed stay up)"
-  docker compose up -d --build api
+  echo "→ rebuilding + restarting api only (embed left untouched)"
+  # --no-deps: don't pull embed into the up/build set just because api
+  # depends_on it. embed is already running; this avoids a needless embed
+  # build pass on every api restart.
+  "${DC[@]}" up -d --build --no-deps api
 fi
 
 PORT="${API_PORT:-58000}"
@@ -53,5 +64,5 @@ for i in $(seq 1 90); do
   sleep 1
 done
 echo "✗ api did not become healthy in 90s. Last 30 log lines:" >&2
-docker compose logs --tail 30 api >&2
+"${DC[@]}" logs --tail 30 api >&2
 exit 1

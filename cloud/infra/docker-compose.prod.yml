@@ -1,0 +1,119 @@
+# SmartNote Cloud — production stack
+#
+# One command on a fresh server (after DNS pointed + .env filled):
+#   docker compose -f docker-compose.prod.yml --env-file .env up -d --build
+#
+# Differences from the dev compose:
+#   - Postgres has NO host port; only the api container can reach it.
+#   - ALLOW_DEV_BOOTSTRAP defaults to "false".
+#   - JWT_SECRET is required (no dev fallback).
+#   - Console image is included.
+#   - Caddy fronts both api/ and console/ with automatic HTTPS via
+#     Let's Encrypt — requires the two *_DOMAIN env vars to resolve
+#     to this server's public IP, and ports 80/443 to be reachable.
+
+name: smartnote-cloud-prod
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB:       ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # NB: no `ports:` block — postgres is reachable only inside the
+    # compose network. If you need external psql access, tunnel via SSH
+    # rather than reopening the port.
+
+  embed:
+    build:
+      context: ../../local_embedding
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      MODEL_NAME: ${EMBED_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+    volumes:
+      - embed_models:/models   # persistent on-disk model cache; survives rebuilds
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8009/health').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ..
+      dockerfile: api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      embed:
+        condition: service_started
+    environment:
+      DATABASE_URL:               postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      EMBED_URL:                  http://embed:8009
+      JWT_SECRET:                 ${JWT_SECRET}
+      ALLOW_DEV_BOOTSTRAP:        ${ALLOW_DEV_BOOTSTRAP:-false}
+      SUPABASE_URL:               ${SUPABASE_URL:-}
+      SUPABASE_SERVICE_ROLE_KEY:  ${SUPABASE_SERVICE_ROLE_KEY:-}
+      SUPABASE_JWT_SECRET:        ${SUPABASE_JWT_SECRET:-}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  console:
+    build:
+      context: ../console
+      dockerfile: Dockerfile
+      args:
+        # Baked at build time — visible to the browser. This is what the
+        # console pre-fills in the login form's "Cloud URL" field.
+        NEXT_PUBLIC_CLOUD_URL: https://${API_DOMAIN}
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000 >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+      console:
+        condition: service_started
+    environment:
+      API_DOMAIN:     ${API_DOMAIN}
+      CONSOLE_DOMAIN: ${CONSOLE_DOMAIN}
+      ACME_EMAIL:     ${ACME_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"      # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
+  embed_models:
+    name: smartnote_embed_models

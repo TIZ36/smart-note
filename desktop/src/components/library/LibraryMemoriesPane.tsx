@@ -81,8 +81,8 @@ export function LibraryMemoriesPane() {
     type Bucket = { key: string; label: string; group: string; items: cloudApi.Proposal[] };
     const result: Bucket[] = [];
 
-    // Always show "All pending" at top
-    result.push({ key: "pending", label: "All pending", group: "Pending review", items: filtered });
+    // Always show "All proposals" at top
+    result.push({ key: "pending", label: "All proposals", group: "Proposals", items: filtered });
 
     if (groupMode === "source") {
       const bySource = new Map<string, cloudApi.Proposal[]>();
@@ -124,7 +124,7 @@ export function LibraryMemoriesPane() {
       : memories;
     type SBucket = { key: string; label: string; group: string; items: cloudApi.Memory[] };
     const result: SBucket[] = [];
-    result.push({ key: "pending", label: "All saved", group: "Saved memories", items: filtered });
+    result.push({ key: "pending", label: "All memories", group: "Saved", items: filtered });
     if (groupMode === "source") {
       const m = new Map<string, cloudApi.Memory[]>();
       for (const x of filtered) {
@@ -191,13 +191,13 @@ export function LibraryMemoriesPane() {
               Saved (committed memories table). MCP add_memory /
               set_preference land in Saved, propose_memory lands
               in Pending. */}
-          <div className="proto-library-tree-view-switch" role="tablist" aria-label="Memory view">
+          <div className="proto-library-tree-view-switch" role="group" aria-label="Memory view">
             <button
               type="button"
               aria-pressed={view === "pending"}
               onClick={() => { setView("pending"); setActive("pending"); }}
             >
-              Pending
+              Proposals
               <span className="proto-library-tree-view-switch-count">
                 {proposals?.length ?? 0}
               </span>
@@ -219,11 +219,11 @@ export function LibraryMemoriesPane() {
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
           />
-          <span className="proto-library-tree-mode" role="tablist" aria-label="Group mode">
+          <div className="proto-library-tree-mode" role="group" aria-label="Group mode">
             <button
               type="button"
               aria-pressed={groupMode === "source"}
-              title="By source agent"
+              title="Group by source agent"
               onClick={() => setGroupMode("source")}
             >
               Source
@@ -231,31 +231,27 @@ export function LibraryMemoriesPane() {
             <button
               type="button"
               aria-pressed={groupMode === "kind"}
-              title="By kind"
+              title="Group by kind"
               onClick={() => setGroupMode("kind")}
             >
               Kind
             </button>
-          </span>
+          </div>
         </div>
         <div className="proto-library-tree-scroll">
           {view === "pending" && proposals === null && (
-            <div style={{ padding: 12, fontSize: 11, color: "var(--color-text-muted)" }}>
-              loading…
-            </div>
+            <div className="proto-library-tree-status">Loading proposals…</div>
           )}
           {view === "pending" && proposals !== null && proposals.length === 0 && (
-            <div style={{ padding: 12, fontSize: 11, color: "var(--color-text-muted)" }}>
-              No pending memories. Cursor and Claude Code will surface drafts here as they work.
+            <div className="proto-library-tree-status">
+              No proposals yet. Cursor and Claude Code surface drafts here as they work.
             </div>
           )}
           {view === "saved" && memories === null && (
-            <div style={{ padding: 12, fontSize: 11, color: "var(--color-text-muted)" }}>
-              loading…
-            </div>
+            <div className="proto-library-tree-status">Loading memories…</div>
           )}
           {view === "saved" && memories !== null && memories.length === 0 && (
-            <div style={{ padding: 12, fontSize: 11, color: "var(--color-text-muted)" }}>
+            <div className="proto-library-tree-status">
               No saved memories yet. Use MCP <code>add_memory</code> or <code>set_preference</code>.
             </div>
           )}
@@ -334,17 +330,15 @@ export function LibraryMemoriesPane() {
                 {activeBucket?.items.length ?? 0} item
                 {(activeBucket?.items.length ?? 0) === 1 ? "" : "s"}
               </div>
-              <div className="proto-library-content-actions">
-                <button type="button" className="proto-library-btn" title="Run today's digest">
-                  Run digest now
-                </button>
-                <button type="button" className="proto-library-btn">Accept all</button>
-              </div>
+              {/* Bulk affordances (Run digest / Accept all) intentionally
+                  deferred until the backend exposes batch endpoints — a
+                  disabled-looking enabled button is the worst state. */}
+              <div className="proto-library-content-actions" />
             </div>
             <div className="proto-library-content-scroll">
               {!activeBucket || activeBucket.items.length === 0 ? (
-                <div style={{ fontSize: 12, color: "var(--color-text-muted)", padding: 24 }}>
-                  No memories in this bucket yet.
+                <div className="proto-library-content-empty">
+                  Nothing here yet.
                 </div>
               ) : (
                 <div className="proto-library-card-list">
@@ -377,7 +371,6 @@ export function LibraryMemoriesPane() {
                         >
                           Accept
                         </button>
-                        <button type="button" className="proto-row-action">Edit</button>
                         <button
                           type="button"
                           className="proto-row-action"
@@ -406,19 +399,19 @@ export function LibraryMemoriesPane() {
             </div>
             <div className="proto-library-content-scroll">
               {!activeSavedBucket || activeSavedBucket.items.length === 0 ? (
-                <div style={{ fontSize: 12, color: "var(--color-text-muted)", padding: 24 }}>
-                  No memories in this bucket yet.
+                <div className="proto-library-content-empty">
+                  Nothing here yet.
                 </div>
               ) : (
                 <div className="proto-library-card-list">
                   {activeSavedBucket.items.map((m) => (
                     <div key={m.id} className="proto-memory-card">
                       <div className="proto-memory-quote">
-                        {m.pinned && <span className="proto-memory-pin" title="Pinned">★</span>}
+                        {m.pinned && <span className="proto-memory-pin" aria-label="Pinned" title="Pinned">★</span>}
                         {m.content}
                       </div>
                       <div className="proto-memory-source">
-                        <span className="proto-memory-source-agent">{m.author_agent || "unknown"}</span>
+                        <span className="proto-memory-source-agent">{m.author_agent || "Unknown agent"}</span>
                         <span>·</span>
                         <span>{m.kind}</span>
                         {m.scope && m.scope !== "global" && (

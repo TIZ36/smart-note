@@ -286,14 +286,13 @@ export function CloudModal({ open, onClose }: Props) {
     } catch { /* silent */ }
   }
 
-  // Action stubs — Phase 4 wires real endpoints (digest router, etc.)
   async function runAction(id: string) {
     flashAction(id, "running");
     try {
-      // Most actions are stubs until backend lands. Trigger-enrich
-      // could re-dispatch a known job, but for Phase 2 we just blink.
-      await new Promise((r) => setTimeout(r, 400));
-      flashAction(id, "ok");
+      if (id === "digest") {
+        throw new Error("Today's digest endpoint is not available yet.");
+      }
+      throw new Error(`Unknown action: ${id}`);
     } catch {
       flashAction(id, "err");
     }
@@ -386,15 +385,15 @@ export function CloudModal({ open, onClose }: Props) {
                     onChange={(e) => setConnDraft({ ...connDraft, cloud_sync_api_key: e.target.value })}
                   />
                 </CloudField>
-                <label className="proto-form-toggle-label" style={{ marginTop: 4 }}>
+                <label className="proto-form-toggle-label" style={{ fontSize: 12, marginTop: 4 }}>
                   <input
                     type="checkbox"
                     checked={connDraft.cloud_sync_enabled}
                     onChange={(e) => setConnDraft({ ...connDraft, cloud_sync_enabled: e.target.checked })}
                   />
-                  <span style={{ fontSize: 12 }}>Sync notes / wiki / tables on save</span>
+                  <span>Sync notes / wiki / tables on save</span>
                 </label>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6 }}>
+                <div className="proto-modal-actions-row">
                   <button
                     type="button"
                     className="proto-btn proto-btn-primary"
@@ -404,8 +403,8 @@ export function CloudModal({ open, onClose }: Props) {
                     {connSaving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
                     {connSaving ? "Saving…" : "Save connection"}
                   </button>
-                  {connFlash === "ok" && <span style={{ fontSize: 11, color: "var(--color-success)" }}>✓ saved</span>}
-                  {connFlash === "err" && <span style={{ fontSize: 11, color: "var(--color-danger)" }}>save failed</span>}
+                  {connFlash === "ok"  && <span className="proto-modal-flash proto-modal-flash-ok">✓ saved</span>}
+                  {connFlash === "err" && <span className="proto-modal-flash proto-modal-flash-err">save failed</span>}
                 </div>
               </>
             )}
@@ -447,9 +446,7 @@ export function CloudModal({ open, onClose }: Props) {
                       ))}
                       {agents.length > 0 && (
                         <>
-                          {physical.length > 0 && (
-                            <div style={{ height: 1, background: "var(--color-border)", margin: "6px 0" }} />
-                          )}
+                          {physical.length > 0 && <div className="proto-modal-divider" />}
                           {agents.slice(0, 6).map((d) => (
                             <DeviceRow key={d.id} d={d} kind="agent" />
                           ))}
@@ -469,8 +466,8 @@ export function CloudModal({ open, onClose }: Props) {
             <div className="proto-modal-actions-stack">
               <ActionButton
                 icon={<Calendar size={14} />}
-                title="Run today's digest"
-                help="Synthesize today's stream into candidate memories · auto-runs nightly."
+                title="Today's digest unavailable"
+                help="Backend digest endpoint is not implemented yet."
                 state={actionState["digest"] || "idle"}
                 onClick={() => runAction("digest")}
               />
@@ -485,9 +482,7 @@ export function CloudModal({ open, onClose }: Props) {
             <div className="proto-modal-section-title">
               Cloud AI provider · enrich + wiki abstract
               {provider?.has_api_key && (
-                <span style={{ fontSize: 10, color: "var(--color-success)", marginLeft: 8, textTransform: "none", letterSpacing: 0 }}>
-                  ✓ key set
-                </span>
+                <span className="proto-modal-badge proto-modal-badge-ok">✓ key set</span>
               )}
             </div>
             {providerDraft && (
@@ -522,7 +517,7 @@ export function CloudModal({ open, onClose }: Props) {
                     onChange={(e) => setProviderDraft({ ...providerDraft, model: e.target.value })}
                   />
                 </CloudField>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div className="proto-modal-field-row">
                   <CloudField label="Max concurrency">
                     <input
                       type="number"
@@ -533,16 +528,16 @@ export function CloudModal({ open, onClose }: Props) {
                       onChange={(e) => setProviderDraft({ ...providerDraft, max_concurrency: Math.max(1, Math.min(16, Number(e.target.value) || 1)) })}
                     />
                   </CloudField>
-                  <label className="proto-form-toggle-label" style={{ alignSelf: "end", paddingBottom: 8 }}>
+                  <label className="proto-form-toggle-label" style={{ fontSize: 12, paddingBottom: 8 }}>
                     <input
                       type="checkbox"
                       checked={providerDraft.auto_enrich_on_ingest}
                       onChange={(e) => setProviderDraft({ ...providerDraft, auto_enrich_on_ingest: e.target.checked })}
                     />
-                    <span style={{ fontSize: 12 }}>Auto-enrich on save</span>
+                    <span>Auto-enrich on save</span>
                   </label>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6 }}>
+                <div className="proto-modal-actions-row">
                   <button
                     type="button"
                     className="proto-btn proto-btn-primary"
@@ -552,8 +547,8 @@ export function CloudModal({ open, onClose }: Props) {
                     {providerSaving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
                     {providerSaving ? "Saving…" : "Save provider"}
                   </button>
-                  {providerFlash === "ok" && <span style={{ fontSize: 11, color: "var(--color-success)" }}>✓ saved</span>}
-                  {providerFlash === "err" && <span style={{ fontSize: 11, color: "var(--color-danger)" }}>save failed (cloud unreachable?)</span>}
+                  {providerFlash === "ok"  && <span className="proto-modal-flash proto-modal-flash-ok">✓ saved</span>}
+                  {providerFlash === "err" && <span className="proto-modal-flash proto-modal-flash-err">save failed (cloud unreachable?)</span>}
                 </div>
                 <div className="proto-form-hint" style={{ marginTop: 4 }}>
                   Off by default. Each enrich / wiki-abstract run consumes LLM
@@ -579,7 +574,7 @@ export function CloudModal({ open, onClose }: Props) {
               <>
                 {/* URL + masked API key with individual copy buttons */}
                 <div className="proto-modal-mcp">
-                  <span style={{ fontSize: 10, color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginRight: 6 }}>URL</span>
+                  <span className="proto-modal-kv-label">URL</span>
                   <span className="proto-modal-mcp-text">{mcpUrl}</span>
                   <button
                     type="button"
@@ -590,7 +585,7 @@ export function CloudModal({ open, onClose }: Props) {
                   </button>
                 </div>
                 <div className="proto-modal-mcp" style={{ marginTop: 6 }}>
-                  <span style={{ fontSize: 10, color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginRight: 6 }}>KEY</span>
+                  <span className="proto-modal-kv-label">KEY</span>
                   <span className="proto-modal-mcp-text">{maskKey(apiKey)}</span>
                   <button
                     type="button"
@@ -663,11 +658,7 @@ function DeviceRow({ d, kind }: { d: cloudApi.Device; kind: "device" | "agent" }
       <span className="proto-modal-row-name">
         {d.name || d.id.slice(0, 8)}
         {d.is_primary && " · primary"}
-        {kind === "agent" && (
-          <span style={{ fontSize: 9.5, color: "var(--color-text-muted)", marginLeft: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>
-            agent
-          </span>
-        )}
+        {kind === "agent" && <span className="proto-modal-badge-tag">agent</span>}
       </span>
       <span className="proto-modal-row-meta">
         {d.last_seen_at ? `last seen ${relTime(d.last_seen_at)}` : "—"}

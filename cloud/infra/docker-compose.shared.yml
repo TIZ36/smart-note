@@ -1,0 +1,38 @@
+# SmartNote Cloud — local dev against the SHARED infra Postgres.
+#
+# Use this overlay when Postgres lives in the host-wide shared stack
+# (`~/docker-shared`, container `shared-postgres`) instead of this
+# project's own bundled `postgres` service. The shared `smartnote`
+# database already holds the migrated data (user/pass smartnote/smartnote).
+# See ~/docker-shared/README.md.
+#
+# Bring up (only embed + api start; postgres comes from shared-infra):
+#   docker compose -f docker-compose.yml -f docker-compose.shared.yml up -d
+#
+# The base docker-compose.yml is left untouched, so a fresh OSS clone
+# can still run the fully self-contained stack with a plain
+# `docker compose up`.
+
+services:
+  # Disable this project's bundled Postgres — we point at shared-postgres.
+  # Parking it under an unused profile keeps it out of the default up set.
+  postgres:
+    profiles: ["bundled-pg"]
+
+  api:
+    # Replace (not merge) depends_on so the api no longer waits on — and
+    # no longer auto-pulls in — the now-disabled bundled postgres.
+    depends_on: !override
+      embed:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-smartnote}:${POSTGRES_PASSWORD:-smartnote}@shared-postgres:5432/${POSTGRES_DB:-smartnote}
+    # Stay on the project's default network (to reach `embed`) and also
+    # join the external shared-net (to reach `shared-postgres`).
+    networks:
+      - default
+      - shared-net
+
+networks:
+  shared-net:
+    external: true

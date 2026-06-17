@@ -1,61 +1,26 @@
-"""Documents + simple synchronous ingest.
-
-MVP ingest = chunk document by paragraph, embed each chunk, store each as
-a `document_ref` memory linking back to the document. Keeps the shape of
-the full pipeline (document → chunks → retrievable memories) without
-bringing over the OSS repo's pack/enrich machinery yet. v1.1 adds
-async jobs + richer chunking.
-"""
+"""Documents + simple synchronous ingest."""
 
 from __future__ import annotations
 
 import json as _json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app import usage
+from app.contexts.storage.events import (
+    DocumentContentChanged,
+    DocumentCreated,
+    DocumentDeleted,
+)
 from app.db import pool
 from app.deps import Identity, require_scope
 from app.embeddings import embed_texts, format_vector_literal
-
-
-# Ingest the document in the background. Failures don't bubble up — the
-# caller already has the saved document; auto-ingest is best-effort.
-# Notes + wiki_topic get chunks; smart_table / skill are JSON-shaped
-# and don't make sense to chunk.
-_AUTO_INGEST_KINDS = {"note", "wiki_topic"}
-
-
-def _schedule_auto_ingest(
-    bg: BackgroundTasks,
-    workspace_id: str,
-    doc_id: str,
-    metadata: dict | None,
-) -> None:
-    md = metadata or {}
-    snt = md.get("smartnote_type") if isinstance(md, dict) else None
-    if snt not in _AUTO_INGEST_KINDS:
-        return
-    from app.services.ingest.pipeline import ingest_document as _ingest
-
-    async def _runner():
-        try:
-            await _ingest(workspace_id, doc_id)
-        except Exception:
-            import logging
-
-            logging.getLogger(__name__).warning(
-                "auto-ingest failed for %s/%s",
-                workspace_id,
-                doc_id,
-                exc_info=True,
-            )
-
-    bg.add_task(_runner)
+from app.infra import events
+from app.services.realtime_protocol import broadcast, event_payload
 
 
 router = APIRouter(prefix="/v1/documents", tags=["documents"])
@@ -118,6 +83,36 @@ def _json_value(value, default=None):
     return value
 
 
+def _domains_from_metadata(md) -> list[str]:
+    """Knowledge-domain tags a document is filed under.
+
+    Stored in metadata.domains (list, preferred) or metadata.domain (single).
+    These tags get stamped onto the document's chunks so a domain-scoped
+    retrieve (`/v1/retrieve` with tags=[domain]) reaches the book/note content.
+    """
+    if isinstance(md, str):
+        try:
+            md = _json.loads(md)
+        except Exception:
+            md = {}
+    md = md or {}
+    raw = md.get("domains")
+    if isinstance(raw, list):
+        return [str(t).strip() for t in raw if str(t).strip()]
+    if md.get("domain"):
+        return [str(md["domain"]).strip()]
+    return []
+
+
+def _content_stamp(identity: Identity) -> dict:
+    return {
+        "cloud_content_updated_at_ms": int(
+            datetime.now(timezone.utc).timestamp() * 1000
+        ),
+        "cloud_content_updated_by": identity.agent_id or identity.api_key_id or "api",
+    }
+
+
 @router.post(
     "",
     response_model=DocumentOut,
@@ -125,10 +120,10 @@ def _json_value(value, default=None):
 )
 async def create_document(
     req: DocumentCreate,
-    background_tasks: BackgroundTasks,
     identity: Identity = Depends(require_scope("documents:write")),
 ) -> DocumentOut:
     byte_size = len(req.content.encode("utf-8"))
+    metadata = {**(_json_value(req.metadata, {}) or {}), **_content_stamp(identity)}
     async with pool().acquire() as conn:
         row = await conn.fetchrow(
             "INSERT INTO documents(workspace_id, name, kind, content, "
@@ -140,16 +135,15 @@ async def create_document(
             req.name,
             req.kind,
             req.content,
-            req.metadata or {},
+            metadata,
             byte_size,
         )
-    # Auto-ingest after the doc lands so a sync push from device A
-    # makes the chunks immediately available to device B's search.
-    _schedule_auto_ingest(
-        background_tasks,
-        identity.workspace_id,
-        str(row["id"]),
-        req.metadata,
+    await events.publish(
+        DocumentCreated(
+            workspace_id=identity.workspace_id,
+            document_id=str(row["id"]),
+            smartnote_type=metadata.get("smartnote_type"),
+        )
     )
     await usage.bump(identity.workspace_id, document_delta=1)
     return _row_to_out(row)
@@ -171,7 +165,7 @@ async def ingest_document(
     """
     async with pool().acquire() as conn:
         doc = await conn.fetchrow(
-            "SELECT id, name, content, workspace_id FROM documents "
+            "SELECT id, name, content, workspace_id, metadata FROM documents "
             "WHERE id = $1 AND workspace_id = $2",
             UUID(document_id),
             UUID(identity.workspace_id),
@@ -183,6 +177,10 @@ async def ingest_document(
     if not chunks:
         return {"ok": True, "chunks": 0}
 
+    # Chunks inherit the document's knowledge-domain tags so a domain-scoped
+    # retrieve reaches this content, not just hand-written memories.
+    domain_tags = _domains_from_metadata(doc["metadata"])
+
     vectors = await embed_texts(chunks)
 
     async with pool().acquire() as conn:
@@ -193,9 +191,9 @@ async def ingest_document(
                     """
                     INSERT INTO memories(
                       workspace_id, author_agent, kind, scope, content,
-                      structured, embedding, source_refs
+                      structured, embedding, source_refs, tags
                     ) VALUES (
-                      $1, $2, 'document_ref', 'global', $3, $4, $5::vector, $6
+                      $1, $2, 'document_ref', 'global', $3, $4, $5::vector, $6, $7
                     )
                     """,
                     UUID(identity.workspace_id),
@@ -204,6 +202,7 @@ async def ingest_document(
                     {"document_id": str(doc["id"]), "document_name": doc["name"]},
                     vec_literal,
                     [{"document_id": str(doc["id"])}],
+                    domain_tags,
                 )
             await conn.execute(
                 "UPDATE documents SET ingested_at = now() WHERE id = $1",
@@ -259,7 +258,6 @@ async def list_documents(
 async def patch_document(
     document_id: str,
     req: DocumentPatch,
-    background_tasks: BackgroundTasks,
     identity: Identity = Depends(require_scope("documents:write")),
 ) -> DocumentOut:
     updates = req.model_dump(exclude_unset=True)
@@ -274,10 +272,16 @@ async def patch_document(
         args.append(updates["kind"])
         sets.append(f"kind = ${len(args)}")
     if "metadata" in updates:
-        args.append(updates["metadata"] or {})
+        metadata_patch = updates["metadata"] or {}
+        if "content" in updates and updates["content"] is not None:
+            metadata_patch = {**metadata_patch, **_content_stamp(identity)}
+        args.append(metadata_patch)
         sets.append(f"metadata = ${len(args)}")
     if "content" in updates and updates["content"] is not None:
         content = updates["content"]
+        if "metadata" not in updates:
+            args.append(_content_stamp(identity))
+            sets.append(f"metadata = metadata || ${len(args)}::jsonb")
         args.append(content)
         sets.append(f"content = ${len(args)}")
         args.append(len(content.encode("utf-8")))
@@ -304,12 +308,51 @@ async def patch_document(
     # Re-ingest only when the actual text changed; pure metadata
     # patches (renames, scope tweaks) don't need it.
     if "content" in updates and updates["content"] is not None:
-        _schedule_auto_ingest(
-            background_tasks,
-            identity.workspace_id,
-            str(row["id"]),
-            row.get("metadata"),
+        metadata = _json_value(row["metadata"], {}) or {}
+        await events.publish(
+            DocumentContentChanged(
+                workspace_id=identity.workspace_id,
+                document_id=str(row["id"]),
+                smartnote_type=metadata.get("smartnote_type"),
+            )
         )
+        broadcast(
+            identity.workspace_id,
+            event_payload(
+                event="document_content_changed",
+                workspace_id=identity.workspace_id,
+                document_id=str(row["id"]),
+                status="done",
+                message="Document content changed in cloud",
+                data={
+                    "name": row["name"],
+                    "metadata": metadata,
+                    "updated_at": row["updated_at"].isoformat()
+                    if row["updated_at"]
+                    else None,
+                    "cloud_content_updated_at_ms": metadata.get(
+                        "cloud_content_updated_at_ms"
+                    ),
+                },
+            ),
+        )
+
+    # Knowledge domains can be (re)assigned on an existing document by patching
+    # metadata.domains. Re-tag its already-ingested chunks in place so the new
+    # domain takes effect for `@域` retrieval immediately — no re-embed needed.
+    # (No-op for documents that were never ingested: they have no chunks yet.)
+    if "metadata" in updates:
+        new_domains = _domains_from_metadata(row["metadata"])
+        async with pool().acquire() as conn:
+            await conn.execute(
+                "UPDATE memories SET tags = $1, updated_at = now() "
+                "WHERE workspace_id = $2 AND kind = 'document_ref' "
+                "AND structured->>'document_id' = $3",
+                new_domains,
+                UUID(identity.workspace_id),
+                str(row["id"]),
+            )
+
     return _row_to_out(row)
 
 
@@ -338,6 +381,9 @@ async def delete_document(
             )
     if not result.endswith(" 1"):
         raise HTTPException(404, "document not found")
+    await events.publish(
+        DocumentDeleted(workspace_id=identity.workspace_id, document_id=document_id)
+    )
     return {"deleted": True, "id": document_id}
 
 

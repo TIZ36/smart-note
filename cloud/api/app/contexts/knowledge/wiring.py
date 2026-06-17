@@ -12,7 +12,9 @@ import logging
 
 from app.contexts.knowledge import service
 from app.contexts.storage.events import (
-    DocumentContentChanged, DocumentCreated, DocumentDeleted,
+    DocumentContentChanged,
+    DocumentCreated,
+    DocumentDeleted,
 )
 from app.infra import events
 from app.services import processing_runs
@@ -25,7 +27,9 @@ log = logging.getLogger(__name__)
 _AUTO_INGEST_KINDS = {"note", "wiki_topic"}
 
 
-async def _auto_ingest(workspace_id: str, document_id: str, smartnote_type: str | None) -> None:
+async def _auto_ingest(
+    workspace_id: str, document_id: str, smartnote_type: str | None
+) -> None:
     """Auto-ingest a freshly created / content-changed document through
     the normal processing_runs lifecycle (not a bare
     service.ingest_document_for_kind call). Same execution under the
@@ -48,6 +52,10 @@ async def _auto_ingest(workspace_id: str, document_id: str, smartnote_type: str 
     embed run."""
     if smartnote_type not in _AUTO_INGEST_KINDS:
         return
+    await _start_auto_ingest(workspace_id, document_id)
+
+
+async def _start_auto_ingest(workspace_id: str, document_id: str) -> None:
     try:
         started = await processing_runs.start(
             workspace_id=workspace_id,
@@ -61,11 +69,13 @@ async def _auto_ingest(workspace_id: str, document_id: str, smartnote_type: str 
         # raced a delete. Silently drop.
         return
     except ValueError as exc:
-        log.warning("auto_ingest start failed for %s/%s: %s",
-                    workspace_id, document_id, exc)
+        log.warning(
+            "auto_ingest start failed for %s/%s: %s", workspace_id, document_id, exc
+        )
         return
     if started["dedup_skipped"] or started["status"] in processing_runs.TERMINAL:
         return
+
     # Fire-and-forget — execute() emits its own progress events and
     # writes the terminal row. The event-bus task should return fast
     # so other subscribers run promptly.
@@ -74,7 +84,46 @@ async def _auto_ingest(workspace_id: str, document_id: str, smartnote_type: str 
             await processing_runs.execute(started["run_id"])
         except Exception:
             log.exception("auto_ingest execute failed: %s", started["run_id"])
+
     asyncio.create_task(_bg())
+
+
+async def reconcile_missing_ingest(limit: int = 100) -> int:
+    """Queue chunk_embed for chunkable docs that missed event delivery.
+
+    The in-process event bus is intentionally non-durable. This sweep is
+    the lightweight fallback: if a note/wiki document has no chunks and no
+    active processing run, enqueue the same deduped auto-ingest path the
+    event subscriber uses.
+    """
+    from app.common.db import pool
+
+    async with pool().acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT d.workspace_id, d.id
+            FROM documents d
+            WHERE d.metadata->>'smartnote_type' = ANY($1::text[])
+              AND NOT EXISTS (
+                SELECT 1 FROM chunks c
+                WHERE c.workspace_id = d.workspace_id AND c.document_id = d.id
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM processing_runs pr
+                WHERE pr.workspace_id = d.workspace_id
+                  AND pr.document_id = d.id
+                  AND pr.kind = 'chunk_embed'
+                  AND pr.status IN ('queued', 'running')
+              )
+            ORDER BY d.updated_at ASC
+            LIMIT $2
+            """,
+            list(_AUTO_INGEST_KINDS),
+            limit,
+        )
+    for row in rows:
+        await _start_auto_ingest(str(row["workspace_id"]), str(row["id"]))
+    return len(rows)
 
 
 async def _on_document_created(e: DocumentCreated) -> None:

@@ -684,6 +684,24 @@
   color: var(--color-text-muted);
   font-size: 12.5px;
 }
+/* Inline status / empty rows inside left-tree scrolls (Memories,
+ * Docs tree). Matches the muted tone of .proto-library-empty but
+ * lives flush against the tree rather than centring in the pane. */
+.proto-library-tree-status {
+  padding: 12px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+/* Right-pane empty message used by the Memories card list when a
+ * bucket has no items. Centred with restrained padding so it doesn't
+ * float as a forgotten hero. */
+.proto-library-content-empty {
+  padding: 24px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  text-align: center;
+}
 
 /* ── Tag chip (used across Stream, Library, Memory) ────────────── */
 .proto-tag {
@@ -1789,16 +1807,19 @@
  * useDocPipelineStates rollup. Status text is a short human label
  * (`enriching` / `all done` / `embed only` / `enrich failed` / `not
  * processed`) so users don't need to memorize bit positions. */
+/* Docs tree row · wrapper div holding two sibling buttons:
+ *   .proto-library-tree-item-check  — bulk-select checkbox (16px)
+ *   .proto-library-tree-item-select — clickable row body (grid)
+ * Previously this was a single <button> wrapping another role="checkbox" —
+ * invalid nested-interactive HTML. The split fixes the a11y bug AND
+ * lets keyboard users tab through checkbox → row, in order.
+ *
+ * Notes / Memories panes still use .proto-library-tree-item as a plain
+ * <button>, so the grid + hover rules here also support the legacy
+ * single-button shape (no .proto-library-tree-item-select child). */
 .proto-library-tree-item {
-  display: grid;
-  grid-template-columns: 16px 1fr auto;
-  grid-template-rows: auto auto;
-  column-gap: 8px;
-  row-gap: 2px;
-  padding: 6px 12px 7px;
   font-size: 12px;
   color: var(--color-text-secondary);
-  cursor: pointer;
   border-radius: 4px;
   margin: 1px 4px;
   background: transparent;
@@ -1806,27 +1827,92 @@
   width: calc(100% - 8px);
   text-align: left;
   font-family: inherit;
+  cursor: pointer;
 }
-.proto-library-tree-item:hover {
+/* Legacy single-button shape (Notes / Memories panes). */
+button.proto-library-tree-item {
+  display: grid;
+  grid-template-columns: 16px 1fr auto;
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  row-gap: 2px;
+  padding: 6px 12px 7px;
+}
+/* New wrapper-div shape (Docs pane — checkbox + select buttons). */
+div.proto-library-tree-item {
+  display: flex;
+  align-items: stretch;
+}
+.proto-library-tree-item:hover,
+.proto-library-tree-item-select:hover {
   background: var(--color-bg-hover);
   color: var(--color-text-primary);
 }
-.proto-library-tree-item[aria-current="true"] {
+.proto-library-tree-item.is-current > .proto-library-tree-item-select,
+.proto-library-tree-item[aria-current="true"],
+.proto-library-tree-item-select[aria-current="true"] {
   background: var(--color-bg-primary);
   color: var(--color-text-primary);
 }
-.proto-library-tree-item[aria-current="true"]::before {
+.proto-library-tree-item.is-current > .proto-library-tree-item-select::before,
+.proto-library-tree-item[aria-current="true"]::before,
+.proto-library-tree-item-select[aria-current="true"]::before {
   content: "";
   width: 3px; height: 14px;
   border-radius: 2px;
   background: var(--color-accent);
   margin-left: -6px;
   margin-right: 3px;
+  align-self: center;
 }
-.proto-library-tree-item .proto-library-tree-item-check {
-  grid-column: 1; grid-row: 1;
-  display: flex; align-items: center; justify-content: center;
+.proto-library-tree-item-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 0;
+  font-family: inherit;
+  border-radius: 4px;
+  transition: color 120ms ease-out, background 120ms ease-out;
 }
+.proto-library-tree-item-check[aria-checked="true"] { color: var(--color-accent); }
+.proto-library-tree-item-check:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+.proto-library-tree-item-check:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--color-accent) 60%, transparent);
+  outline-offset: -2px;
+}
+.proto-library-tree-item-select {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  row-gap: 2px;
+  padding: 6px 12px 7px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: background 120ms ease-out, color 120ms ease-out;
+}
+.proto-library-tree-item-select:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--color-accent) 60%, transparent);
+  outline-offset: -2px;
+}
+.proto-library-tree-item-select > .proto-library-tree-item-name { grid-column: 1; grid-row: 1; }
+.proto-library-tree-item-select > .proto-library-tree-item-meta { grid-column: 2; grid-row: 1; }
+.proto-library-tree-item-select > .proto-library-tree-item-bits { grid-column: 1 / 3; grid-row: 2; }
 .proto-library-tree-item-name {
   grid-column: 2; grid-row: 1;
   min-width: 0;
@@ -2037,6 +2123,57 @@
   flex-direction: column;
 }
 
+/* Notes-pane run history — list of note_classify runs scoped to
+ * the active note. Visually a subset of .proto-pipeline-row but
+ * pinned to its own class so spacing/typography don't drift. */
+.proto-note-runs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.proto-note-run-row-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.proto-note-run-row-id {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 11px;
+}
+.proto-note-run-row-status {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+.proto-note-run-row-error {
+  color: var(--color-danger);
+  margin-left: 8px;
+}
+
+/* Notes-pane top doc bar — title + meta + right-aligned action.
+ * (Docs pane uses .proto-library-content-bar; Notes diverges so
+ * action sits on the right via margin-auto rather than a spacer div.) */
+.proto-library-doc-bar {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-border);
+}
+.proto-library-doc-bar-action { margin-left: auto; }
+.proto-library-doc-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 50%;
+}
+.proto-library-doc-meta {
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+}
+
 /* Buttons used inside library-content-bar + content scrolls */
 .proto-library-btn {
   height: 28px;
@@ -2057,6 +2194,12 @@
   color: var(--color-text-primary);
   border-color: var(--color-text-muted);
 }
+.proto-library-btn:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--color-accent) 60%, transparent);
+  outline-offset: 1px;
+  border-color: var(--color-accent);
+}
+.proto-library-btn:disabled { opacity: 0.55; cursor: not-allowed; }
 .proto-library-btn-primary {
   background: var(--color-accent);
   color: var(--color-bg-primary);
@@ -2089,6 +2232,10 @@
   transition: color 160ms ease-out, background 160ms ease-out;
 }
 .proto-library-view-toggle button:hover { color: var(--color-text-primary); }
+.proto-library-view-toggle button:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--color-accent) 60%, transparent);
+  outline-offset: -2px;
+}
 .proto-library-view-toggle button[aria-selected="true"] {
   background: var(--color-text-primary);
   color: var(--color-bg-primary);
@@ -2204,6 +2351,12 @@
   color: var(--color-text-primary);
   border-color: var(--color-text-muted);
 }
+.proto-row-action:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--color-accent) 60%, transparent);
+  outline-offset: 1px;
+  border-color: var(--color-accent);
+}
+.proto-row-action:disabled { opacity: 0.55; cursor: not-allowed; }
 .proto-row-action-accept {
   color: var(--color-accent);
   border-color: color-mix(in oklab, var(--color-accent) 30%, var(--color-border));
@@ -4065,6 +4218,70 @@
   border-radius: 3px;
 }
 
+/* Small uppercase kv-style label (e.g. "URL", "KEY") that prefixes a
+   value inside an `.proto-modal-mcp` row. */
+.proto-modal-kv-label {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+
+/* Inline badge appended to a section title or device row name — sits
+   alongside text without inheriting the parent's uppercase/letter-
+   spacing. */
+.proto-modal-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  margin-left: 8px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+.proto-modal-badge-ok { color: var(--color-success); }
+.proto-modal-badge-tag {
+  font-size: 9.5px;
+  margin-left: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+}
+
+/* Save / action row + flash status messages used across Connection
+   and Provider tabs. */
+.proto-modal-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+.proto-modal-flash {
+  font-size: 11px;
+  line-height: 1;
+}
+.proto-modal-flash-ok  { color: var(--color-success); }
+.proto-modal-flash-err { color: var(--color-danger); }
+
+/* Hairline divider inside a section (e.g. between physical devices
+   and AI-CLI agents). */
+.proto-modal-divider {
+  height: 1px;
+  background: var(--color-border);
+  margin: 6px 0;
+}
+
+/* Two-column grid for adjacent fields (e.g. concurrency + toggle). */
+.proto-modal-field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  align-items: end;
+}
+
 /* Toggle switch — used in modal + (later) settings */
 .proto-toggle {
   width: 32px;
@@ -4193,6 +4410,31 @@
   color: var(--color-bg-primary);
   opacity: 0.92;
   border-color: var(--color-accent);
+}
+.proto-note-v3-btn-warning {
+  border-color: color-mix(in oklab, var(--color-warning) 44%, var(--color-border));
+  background: color-mix(in oklab, var(--color-warning) 10%, var(--color-bg-primary));
+  color: var(--color-warning);
+  font-weight: 500;
+}
+.proto-note-v3-btn-warning:hover {
+  border-color: var(--color-warning);
+  color: var(--color-warning);
+}
+.proto-note-v3-btn-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-warning);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-warning) 16%, transparent);
+}
+.proto-note-v3-sync-notice {
+  max-width: 260px;
+  color: var(--color-warning);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .proto-note-v3-btn-primary[aria-disabled="true"],
 .proto-note-v3-btn-primary:disabled {

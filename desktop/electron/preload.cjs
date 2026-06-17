@@ -48,4 +48,12 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.on("smartnote:open-source", listener);
     return () => ipcRenderer.removeListener("smartnote:open-source", listener);
   },
+  // File-watcher refused to push because the cloud doc was changed by
+  // someone else (MCP, console, another desktop). Payload: { relPath,
+  // docId, cloudMs, by }. NotePage uses it to flag merge-needed.
+  onCloudConflict(callback) {
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on("smartnote:cloud-conflict", listener);
+    return () => ipcRenderer.removeListener("smartnote:cloud-conflict", listener);
+  },
 });

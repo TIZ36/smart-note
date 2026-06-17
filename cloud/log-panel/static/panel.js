@@ -1,7 +1,7 @@
-/* SmartNote Log Panel — front-end controller (developer tool).
+/* SmartNote Admin — read-only workspace console.
  *
- * Vanilla JS. Talks directly to the panel's own /api/* endpoints,
- * which read pipeline_events from Postgres. No auth — internal tool.
+ * Vanilla JS. The browser exchanges a workspace API key for a short-lived
+ * JWT and then calls the cloud API's workspace-scoped /v1/logs endpoints.
  */
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -11,6 +11,10 @@ const STATE = {
   list: [],
   listMode: "recent",
   selectedRunId: null,
+  apiUrl: localStorage.getItem("smartnote-admin-api-url") || window.location.origin,
+  apiKey: localStorage.getItem("smartnote-admin-api-key") || "",
+  jwt: sessionStorage.getItem("smartnote-admin-jwt") || "",
+  workspaceId: sessionStorage.getItem("smartnote-admin-workspace") || "",
 };
 
 /* ───── Theme ───── */
@@ -63,12 +67,19 @@ function syntaxJson(obj) {
     .replace(/: (true|false|null)/g, ': <span class="b">$1</span>');
 }
 
+function apiBase() { return STATE.apiUrl.replace(/\/+$/, ""); }
+function authHeaders() { return STATE.jwt ? { Authorization: `Bearer ${STATE.jwt}` } : {}; }
+
 async function api(path, params) {
-  const url = new URL("/api/" + path.replace(/^\//, ""), window.location.origin);
+  const url = new URL("/v1/logs/" + path.replace(/^\//, ""), apiBase());
   if (params) for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, v);
   }
-  const r = await fetch(url);
+  const r = await fetch(url, { headers: authHeaders() });
+  if (r.status === 401) {
+    signOut("Session expired. Sign in again.");
+    throw new Error("401 — session expired");
+  }
   if (!r.ok) {
     const detail = await r.text();
     throw new Error(`${r.status} — ${detail.slice(0, 200)}`);
@@ -76,14 +87,24 @@ async function api(path, params) {
   return r.json();
 }
 
+async function exchangeToken(apiUrl, apiKey) {
+  const r = await fetch(`${apiUrl.replace(/\/+$/, "")}/v1/auth/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ api_key: apiKey }),
+  });
+  if (!r.ok) throw new Error(`Login failed: ${r.status}`);
+  return r.json();
+}
+
 /* ───── Health ───── */
 async function loadHealth() {
   try {
-    const r = await fetch("/health");
+    const r = await fetch(`${apiBase()}/v1/health`);
     const j = await r.json();
-    $("#cloud-info").textContent = j.db_connected ? "db · connected" : "db · " + (j.db_configured ? "down" : "no DATABASE_URL");
+    $("#cloud-info").textContent = `${shortId(STATE.workspaceId)} · ${j.status || "ok"}`;
   } catch {
-    $("#cloud-info").textContent = "panel offline";
+    $("#cloud-info").textContent = `${shortId(STATE.workspaceId)} · api unreachable`;
   }
 }
 
@@ -105,20 +126,7 @@ async function loadStats() {
 
 /* ───── Workspaces dropdown ───── */
 async function loadWorkspaces() {
-  try {
-    const j = await api("workspaces", { limit: 50 });
-    const sel = $("#f-workspace");
-    /* keep "all workspaces" option, replace rest */
-    sel.innerHTML = `<option value="">all workspaces (${j.workspaces.length})</option>`;
-    for (const w of j.workspaces) {
-      const opt = document.createElement("option");
-      opt.value = w.workspace_id;
-      opt.textContent = `${shortId(w.workspace_id)} · ${w.events.toLocaleString()} events`;
-      sel.appendChild(opt);
-    }
-  } catch (e) {
-    console.warn("workspaces failed", e);
-  }
+  $("#f-workspace").value = STATE.workspaceId || "current workspace";
 }
 
 /* ───── Recent runs list ───── */
@@ -128,7 +136,6 @@ async function loadRecent() {
   $("#list").innerHTML = `<div class="empty">Loading…</div>`;
   try {
     const j = await api("recent_runs", {
-      workspace_id: $("#f-workspace").value || undefined,
       limit: 50,
     });
     STATE.list = j.runs;
@@ -146,7 +153,6 @@ async function runSearch() {
   $("#list").innerHTML = `<div class="empty">Searching…</div>`;
   const params = {
     q: $("#q").value.trim() || undefined,
-    workspace_id: $("#f-workspace").value || undefined,
     stage: $("#f-stage").value || undefined,
     status: $("#f-status").value || undefined,
     limit: 200,
@@ -305,6 +311,55 @@ function renderEvent(ev) {
 }
 
 /* ───── Wiring ───── */
+async function signIn() {
+  const apiUrl = $("#login-api-url").value.trim() || window.location.origin;
+  const apiKey = $("#login-token").value.trim();
+  $("#login-error").textContent = "";
+  if (!apiKey) { $("#login-error").textContent = "Token required"; return; }
+  try {
+    const token = await exchangeToken(apiUrl, apiKey);
+    STATE.apiUrl = apiUrl;
+    STATE.apiKey = apiKey;
+    STATE.jwt = token.jwt;
+    STATE.workspaceId = token.workspace_id;
+    localStorage.setItem("smartnote-admin-api-url", apiUrl);
+    localStorage.setItem("smartnote-admin-api-key", apiKey);
+    sessionStorage.setItem("smartnote-admin-jwt", token.jwt);
+    sessionStorage.setItem("smartnote-admin-workspace", token.workspace_id);
+    showApp();
+    await bootApp();
+  } catch (e) {
+    $("#login-error").textContent = e instanceof Error ? e.message : String(e);
+  }
+}
+
+function signOut(message) {
+  STATE.jwt = "";
+  STATE.workspaceId = "";
+  sessionStorage.removeItem("smartnote-admin-jwt");
+  sessionStorage.removeItem("smartnote-admin-workspace");
+  showLogin(message);
+}
+
+function showLogin(message = "") {
+  $("#login-card").hidden = false;
+  $$(".app-view").forEach(el => { el.hidden = true; });
+  $("#btn-logout").hidden = true;
+  $("#cloud-info").textContent = "signed out";
+  $("#login-api-url").value = STATE.apiUrl;
+  $("#login-token").value = STATE.apiKey;
+  $("#login-error").textContent = message;
+}
+
+function showApp() {
+  $("#login-card").hidden = true;
+  $$(".app-view").forEach(el => { el.hidden = false; });
+  $("#btn-logout").hidden = false;
+}
+
+$("#btn-login").addEventListener("click", signIn);
+$("#login-token").addEventListener("keydown", e => { if (e.key === "Enter") signIn(); });
+$("#btn-logout").addEventListener("click", () => signOut());
 $("#btn-search").addEventListener("click", runSearch);
 $("#btn-recent").addEventListener("click", loadRecent);
 $("#btn-refresh").addEventListener("click", () => {
@@ -312,11 +367,8 @@ $("#btn-refresh").addEventListener("click", () => {
   if (STATE.listMode === "search") runSearch(); else loadRecent();
 });
 $("#q").addEventListener("keydown", e => { if (e.key === "Enter") runSearch(); });
-$("#f-workspace").addEventListener("change", () => {
-  if (STATE.listMode === "search") runSearch(); else loadRecent();
-});
 
-(async function boot() {
+async function bootApp() {
   await loadHealth();
   await loadStats();
   await loadWorkspaces();
@@ -324,4 +376,13 @@ $("#f-workspace").addEventListener("change", () => {
   const u = new URL(window.location.href);
   const runParam = u.searchParams.get("run");
   if (runParam) selectRun(runParam);
+}
+
+(async function boot() {
+  if (STATE.jwt && STATE.workspaceId) {
+    showApp();
+    await bootApp();
+  } else {
+    showLogin();
+  }
 })();
