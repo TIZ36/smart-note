@@ -110,7 +110,9 @@ MCP clients (Claude Code, Cursor, Opencode) and the SDKs use the api_key as `Aut
 
 The flow above builds images on the server from a checkout. If you'd
 rather keep source off the box, publish images from your dev machine and
-have the server only pull + run.
+have the server only pull + run. `docker-compose.deploy.yml` includes the
+same Caddy reverse proxy + auto-HTTPS as the build flow, so you still get
+`https://API_DOMAIN` with no compilation on the server.
 
 **1 · Publish (once per release, from a checkout):**
 
@@ -127,23 +129,25 @@ with the git short-SHA and `latest`). Postgres uses the public
 > x86_64 server even when built on an Apple-silicon Mac. Override with
 > `PLATFORM=` / `IMAGE_TAG=` / `IMAGE_PREFIX=` env vars.
 
-**2 · Run (on the server — only needs two files):**
+**2 · Run (on the server — needs three files):**
 
-Copy `docker-compose.deploy.yml` + a filled-in `.env` to the server:
+Copy `docker-compose.deploy.yml` + `Caddyfile` + a filled-in `.env` to
+the server. DNS for `API_DOMAIN` must already point at the box and
+80/443 be open (Caddy issues the cert on first boot):
 
 ```bash
-cp .env.deploy.example .env       # set POSTGRES_PASSWORD + JWT_SECRET
+cp .env.deploy.example .env       # set POSTGRES_PASSWORD, JWT_SECRET, API_DOMAIN, ACME_EMAIL
 chmod 600 .env
 docker compose -f docker-compose.deploy.yml --env-file .env pull
 docker compose -f docker-compose.deploy.yml --env-file .env up -d
-curl http://localhost:${API_PORT:-8000}/v1/health
+curl https://$API_DOMAIN/v1/health            # via Caddy
+curl http://localhost:${API_PORT:-8000}/v1/health   # loopback, bypassing Caddy
 ```
 
 The api image runs DB migrations on startup, so there's no migrate step.
 Mint the first key by flipping `ALLOW_DEV_BOOTSTRAP=true` (restart, call
-`POST /v1/dev/bootstrap`, flip back). This compose exposes the api port
-directly with no TLS; front it with the `caddy` service from
-`docker-compose.prod.yml` if you need HTTPS + a domain.
+`POST /v1/dev/bootstrap`, flip back). The api host port is bound to
+loopback only — public traffic enters through Caddy on 443.
 
 **Updating:** re-run `release-images.sh`, then on the server
 `docker compose -f docker-compose.deploy.yml --env-file .env pull && … up -d`.

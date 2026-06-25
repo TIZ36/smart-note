@@ -1,17 +1,21 @@
 # SmartNote Cloud — pull-and-run deploy (pre-built images, NO source).
 #
 # For a server that pulls images from a registry instead of building from
-# source. This file is self-contained: copy just it + a filled-in .env to
-# the server, nothing else from the repo is needed.
+# source, fronted by Caddy with automatic HTTPS. Copy just three files to
+# the server — this compose file, the Caddyfile, and a filled-in .env;
+# nothing else from the repo is needed.
 #
 # Maintainer (once, from a checkout):
 #   docker login
 #   ./scripts/release-images.sh          # builds linux/amd64 + pushes
 #
 # Server:
-#   cp .env.deploy.example .env          # then edit secrets
+#   cp .env.deploy.example .env          # then edit secrets + API_DOMAIN
 #   docker compose -f docker-compose.deploy.yml --env-file .env pull
 #   docker compose -f docker-compose.deploy.yml --env-file .env up -d
+#
+# Caddy obtains a Let's Encrypt cert on first boot — API_DOMAIN must
+# resolve to this server's public IP and ports 80/443 must be reachable.
 #
 # The api image runs DB migrations on startup (idempotent), so there is
 # no separate migrate step.
@@ -67,15 +71,38 @@ services:
       SUPABASE_URL:               ${SUPABASE_URL:-}
       SUPABASE_SERVICE_ROLE_KEY:  ${SUPABASE_SERVICE_ROLE_KEY:-}
       SUPABASE_JWT_SECRET:        ${SUPABASE_JWT_SECRET:-}
+    # Caddy reaches the api over the compose network; the host port is
+    # bound to loopback only (for local smoke tests / SSH-tunnel access),
+    # never exposed publicly. Public traffic comes in via Caddy on 443.
     ports:
-      - "${API_PORT:-8000}:8000"
+      - "127.0.0.1:${API_PORT:-8000}:8000"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/v1/health"]
       interval: 10s
       timeout: 5s
       retries: 10
 
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+    environment:
+      API_DOMAIN:     ${API_DOMAIN:?set API_DOMAIN in .env}
+      ACME_EMAIL:     ${ACME_EMAIL:?set ACME_EMAIL in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"      # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
 volumes:
   pgdata:
+  caddy_data:
+  caddy_config:
   embed_models:
     name: smartnote_embed_models
