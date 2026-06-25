@@ -1,0 +1,81 @@
+# SmartNote Cloud — pull-and-run deploy (pre-built images, NO source).
+#
+# For a server that pulls images from a registry instead of building from
+# source. This file is self-contained: copy just it + a filled-in .env to
+# the server, nothing else from the repo is needed.
+#
+# Maintainer (once, from a checkout):
+#   docker login
+#   ./scripts/release-images.sh          # builds linux/amd64 + pushes
+#
+# Server:
+#   cp .env.deploy.example .env          # then edit secrets
+#   docker compose -f docker-compose.deploy.yml --env-file .env pull
+#   docker compose -f docker-compose.deploy.yml --env-file .env up -d
+#
+# The api image runs DB migrations on startup (idempotent), so there is
+# no separate migrate step.
+
+name: smartnote-cloud
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     ${POSTGRES_USER:-smartnote}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB:       ${POSTGRES_DB:-smartnote}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # No host port — Postgres is reachable only inside the compose
+    # network. Tunnel via SSH if you need external psql access.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-smartnote}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  embed:
+    image: ${IMAGE_PREFIX:-ztzsyy/smartnote}-embed:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    # The image is model-agnostic — the model downloads on first run into
+    # the persistent volume, so switching EMBED_MODEL needs no rebuild.
+    environment:
+      MODEL_NAME: ${EMBED_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+    volumes:
+      - embed_models:/models
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8009/health').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    image: ${IMAGE_PREFIX:-ztzsyy/smartnote}-api:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      embed:
+        condition: service_started
+    environment:
+      DATABASE_URL:               postgresql+asyncpg://${POSTGRES_USER:-smartnote}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-smartnote}
+      EMBED_URL:                  http://embed:8009
+      JWT_SECRET:                 ${JWT_SECRET:?set JWT_SECRET in .env}
+      ALLOW_DEV_BOOTSTRAP:        ${ALLOW_DEV_BOOTSTRAP:-false}
+      SUPABASE_URL:               ${SUPABASE_URL:-}
+      SUPABASE_SERVICE_ROLE_KEY:  ${SUPABASE_SERVICE_ROLE_KEY:-}
+      SUPABASE_JWT_SECRET:        ${SUPABASE_JWT_SECRET:-}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
+  embed_models:
+    name: smartnote_embed_models

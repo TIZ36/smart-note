@@ -106,6 +106,48 @@ Restore by piping a dump back into `psql` inside the same container.
 
 MCP clients (Claude Code, Cursor, Opencode) and the SDKs use the api_key as `Authorization: Bearer …`.
 
+## Alternative: pull pre-built images (no source on the server)
+
+The flow above builds images on the server from a checkout. If you'd
+rather keep source off the box, publish images from your dev machine and
+have the server only pull + run.
+
+**1 · Publish (once per release, from a checkout):**
+
+```bash
+docker login                      # to Docker Hub (namespace ztzsyy)
+./scripts/release-images.sh       # builds linux/amd64 + pushes api + embed
+```
+
+This pushes `ztzsyy/smartnote-api` and `ztzsyy/smartnote-embed` (tagged
+with the git short-SHA and `latest`). Postgres uses the public
+`pgvector/pgvector:pg16` image directly — nothing to republish.
+
+> Builds target `linux/amd64` by default so the images run on a typical
+> x86_64 server even when built on an Apple-silicon Mac. Override with
+> `PLATFORM=` / `IMAGE_TAG=` / `IMAGE_PREFIX=` env vars.
+
+**2 · Run (on the server — only needs two files):**
+
+Copy `docker-compose.deploy.yml` + a filled-in `.env` to the server:
+
+```bash
+cp .env.deploy.example .env       # set POSTGRES_PASSWORD + JWT_SECRET
+chmod 600 .env
+docker compose -f docker-compose.deploy.yml --env-file .env pull
+docker compose -f docker-compose.deploy.yml --env-file .env up -d
+curl http://localhost:${API_PORT:-8000}/v1/health
+```
+
+The api image runs DB migrations on startup, so there's no migrate step.
+Mint the first key by flipping `ALLOW_DEV_BOOTSTRAP=true` (restart, call
+`POST /v1/dev/bootstrap`, flip back). This compose exposes the api port
+directly with no TLS; front it with the `caddy` service from
+`docker-compose.prod.yml` if you need HTTPS + a domain.
+
+**Updating:** re-run `release-images.sh`, then on the server
+`docker compose -f docker-compose.deploy.yml --env-file .env pull && … up -d`.
+
 ## Troubleshooting
 
 - **`./deploy.sh` reports api unhealthy** — `./deploy.sh logs` and look for postgres migration errors. Almost always a `JWT_SECRET` change against an existing DB; revert or rotate intentionally.
