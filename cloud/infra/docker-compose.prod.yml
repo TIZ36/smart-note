@@ -7,10 +7,9 @@
 #   - Postgres has NO host port; only the api container can reach it.
 #   - ALLOW_DEV_BOOTSTRAP defaults to "false".
 #   - JWT_SECRET is required (no dev fallback).
-#   - Console image is included.
-#   - Caddy fronts both api/ and console/ with automatic HTTPS via
-#     Let's Encrypt — requires the two *_DOMAIN env vars to resolve
-#     to this server's public IP, and ports 80/443 to be reachable.
+#   - Caddy fronts api/ (REST + MCP) with automatic HTTPS via
+#     Let's Encrypt — requires API_DOMAIN to resolve to this server's
+#     public IP, and ports 80/443 to be reachable.
 
 name: smartnote-cloud-prod
 
@@ -72,35 +71,14 @@ services:
       timeout: 5s
       retries: 10
 
-  console:
-    build:
-      context: ../console
-      dockerfile: Dockerfile
-      args:
-        # Baked at build time — visible to the browser. This is what the
-        # console pre-fills in the login form's "Cloud URL" field.
-        NEXT_PUBLIC_CLOUD_URL: https://${API_DOMAIN}
-    restart: unless-stopped
-    depends_on:
-      api:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000 >/dev/null || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 10
-
   caddy:
     image: caddy:2.8-alpine
     restart: unless-stopped
     depends_on:
       api:
         condition: service_started
-      console:
-        condition: service_started
     environment:
       API_DOMAIN:     ${API_DOMAIN}
-      CONSOLE_DOMAIN: ${CONSOLE_DOMAIN}
       ACME_EMAIL:     ${ACME_EMAIL}
     ports:
       - "80:80"

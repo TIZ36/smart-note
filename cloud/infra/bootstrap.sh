@@ -109,7 +109,7 @@ local)
   ensure_repo
   cd "$REPO_ROOT/cloud/infra"
   [[ -f .env ]] || { cp .env.example .env; ok "Created .env from .env.example"; }
-  say "Building + starting stack (postgres, embed, api, console)…"
+  say "Building + starting stack (postgres, embed, api)…"
   docker compose -f docker-compose.lan.yml --env-file .env up -d --build
   say "Waiting for API health…"
   for _ in {1..30}; do
@@ -119,12 +119,11 @@ local)
   LAN_IP=$(detect_lan_ip)
   echo
   ok "Stack up. Reach it from any device on this network:"
-  echo "    Console   http://$LAN_IP:${CONSOLE_PORT:-3000}"
   echo "    API       http://$LAN_IP:${API_PORT:-58000}"
   echo "    MCP       http://$LAN_IP:${API_PORT:-58000}/mcp"
   echo
-  echo "  Console's Cloud-URL field auto-picks the matching API host,"
-  echo "  so just open the URL above and paste your workspace api key."
+  echo "  Point any MCP client or the SDKs at the MCP URL above"
+  echo "  and authenticate with your workspace api key."
   echo
   echo "  Issue an admin api key:"
   echo "    docker compose -f docker-compose.lan.yml exec api bash scripts/issue_key.sh"
@@ -144,13 +143,11 @@ server)
     chmod 600 .env.prod
     say "Created .env.prod from template — answer a few questions:"
     read -rp "  API domain     (e.g. api.example.com): "     API_DOMAIN
-    read -rp "  Console domain (e.g. console.example.com): " CONSOLE_DOMAIN
     read -rp "  ACME email     (Let's Encrypt notifications): " ACME_EMAIL
     PG_PASS=$(openssl rand -base64 32 | tr -d '=+/')
     JWT_SEC=$(openssl rand -hex 32)
     sed -i.bak \
       -e "s|^API_DOMAIN=.*|API_DOMAIN=$API_DOMAIN|" \
-      -e "s|^CONSOLE_DOMAIN=.*|CONSOLE_DOMAIN=$CONSOLE_DOMAIN|" \
       -e "s|^ACME_EMAIL=.*|ACME_EMAIL=$ACME_EMAIL|" \
       -e "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$PG_PASS|" \
       -e "s|^JWT_SECRET=.*|JWT_SECRET=$JWT_SEC|" \

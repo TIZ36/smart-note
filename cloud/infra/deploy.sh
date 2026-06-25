@@ -7,7 +7,7 @@
 #   - docker + docker-compose-plugin installed
 #   - this repo cloned and current dir
 #   - .env.prod created from .env.prod.example with real values
-#   - DNS A records for $API_DOMAIN and $CONSOLE_DOMAIN pointing here
+#   - DNS A record for $API_DOMAIN pointing here
 #   - ports 80 + 443 open in the cloud provider's firewall
 #
 # Usage:
@@ -30,7 +30,7 @@ require_env() {
   fi
   # shellcheck disable=SC1091
   set -a; source .env.prod; set +a
-  for v in API_DOMAIN CONSOLE_DOMAIN ACME_EMAIL POSTGRES_PASSWORD JWT_SECRET; do
+  for v in API_DOMAIN ACME_EMAIL POSTGRES_PASSWORD JWT_SECRET; do
     if [[ -z "${!v:-}" || "${!v}" == CHANGE_ME* ]]; then
       echo "✗ .env.prod: $v must be set to a real value" >&2; exit 1
     fi
@@ -54,7 +54,6 @@ case "$ACTION" in
     done
     echo
     echo "✓ deployed."
-    echo "  console  https://$CONSOLE_DOMAIN"
     echo "  api      https://$API_DOMAIN"
     echo "  mcp      https://$API_DOMAIN/mcp"
     echo

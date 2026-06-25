@@ -71,21 +71,6 @@ services:
       timeout: 5s
       retries: 10
 
-  console:
-    build:
-      context: ../console
-      dockerfile: Dockerfile
-      # No NEXT_PUBLIC_CLOUD_URL build-arg — the login page falls
-      # back to `${window.protocol}//${window.hostname}:58000`, which
-      # gives the right answer whether the browser hit localhost:3000
-      # or http://10.x.x.x:3000 (LAN access).
-    restart: unless-stopped
-    depends_on:
-      api:
-        condition: service_healthy
-    ports:
-      - "${CONSOLE_PORT:-3000}:3000"
-
 volumes:
   pgdata:
   embed_models:

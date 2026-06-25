@@ -1,12 +1,12 @@
 # SmartNote Cloud — Caddy reverse proxy
 #
-# Two virtual hosts, both with automatic Let's Encrypt TLS.
-# DNS for both domains must point at this server's public IP, and
+# Single virtual host (the Cloud API) with automatic Let's Encrypt TLS.
+# DNS for API_DOMAIN must point at this server's public IP, and
 # ports 80/443 must be reachable (Let's Encrypt does an HTTP-01 / TLS-
 # ALPN challenge during the first cert issuance).
 #
 # Edit Caddyfile only if you need to tune timeouts or add new routes;
-# the three domain/email values come from the compose env (.env).
+# the domain/email values come from the compose env (.env).
 
 {
     email {$ACME_EMAIL}
@@ -34,10 +34,4 @@
     handle {
         reverse_proxy api:8000
     }
-}
-
-# ─── Console (Next.js standalone) ──────────────────────────────────
-{$CONSOLE_DOMAIN} {
-    encode zstd gzip
-    reverse_proxy console:3000
 }

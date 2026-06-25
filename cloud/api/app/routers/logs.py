@@ -1,7 +1,7 @@
 """Pipeline event log query API.
 
-Backs the standalone log query panel service (cloud/log-panel/) and
-the in-app "Open in Logs ↗" affordance on the stage detail modal.
+Read-only REST surface for inspecting pipeline runs (consumed by SDKs,
+MCP clients, and ad-hoc debugging).
 
 Reads from `pipeline_events` (migration 027). Every WS broadcast is
 persisted there with run_id / stage / status / data — making the

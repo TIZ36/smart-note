@@ -7,10 +7,8 @@ __pycache__/
 dist/
 build/
 
-# ── Node / Electron ──
+# ── Node ──
 node_modules/
-desktop/dist/
-desktop/release/
 
 # ── Data (user-specific, not committed) ──
 server/data/

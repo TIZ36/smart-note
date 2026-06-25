@@ -7,16 +7,14 @@ Single-server deploy via `docker compose` + Caddy auto-TLS. Suits a $5–$20/mo 
 | `postgres`   | Postgres 16 + pgvector                        | no (internal only)                |
 | `embed`      | Self-hosted sentence-transformer embeddings   | no                                |
 | `api`        | FastAPI REST + MCP (`/mcp`)                   | via Caddy → `https://API_DOMAIN`  |
-| `console`    | Next.js admin console                         | via Caddy → `https://CONSOLE_DOMAIN` |
 | `caddy`      | Reverse proxy + auto Let's Encrypt TLS        | `:80` + `:443`                    |
 
 ## 1 · Prepare the server
 
 - A clean Linux box (Ubuntu 22.04+ / Debian 12+ both fine)
 - Docker Engine + Compose plugin (`curl -fsSL https://get.docker.com | sh`)
-- Two DNS A records pointing at this server:
+- One DNS A record pointing at this server:
   - `api.example.com` → public IP
-  - `console.example.com` → public IP
 - Firewall: open `80/tcp` + `443/tcp` (+ `443/udp` if you want HTTP/3). Keep `22/tcp` for SSH; close everything else.
 
 ## 2 · Clone + configure
@@ -32,7 +30,7 @@ Edit `.env.prod` — at minimum set:
 
 | Var | How to get |
 | --- | --- |
-| `API_DOMAIN`, `CONSOLE_DOMAIN` | The DNS names you set up |
+| `API_DOMAIN` | The DNS name you set up |
 | `ACME_EMAIL` | Real email — Let's Encrypt sends cert expiry warnings |
 | `POSTGRES_PASSWORD` | `openssl rand -base64 32` |
 | `JWT_SECRET` | `openssl rand -hex 32` |
@@ -74,7 +72,7 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod \
   exec api bash scripts/issue_key.sh
 ```
 
-Either way, you now have `sn_live_<prefix>_<secret>` — paste this into the console's login form, or any MCP client config.
+Either way, you now have `sn_live_<prefix>_<secret>` — paste this into any MCP client config or pass it to the SDKs.
 
 ## 5 · Update / rollback
 
@@ -102,13 +100,11 @@ Restore by piping a dump back into `psql` inside the same container.
 
 | Surface     | URL                                    |
 | ----------- | -------------------------------------- |
-| Console UI  | `https://$CONSOLE_DOMAIN/`             |
 | Cloud REST  | `https://$API_DOMAIN/v1/…`             |
 | MCP (HTTP)  | `https://$API_DOMAIN/mcp`              |
 | Health      | `https://$API_DOMAIN/v1/health`        |
 
-Console login takes `Cloud URL = https://$API_DOMAIN` + workspace token (api_key).
-MCP clients (Claude Code, Cursor, Opencode) use the same api_key as `Authorization: Bearer …`.
+MCP clients (Claude Code, Cursor, Opencode) and the SDKs use the api_key as `Authorization: Bearer …`.
 
 ## Troubleshooting
 

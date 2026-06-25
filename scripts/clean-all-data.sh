@@ -4,9 +4,7 @@
 # Wipes:
 #   1. Cloud postgres volume (docker compose down -v)
 #   2. Cloud generated artifacts (cloud/data/, cloud/.cache/ if present)
-#   3. Desktop Electron userData (~/Library/Application Support/SmartNote
-#      and /desktop fallback dir)
-#   4. Legacy server/data/ from the retired local Python pipeline
+#   3. Legacy server/data/ from the retired local Python pipeline
 #
 # Confirms before deleting. Pass --yes to skip the prompt.
 
@@ -19,7 +17,7 @@ for arg in "$@"; do
   case "$arg" in
     -y|--yes) YES=1 ;;
     --help|-h)
-      sed -n '2,12p' "$0"
+      sed -n '2,11p' "$0"
       exit 0
       ;;
   esac
@@ -30,8 +28,7 @@ echo
 echo "Will delete:"
 echo "  1. Cloud postgres data        (docker compose down -v in cloud/infra)"
 echo "  2. Cloud generated artifacts  ($REPO_ROOT/cloud/data, .cache)"
-echo "  3. Desktop Electron userData  (~/Library/Application Support/SmartNote, /desktop)"
-echo "  4. Legacy server/data/        ($REPO_ROOT/server/data — if present)"
+echo "  3. Legacy server/data/        ($REPO_ROOT/server/data — if present)"
 echo
 
 if [ "$YES" -ne 1 ]; then
@@ -57,16 +54,7 @@ fi
 echo "→ 2. cloud/data + cloud/.cache"
 rm -rf "$REPO_ROOT/cloud/data" "$REPO_ROOT/cloud/.cache" 2>/dev/null || true
 
-echo "→ 3. desktop Electron userData"
-if [ "$(uname)" = "Darwin" ]; then
-  rm -rf "$HOME/Library/Application Support/SmartNote" 2>/dev/null || true
-  rm -rf "$HOME/Library/Application Support/desktop"   2>/dev/null || true
-elif [ "$(uname)" = "Linux" ]; then
-  rm -rf "$HOME/.config/SmartNote" 2>/dev/null || true
-  rm -rf "$HOME/.config/desktop"   2>/dev/null || true
-fi
-
-echo "→ 4. legacy server/data"
+echo "→ 3. legacy server/data"
 rm -rf "$REPO_ROOT/server/data"          2>/dev/null || true
 rm -rf "$REPO_ROOT/sample/views"         2>/dev/null || true
 rm -rf "$REPO_ROOT/sample/candidates"    2>/dev/null || true
@@ -77,4 +65,3 @@ echo
 echo "✓ All data wiped."
 echo "  Next:"
 echo "    ./scripts/restart-cloud.sh    # bring cloud back with empty schema"
-echo "    ./scripts/restart-desktop.sh  # start desktop dev session"

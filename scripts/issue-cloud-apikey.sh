@@ -3,7 +3,7 @@
 #
 # Wrapper around cloud/scripts/issue_key.sh that adds a friendly
 # health-check and lives at the same level as the other top-level
-# scripts (restart-cloud / restart-desktop / clean-all-data).
+# scripts (restart-cloud / clean-all-data).
 #
 # Prereqs:
 #   - Cloud stack is up (./scripts/restart-cloud.sh)
